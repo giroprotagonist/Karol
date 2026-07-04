@@ -4,11 +4,12 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
@@ -48,8 +49,6 @@ class MainActivity : AppCompatActivity() {
 	private var customView: View? = null
 	private var customViewCallback: WebChromeClient.CustomViewCallback? = null
 
-	private var castWakeLock: PowerManager.WakeLock? = null
-
 	private var isConnected = false
 	private var discoveryJob: Job? = null
 	private var lastLoadedUrl: String = ""
@@ -76,7 +75,6 @@ class MainActivity : AppCompatActivity() {
 		super.onCreate(savedInstanceState)
 		setContentView(R.layout.activity_main)
 
-		acquireCastWakeLock()
 		enterImmersiveMode()
 
 		webView = findViewById(R.id.webView)
@@ -97,6 +95,12 @@ class MainActivity : AppCompatActivity() {
 		}
 
 		configureWebView()
+
+		// Restore state after process death
+		savedInstanceState?.let {
+			isConnected = it.getBoolean(SAVED_CONNECTED, false)
+			lastLoadedUrl = it.getString(SAVED_LAST_URL, "") ?: ""
+		}
 
 		val openQrScanner = {
 			discoveryJob?.cancel()
@@ -166,6 +170,9 @@ class MainActivity : AppCompatActivity() {
 			cacheMode = WebSettings.LOAD_NO_CACHE
 			mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 			userAgentString = "$userAgentString DeskreenReceiver/1.0"
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+				setOffscreenPreRaster(true)
+			}
 		}
 
 		webView.webViewClient = object : WebViewClient() {
@@ -180,6 +187,32 @@ class MainActivity : AppCompatActivity() {
 					isConnected = true
 					showConnected()
 				}
+			}
+
+			@Suppress("DEPRECATION")
+	override fun onReceivedError(
+				view: WebView?,
+				errorCode: Int,
+				description: String?,
+				failingUrl: String?,
+			) {
+				android.util.Log.e(
+					"DeskreenWebView",
+					"onReceivedError code=$errorCode desc=$description url=$failingUrl isConnected=$isConnected",
+				)
+				// Don't disconnect — let the page JavaScript handle retry
+			}
+
+			override fun onReceivedHttpError(
+				view: WebView?,
+				request: WebResourceRequest?,
+				errorResponse: android.webkit.WebResourceResponse?,
+			) {
+				android.util.Log.w(
+					"DeskreenWebView",
+					"onReceivedHttpError status=${errorResponse?.statusCode} url=${request?.url} isConnected=$isConnected",
+				)
+				// Don't disconnect — let the page JavaScript handle retry
 			}
 
 			override fun onRenderProcessGone(
@@ -317,6 +350,8 @@ class MainActivity : AppCompatActivity() {
 		connectPanel.visibility = View.GONE
 		statusPanel.visibility = View.GONE
 		webView.visibility = View.VISIBLE
+		CastForegroundService.start(this)
+		requestBatteryOptimizationExemption()
 	}
 
 	private fun appendReceiverFlag(url: String): String {
@@ -339,52 +374,63 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	@SuppressLint("WakelockTimeout")
-	private fun acquireCastWakeLock() {
+	private fun requestBatteryOptimizationExemption() {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
 		val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-		castWakeLock?.release()
-		// PARTIAL_WAKE_LOCK keeps CPU + network alive while allowing the screen to turn off.
-		// This lets the tablet stream video with the screen locked.
-		castWakeLock = powerManager.newWakeLock(
-			PowerManager.PARTIAL_WAKE_LOCK,
-			"DeskreenReceiver::Cast",
-		).apply {
-			acquire(10 * 60 * 60 * 1000L)
+		if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+
+		val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+			data = Uri.parse("package:$packageName")
+		}
+		try {
+			startActivity(intent)
+		} catch (_: Exception) {
+			// Some devices / launchers don't support this intent
 		}
 	}
 
-	private fun releaseCastWakeLock() {
-		castWakeLock?.let {
-			if (it.isHeld) {
-				it.release()
-			}
-		}
-		castWakeLock = null
+	private fun stopCasting() {
+		isConnected = false
+		CastForegroundService.stop(this)
+		webView.loadUrl("about:blank")
+		webView.visibility = View.GONE
 	}
 
 	override fun onDestroy() {
-		releaseCastWakeLock()
+		stopCasting()
 		super.onDestroy()
 	}
 
+	override fun onStop() {
+		super.onStop()
+		// Keep the WebView alive — the foreground service owns the wake lock now
+		if (isConnected && this::webView.isInitialized) {
+			webView.onResume()
+		}
+	}
+
+	override fun onTrimMemory(level: Int) {
+		super.onTrimMemory(level)
+		android.util.Log.w("DeskreenLifecycle", "onTrimMemory level=$level isConnected=$isConnected")
+		// Never destroy — the foreground service keeps things alive
+	}
+
+	override fun onSaveInstanceState(outState: Bundle) {
+		super.onSaveInstanceState(outState)
+		outState.putBoolean(SAVED_CONNECTED, isConnected)
+		outState.putString(SAVED_LAST_URL, lastLoadedUrl)
+	}
+
 	/**
-	 * When connected and streaming, aggressively keep the WebView alive.
-	 * Android's default WebView lifecycle pauses JS timers and media
-	 * when the Activity loses focus (screen lock), even with a WakeLock.
-	 * We counter by calling webView.onResume() immediately after super.onPause().
+	 * When connected and streaming, keep the WebView rendering pipeline alive
+	 * even when the Activity loses focus. The foreground service holds the
+	 * actual wake lock — we just prevent the WebView from pausing its timers.
 	 */
 	override fun onPause() {
 		super.onPause()
-		if (isConnected) {
-			// Counter the system-level JS throttle by immediately
-			// resuming the WebView after the framework paused it.
-			if (this::webView.isInitialized) {
-				webView.onResume()
-			}
-			// Re-acquire the wake lock in case the system released it
-			acquireCastWakeLock()
-			return
-		}
-		if (this::webView.isInitialized) {
+		if (isConnected && this::webView.isInitialized) {
+			webView.onResume()
+		} else if (this::webView.isInitialized) {
 			webView.onPause()
 		}
 	}
@@ -397,15 +443,13 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	/**
-	 * When the window loses focus (screen lock), pump the WebView
-	 * back to life.  Without this, Samsung's power manager may
-	 * still throttle the renderer despite the WakeLock.
+	 * When the window loses focus (screen lock), keep the WebView
+	 * rendering pipeline active.
 	 */
 	override fun onWindowFocusChanged(hasFocus: Boolean) {
 		super.onWindowFocusChanged(hasFocus)
 		if (!hasFocus && isConnected && this::webView.isInitialized) {
 			webView.onResume()
-			acquireCastWakeLock()
 		}
 	}
 
@@ -428,6 +472,7 @@ class MainActivity : AppCompatActivity() {
 			webView.loadUrl("about:blank")
 			webView.visibility = View.GONE
 			isConnected = false
+			CastForegroundService.stop(this)
 			startAutoDiscovery()
 			return
 		}
@@ -441,5 +486,7 @@ class MainActivity : AppCompatActivity() {
 	companion object {
 		private const val PREFS_NAME = "deskreen_receiver"
 		private const val KEY_URL = "deskreen_url"
+		private const val SAVED_CONNECTED = "isConnected"
+		private const val SAVED_LAST_URL = "lastLoadedUrl"
 	}
 }

@@ -35,6 +35,19 @@ function VideoJSPlayer(props: VideoJSPlayerProps) {
 		videoEl.style.height = '100%';
 		videoEl.style.objectFit = 'contain';
 		videoEl.style.backgroundColor = 'black';
+		// Lock playbackRate to 1.0 — Chromium's WebRTC jitter buffer
+		// may adjust it to accelerate/decelerate playout.
+		videoEl.playbackRate = 1;
+		videoEl.addEventListener('ratechange', () => {
+			if (videoEl.playbackRate !== 1) {
+				console.warn(
+					'[RATE_LOCK] VideoJS: browser changed playbackRate to',
+					videoEl.playbackRate,
+					'— resetting to 1.0',
+				);
+				videoEl.playbackRate = 1;
+			}
+		});
 		// set container background to black to show letterboxing
 		try {
 			containerEl.style.backgroundColor = 'black';

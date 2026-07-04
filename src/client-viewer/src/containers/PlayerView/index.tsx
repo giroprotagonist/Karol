@@ -528,6 +528,14 @@ function PlayerView(props: PlayerViewProps) {
 		if (!video) return;
 		const id = setInterval(() => {
 			const vt = streamUrl.getVideoTracks()[0];
+			if (video.playbackRate !== 1) {
+				console.warn(
+					'[RATE_LOCK] monitor: resetting playbackRate from',
+					video.playbackRate,
+					'to 1.0',
+				);
+				video.playbackRate = 1;
+			}
 			console.log(
 				'[VIDEO_MON]',
 				'trackMuted=', vt?.muted,
@@ -620,6 +628,21 @@ function PlayerView(props: PlayerViewProps) {
 									height: '100%',
 									objectFit: 'contain',
 									backgroundColor: 'black',
+								}}
+								onRateChange={(e) => {
+									// Chromium's WebRTC jitter buffer may internally
+									// adjust playbackRate to accelerate/decelerate
+									// playout. Lock it to 1.0 to prevent audible
+									// speed fluctuations (chipmunk / slowdown).
+									const v = e.currentTarget;
+									if (v.playbackRate !== 1) {
+										console.warn(
+											'[RATE_LOCK] browser changed playbackRate to',
+											v.playbackRate,
+											'— resetting to 1.0',
+										);
+										v.playbackRate = 1;
+									}
 								}}
 							/>
 							{isControlModeEnabled && controlAvailable ? (

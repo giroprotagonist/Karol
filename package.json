@@ -34,7 +34,8 @@
     "verify:cast": "bash scripts/verify-cast-e2e.sh",
     "verify:cast:quick": "QUICK=1 bash scripts/verify-cast-e2e.sh",
     "verify:cast:webview": "CLIENT_MODE=webview bash scripts/verify-cast-e2e.sh",
-    "verify:cast:webview:quick": "QUICK=1 CLIENT_MODE=webview bash scripts/verify-cast-e2e.sh"
+    "verify:cast:webview:quick": "QUICK=1 CLIENT_MODE=webview bash scripts/verify-cast-e2e.sh",
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "@blueprintjs/core": "^6.3.4",
