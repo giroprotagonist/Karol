@@ -102,9 +102,6 @@ export default function configureScreenCaptureSession(): void {
 		async (request, callback) => {
 			const capturerService = getDeskreenGlobal()?.desktopCapturerSourcesService;
 			const hadActiveCapture = capturerService?.isCaptureSessionActive() ?? false;
-			if (!hadActiveCapture) {
-				capturerService?.setCaptureSessionActive(true);
-			}
 			try {
 				const selected = await pickDesktopCapturerSource(
 					request.audioRequested,
@@ -117,6 +114,9 @@ export default function configureScreenCaptureSession(): void {
 					return;
 				}
 
+				if (!hadActiveCapture) {
+					capturerService?.setCaptureSessionActive(true);
+				}
 				callback({
 					video: selected,
 					audio: request.audioRequested ? 'loopback' : undefined,

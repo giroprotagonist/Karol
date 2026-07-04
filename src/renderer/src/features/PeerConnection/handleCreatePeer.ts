@@ -130,7 +130,12 @@ export default function handleCreatePeer(
 				// @ts-ignore
 				peerConnection.peer = new SimplePeer({
 					initiator: true,
-					config: { iceServers: [] },
+					config: {
+						iceServers: [
+							{ urls: 'stun:stun.l.google.com:19302' },
+							{ urls: 'stun:stun1.l.google.com:19302' },
+						],
+					},
 					sdpTransform: simplePeerHandleSdpTransform,
 				});
 				// }

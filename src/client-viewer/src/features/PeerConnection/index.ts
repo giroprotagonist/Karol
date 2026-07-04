@@ -102,6 +102,9 @@ export default class PeerConnection {
 
 	videoQualityChangedCallback() {
 		if (!this.peer) return;
+		// Guard against calling send() before the data channel is open
+		const simplePeer = this.peer as any;
+		if (!simplePeer._channel || simplePeer._channel.readyState !== 'open') return;
 		if (this.videoQuality === VideoQuality.Q_AUTO) {
 			this.peer.send(prepareDataMessageToChangeQuality(1));
 		} else {
@@ -214,7 +217,12 @@ export default class PeerConnection {
 		// When we are testing with jest, SimplePeer() can not be created, so we just return
 		const peer = new SimplePeer({
 			initiator: false,
-			config: { iceServers: [] },
+			config: {
+				iceServers: [
+					{ urls: 'stun:stun.l.google.com:19302' },
+					{ urls: 'stun:stun1.l.google.com:19302' },
+				],
+			},
 			sdpTransform: (sdp) => applyCastSdpTransform(sdp as unknown as string) as typeof sdp,
 		});
 

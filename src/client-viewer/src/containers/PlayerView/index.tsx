@@ -322,6 +322,7 @@ function PlayerView(props: PlayerViewProps) {
 			}
 
 			const hasAudio = streamUrl.getAudioTracks().length > 0;
+			const wasMuted = videoRef.current.muted;
 			if (hasAudio && isReceiverMode()) {
 				audioUnlockedRef.current = true;
 				videoRef.current.muted = false;
@@ -332,15 +333,32 @@ function PlayerView(props: PlayerViewProps) {
 					: !isPlaying;
 			}
 
-			videoRef.current.play().catch((error) => {
+			console.log(
+				'[VIDEO_DBG] srcObject set:',
+				'hasAudio=', hasAudio,
+				'wasMuted=', wasMuted, 'nowMuted=', videoRef.current.muted,
+				'paused=', videoRef.current.paused,
+				'mobileLike=', mobileLike,
+			);
+
+			videoRef.current.play().then(() => {
+				console.log(
+					'[VIDEO_DBG] play() SUCCESS:',
+					'videoW=', videoRef.current?.videoWidth,
+					'videoH=', videoRef.current?.videoHeight,
+					'readyState=', videoRef.current?.readyState,
+					'paused=', videoRef.current?.paused,
+				);
+			}).catch((error) => {
+				console.error('[VIDEO_DBG] play() FAILED:', error?.name, error?.message);
 				if (hasAudio && isReceiverMode() && videoRef.current) {
 					videoRef.current.muted = true;
 					videoRef.current.play().catch((retryError) => {
-						console.error('Error playing video:', retryError);
+						console.error('[VIDEO_DBG] play() retry FAILED:', retryError?.name, retryError?.message);
 					});
 					return;
 				}
-				console.error('Error playing video:', error);
+				console.error('[VIDEO_DBG] play() error:', error);
 			});
 			return;
 		}
@@ -502,6 +520,29 @@ function PlayerView(props: PlayerViewProps) {
 			}
 		};
 	}, [streamUrl, isWithControls, isPlaying, setPlaying, t]);
+
+	// --- PERIODIC VIDEO STATE MONITOR ---
+	useEffect(() => {
+		if (!streamUrl || !isWithControls) return;
+		const video = videoRef.current;
+		if (!video) return;
+		const id = setInterval(() => {
+			const vt = streamUrl.getVideoTracks()[0];
+			console.log(
+				'[VIDEO_MON]',
+				'trackMuted=', vt?.muted,
+				'trackEnabled=', vt?.enabled,
+				'videoW=', video.videoWidth,
+				'videoH=', video.videoHeight,
+				'readyState=', video.readyState,
+				'paused=', video.paused,
+				'networkState=', video.networkState,
+				'error=', video.error?.code,
+				'mutedAttr=', video.muted,
+			);
+		}, 5000);
+		return () => clearInterval(id);
+	}, [streamUrl, isWithControls]);
 
 	// @ts-ignore
 	return (

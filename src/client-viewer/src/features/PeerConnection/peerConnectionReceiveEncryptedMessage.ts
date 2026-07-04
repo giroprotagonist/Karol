@@ -14,7 +14,11 @@ export default async (
 	const message = await processMessage(payload);
 	// const message = payload as any;
 	if (message.type === 'CALL_USER') {
-		peerConnection.peer?.signal(message.payload.signalData);
+		try {
+			peerConnection.peer?.signal(message.payload.signalData);
+		} catch (error) {
+			console.warn('peer.signal failed during CALL_USER', error);
+		}
 	}
 	if (message.type === 'DENY_TO_CONNECT') {
 		setAndShowErrorDialogMessage(peerConnection, ErrorMessage.DENY_TO_CONNECT);

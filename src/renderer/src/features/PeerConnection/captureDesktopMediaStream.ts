@@ -1,5 +1,3 @@
-import setHostCaptureSessionActive from './setHostCaptureSessionActive';
-
 type VideoConstraints = {
 	frameRate: {
 		min?: number;
@@ -12,47 +10,20 @@ export default async function captureDesktopMediaStream(
 	videoConstraints: VideoConstraints,
 	includeSystemAudio = true,
 ): Promise<MediaStream> {
-	await setHostCaptureSessionActive(true);
+	// NOTE: do NOT call setHostCaptureSessionActive(true) here.
+	// The display-media handler in configureScreenCaptureSession.ts
+	// is the sole authority on capture-session state.
+	//
+	// Also, do NOT request audio from getDisplayMedia.  On macOS
+	// the combined video+audio request often produces a stream
+	// with zero video tracks, forcing a fallback that tears down
+	// and recreates the capture session — which leaves the
+	// receiver-side video track permanently muted.
+	// System audio is added separately by syncHostCastAudioOutput.
+	const _unused = includeSystemAudio; // keep signature for callers
 
-	const systemAudioConstraints = {
-		echoCancellation: false,
-		noiseSuppression: false,
-		autoGainControl: false,
-		channelCount: 2,
-		sampleRate: 48000,
-	} as MediaTrackConstraints;
-
-	const captureVideoOnly = async (): Promise<MediaStream> => {
-		return navigator.mediaDevices.getDisplayMedia({
-			video: videoConstraints,
-			audio: false,
-		});
-	};
-
-	try {
-		if (!includeSystemAudio) {
-			return await captureVideoOnly();
-		}
-
-		try {
-			const streamWithAudio = await navigator.mediaDevices.getDisplayMedia({
-				video: videoConstraints,
-				audio: systemAudioConstraints,
-			});
-			if (streamWithAudio.getVideoTracks().length > 0) {
-				return streamWithAudio;
-			}
-			streamWithAudio.getTracks().forEach((track) => track.stop());
-		} catch (error) {
-			console.warn(
-				'system audio capture unavailable, falling back to video only',
-				error,
-			);
-		}
-
-		return await captureVideoOnly();
-	} catch (error) {
-		await setHostCaptureSessionActive(false);
-		throw error;
-	}
+	return navigator.mediaDevices.getDisplayMedia({
+		video: videoConstraints,
+		audio: false,
+	});
 }

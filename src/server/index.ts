@@ -120,14 +120,15 @@ class DeskreenSignalingServer {
 			const roomId =
 				deskreenGlobal.sharingSessionService.waitingForConnectionSharingSession
 					?.roomID ?? '';
-			const shareBase = `http://${this.hostname}:${this.port}/${roomId}`;
+			const ip = getMyLocalIpV4() || this.hostname;
+			const shareBase = `http://${ip}:${this.port}/${roomId}`;
 			ctx.set('Access-Control-Allow-Origin', '*');
 			ctx.type = 'application/json';
 			ctx.body = {
 				name: 'Deskreen CE',
 				ready: roomId !== '',
 				roomId,
-				host: this.hostname,
+				host: ip,
 				port: this.port,
 				shareUrl: roomId !== '' ? `${shareBase}?receiver=1` : null,
 			};

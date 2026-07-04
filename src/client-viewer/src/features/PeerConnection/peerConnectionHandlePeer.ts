@@ -22,8 +22,16 @@ import {
 
 export function getSharingShourceType(peerConnection: PeerConnection) {
 	try {
-		peerConnection.peer?.send(prepareDataMessageToGetSharingSourceType());
-		peerConnection.peer?.send(prepareDataMessageToGetRemoteControlCapability());
+		if (!peerConnection.peer || !peerConnection.isStreamStarted) {
+			return;
+		}
+		// Access the underlying RTCDataChannel to verify it's open before calling send()
+		const simplePeer = peerConnection.peer as any;
+		if (!simplePeer._channel || simplePeer._channel.readyState !== 'open') {
+			return; // data channel not ready yet, retry on next interval
+		}
+		peerConnection.peer.send(prepareDataMessageToGetSharingSourceType());
+		peerConnection.peer.send(prepareDataMessageToGetRemoteControlCapability());
 	} catch (e) {
 		console.log(e);
 	}
@@ -34,6 +42,13 @@ export default (peerConnection: PeerConnection) => {
 		throw new PeerConnectionPeerIsNullError();
 	}
 	peerConnection.peer.on('stream', (stream) => {
+		const vt = stream.getVideoTracks()[0];
+		console.log(
+			'[VIDEO_DBG] stream arrived: vidTrack=', !!vt,
+			'muted=', vt?.muted, 'enabled=', vt?.enabled,
+			'readyState=', vt?.readyState,
+			'audioTracks=', stream.getAudioTracks().length,
+		);
 		peerConnection.setUrlCallback(stream);
 
 		if (isReceiverMode() && peerConnection.peer) {
