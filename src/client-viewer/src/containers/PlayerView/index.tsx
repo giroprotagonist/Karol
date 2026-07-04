@@ -105,6 +105,20 @@ function PlayerView(props: PlayerViewProps) {
 		() => getReceiverControlModePreference(),
 	);
 	const [touchRipples, setTouchRipples] = useState<TouchRipple[]>([]);
+	const [showKaraokeOverlay] = useState(true);
+	const [karaokeTitle, setKaraokeTitle] = useState('');
+
+	// Listen for karaoke info from host via data channel
+	useEffect(() => {
+		const handler = (e: Event) => {
+			const detail = (e as CustomEvent).detail as { title?: string };
+			if (detail?.title) {
+				setKaraokeTitle(detail.title);
+			}
+		};
+		window.addEventListener('deskreen-karaoke-info', handler);
+		return () => window.removeEventListener('deskreen-karaoke-info', handler);
+	}, []);
 	const controlAvailable =
 		receiverMode &&
 		remoteControlCapability.enabled &&
@@ -687,6 +701,26 @@ function PlayerView(props: PlayerViewProps) {
 					)}
 				</div>
 				<canvas id={COMPARISON_CANVAS_ID} style={{ display: 'none' }}></canvas>
+				{showKaraokeOverlay && karaokeTitle && (
+					<div
+						style={{
+							position: 'absolute',
+							bottom: 0,
+							left: 0,
+							right: 0,
+							background: 'rgba(0,0,0,0.7)',
+							color: '#fff',
+							padding: '8px 16px',
+							fontSize: 16,
+							fontWeight: 600,
+							textAlign: 'center',
+							zIndex: 5,
+							pointerEvents: 'none',
+						}}
+					>
+						{karaokeTitle}
+					</div>
+				)}
 			</div>
 		</div>
 	);

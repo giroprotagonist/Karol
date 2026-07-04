@@ -211,6 +211,19 @@ class DesktopCapturerSourcesService {
 		return appWindowSources;
 	}
 
+	/** Returns the Deskreen YouTube Player window source if it exists. */
+	getYouTubeWindowSource(): DesktopCapturerSource | null {
+		for (const [, source] of this.sources) {
+			if (
+				source.type === DesktopCapturerSourceType.WINDOW &&
+				source.source.name === 'Deskreen YouTube Player'
+			) {
+				return source.source;
+			}
+		}
+		return null;
+	}
+
 	getSourceDisplayIDByDisplayCapturerSourceID(sourceID: string): string {
 		let displayID = '';
 		[...this.sources.keys()].forEach((key) => {

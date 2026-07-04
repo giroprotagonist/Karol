@@ -37,6 +37,7 @@ import {
 	isMacPlatform,
 } from '../utils/macInputInjection';
 import type { RemoteInputPayload } from '../../common/RemoteInputTypes';
+import { initYouTubeKaraokeIpc } from './youtubeKaraokeIpc';
 
 export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 	ipcMain.on('client-changed-language', async (_, newLangCode) => {
@@ -719,23 +720,43 @@ export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 		}
 
 		let pickedSourceId = '';
+		// When YouTube Karaoke mode is active, prefer the YouTube player window
+		const karaokeActive =
+			store.has(ElectronStoreKeys.YouTubeKaraokeActive) &&
+			store.get(ElectronStoreKeys.YouTubeKaraokeActive) === 'true';
 		if (
 			typeof savedId === 'string' &&
 			savedId !== '' &&
-			sourcesMap.has(savedId)
+			sourcesMap.has(savedId) &&
+			!karaokeActive  // don't use stale saved ID when karaoke mode is on
 		) {
 			pickedSourceId = savedId;
 		} else {
-			const screens =
-				deskreenGlobal.desktopCapturerSourcesService.getScreenSources();
-			if (screens.length > 0) {
-				pickedSourceId = screens[0].id;
-			} else {
-				const windows =
-					deskreenGlobal.desktopCapturerSourcesService.getAppWindowSources();
-				if (windows.length > 0) {
-					pickedSourceId = windows[0].id;
+			if (karaokeActive) {
+				// Look for the YouTube window first
+				const ytSource =
+					deskreenGlobal.desktopCapturerSourcesService.getYouTubeWindowSource();
+				if (ytSource) {
+					pickedSourceId = ytSource.id;
+					console.error('[auto-connect] using YouTube window source', pickedSourceId);
 				}
+			}
+			if (!pickedSourceId) {
+				const screens =
+					deskreenGlobal.desktopCapturerSourcesService.getScreenSources();
+				if (screens.length > 0) {
+					pickedSourceId = screens[0].id;
+				} else {
+					const windows =
+						deskreenGlobal.desktopCapturerSourcesService.getAppWindowSources();
+					if (windows.length > 0) {
+						pickedSourceId = windows[0].id;
+					}
+				}
+			}
+			// Persist this pick for future connects
+			if (pickedSourceId) {
+				store.set(ElectronStoreKeys.LastDesktopCapturerSourceId, pickedSourceId);
 			}
 		}
 
@@ -817,4 +838,18 @@ export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 	});
 
 	void createWaitingForConnectionSharingSession();
+	initYouTubeKaraokeIpc(mainWindow);
+
+	// Forward karaoke info from the host UI to all active peer connections
+	ipcMain.on(IpcEvents.YOUTUBE_KARAOKE_SEND_INFO, (_, data: { title: string }) => {
+		const sessions = getDeskreenGlobal().sharingSessionService.sharingSessions;
+		for (const [, session] of sessions) {
+			try {
+				session.peerConnectionHelperRenderer?.webContents.send(
+					'send-karaoke-info',
+					data,
+				);
+			} catch (_) {}
+		}
+	});
 };

@@ -44,4 +44,13 @@ export enum IpcEvents {
 	GetPort = 'get-port',
 	OpenExternalLink = 'open-external-link',
 	WriteTextToClipboard = 'write-text-to-clipboard',
+	YOUTUBE_KARAOKE_OPEN_WINDOW = 'youtube-karaoke-open-window',
+	YOUTUBE_KARAOKE_CLOSE_WINDOW = 'youtube-karaoke-close-window',
+	YOUTUBE_KARAOKE_LOAD_VIDEO = 'youtube-karaoke-load-video',
+	YOUTUBE_KARAOKE_STATE_CHANGE = 'youtube-karaoke-state-change',
+	YOUTUBE_KARAOKE_QUEUE_VIDEO = 'youtube-karaoke-queue-video',
+	YOUTUBE_KARAOKE_PLAY_NOW = 'youtube-karaoke-play-now',
+	YOUTUBE_KARAOKE_GET_STATE = 'youtube-karaoke-get-state',
+	YOUTUBE_KARAOKE_SEARCH = 'youtube-karaoke-search',
+	YOUTUBE_KARAOKE_SEND_INFO = 'youtube-karaoke-send-info',
 }

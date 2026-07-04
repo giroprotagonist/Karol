@@ -101,6 +101,24 @@ export function handleIpcRenderer(): void {
 				peerConnection.notifyClientWithNewLanguage();
 			}
 		});
+
+		window.electron.ipcRenderer.on(
+			'send-karaoke-info',
+			(_, data: { title: string }) => {
+				if (peerConnection && peerConnection.peer && data?.title) {
+					try {
+						peerConnection.peer.send(
+							JSON.stringify({
+								type: 'karaoke_info',
+								payload: { title: data.title },
+							}),
+						);
+					} catch (_) {
+						// ignore closed data channel
+					}
+				}
+			},
+		);
 	});
 }
 

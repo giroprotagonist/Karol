@@ -25,6 +25,8 @@ import getMyLocalIpV4 from '../main/helpers/getMyLocalIpV4';
 import { getClientViewerDistPath } from './getClientViewerDistPath';
 import getScreenCapturePermissionStatus from '../main/utils/getScreenCapturePermissionStatus';
 import SharingSessionStatusEnum from '../features/SharingSessionService/SharingSessionStatusEnum';
+import { registerYouTubeKaraokeApi } from './youtubeKaraokeApi';
+import bodyParser from 'koa-bodyparser';
 
 const { hostname, primaryPort, backupPort } = config;
 
@@ -115,6 +117,7 @@ class DeskreenSignalingServer {
 		const router = new Router();
 
 		this.app.use(cors());
+		this.app.use(bodyParser());
 		router.get('/api/discover.json', (ctx) => {
 			const deskreenGlobal = getDeskreenGlobal();
 			const roomId =
@@ -154,6 +157,7 @@ class DeskreenSignalingServer {
 						.waitingForConnectionSharingSession?.roomID ?? '') !== '',
 			};
 		});
+		registerYouTubeKaraokeApi(router);
 		this.app.use(router.routes());
 
 		const clientDistDirectory = this.clientDistDirectory;

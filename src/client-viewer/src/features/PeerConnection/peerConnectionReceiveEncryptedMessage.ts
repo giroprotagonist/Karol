@@ -3,6 +3,7 @@ import { process as processMessage } from '../../utils/message';
 import NullUser from './NullUser';
 import PeerConnectionUserIsNotDefinedError from './errors/PeerConnectionUserIsNotDefinedError';
 import setAndShowErrorDialogMessage from './setAndShowErrorDialogMessage';
+import isReceiverMode from '../../utils/isReceiverMode';
 
 export default async (
 	peerConnection: PeerConnection,
@@ -24,6 +25,12 @@ export default async (
 		setAndShowErrorDialogMessage(peerConnection, ErrorMessage.DENY_TO_CONNECT);
 	}
 	if (message.type === 'DISCONNECT_BY_HOST_MACHINE_USER') {
+		// On the receiver (tablet), auto-reload to the root URL so
+		// LAN auto‑discovery finds the new waiting session immediately.
+		if (isReceiverMode()) {
+			window.location.href = window.location.origin;
+			return;
+		}
 		setAndShowErrorDialogMessage(peerConnection, ErrorMessage.DISCONNECTED);
 	}
 	if (message.type === 'ALLOWED_TO_CONNECT') {
