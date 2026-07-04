@@ -106,25 +106,25 @@ export default function configureScreenCaptureSession(): void {
 				const selected = await pickDesktopCapturerSource(
 					request.audioRequested,
 				);
-				if (!selected) {
-					if (!hadActiveCapture) {
-						capturerService?.setCaptureSessionActive(false);
-					}
+			if (!selected) {
+				if (!hadActiveCapture) {
+					capturerService?.setCaptureSessionActive(false, 'dmh-no-source');
+				}
 					callback({});
 					return;
 				}
 
-				if (!hadActiveCapture) {
-					capturerService?.setCaptureSessionActive(true);
-				}
+		if (!hadActiveCapture) {
+			capturerService?.setCaptureSessionActive(true, 'dmh-start');
+		}
 				callback({
 					video: selected,
 					audio: 'loopback',
 				});
 			} catch (error) {
-				if (!hadActiveCapture) {
-					capturerService?.setCaptureSessionActive(false);
-				}
+			if (!hadActiveCapture) {
+				capturerService?.setCaptureSessionActive(false, 'dmh-error');
+			}
 				console.error('display media request handler failed', error);
 				callback({});
 			}

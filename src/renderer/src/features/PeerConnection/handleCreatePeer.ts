@@ -201,3 +201,77 @@ export default function handleCreatePeer(
 			});
 	});
 }
+
+/** Recreate the WebRTC peer using the existing localStream (no capture restart). */
+export function warmReconnectPeer(peerConnection: PeerConnection): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const stream = peerConnection.localStream;
+		if (!stream) {
+			reject(new Error('warmReconnectPeer: no existing localStream'));
+			return;
+		}
+
+		// cleanup old peer
+		if (peerConnection.peer !== NullSimplePeer) {
+			try {
+				peerConnection.peer.removeAllListeners();
+				peerConnection.peer.destroy();
+			} catch (error) {
+				console.error('warmReconnectPeer: error cleaning up existing peer:', error);
+			}
+			peerConnection.peer = NullSimplePeer;
+		}
+
+		// reset signal state for fresh handshake
+		peerConnection.signalsDataToCallUser = [];
+		peerConnection.sentCallSignalCount = 0;
+		peerConnection.isCallStarted = false;
+
+		// @ts-ignore
+		const newPeer = new SimplePeer({
+			initiator: true,
+			config: {
+				iceServers: [
+					{ urls: 'stun:stun.l.google.com:19302' },
+					{ urls: 'stun:stun1.l.google.com:19302' },
+				],
+			},
+			sdpTransform: simplePeerHandleSdpTransform,
+		});
+
+		newPeer.addStream(stream);
+
+		newPeer.on('signal', (data: string) => {
+			peerConnection.signalsDataToCallUser.push(data);
+			peerConnection.flushPendingCallSignals();
+		});
+
+		newPeer.on('data', (data) => {
+			handlePeerOnData(peerConnection, data);
+		});
+
+		newPeer.on('close', () => {
+			const videoTrack = peerConnection.localStream?.getVideoTracks()[0];
+			console.warn('[RECONNECT] warmReconnect peer.close — readyState=', videoTrack?.readyState);
+			if (!videoTrack || videoTrack.readyState === 'ended') {
+				peerConnection.selfDestroy();
+				return;
+			}
+			console.warn('[RECONNECT] keeping session alive — capture track is still live');
+		});
+
+		newPeer.on('error', (e: Error) => {
+			const videoTrack = peerConnection.localStream?.getVideoTracks()[0];
+			console.error('[RECONNECT] warmReconnect peer.error:', e?.message, 'readyState=', videoTrack?.readyState);
+			if (!videoTrack || videoTrack.readyState === 'ended') {
+				peerConnection.selfDestroy();
+				return;
+			}
+			console.warn('[RECONNECT] keeping session alive despite peer error');
+		});
+
+		peerConnection.peer = newPeer;
+		console.warn('[RECONNECT] warm peer created, ready for new handshake');
+		resolve(undefined);
+	});
+}

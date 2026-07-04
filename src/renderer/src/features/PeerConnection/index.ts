@@ -2,6 +2,7 @@ import { prepare as prepareMessage } from '../../utils/message';
 import { connectSocket } from '../../../../common/connectSocket';
 import handleCreatePeer, {
 	attachCaptureTrackEndedHandler,
+	warmReconnectPeer,
 } from './handleCreatePeer';
 import handleSocket from './handleSocket';
 import { handleRecieveEncryptedMessage } from '../../utils/handleRecieveEncryptedMessage';
@@ -50,6 +51,7 @@ export default class PeerConnection {
 	sentCallSignalCount: number;
 	isCallStarted: boolean;
 	pendingCallPeer: boolean;
+	awaitingReconnect: boolean;
 	onDeviceConnectedCallback: (device: Device) => void;
 	displayID: string;
 	sourceDisplaySize: DisplaySize | undefined;
@@ -72,6 +74,7 @@ export default class PeerConnection {
 		this.sentCallSignalCount = 0;
 		this.isCallStarted = false;
 		this.pendingCallPeer = false;
+		this.awaitingReconnect = false;
 		this.localStream = null;
 		this.displayID = '';
 		this.sourceDisplaySize = undefined;

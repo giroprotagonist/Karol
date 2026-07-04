@@ -94,7 +94,7 @@ class DesktopCapturerSourcesService {
 		return this.captureSessionActive;
 	}
 
-	setCaptureSessionActive(active: boolean): void {
+	setCaptureSessionActive(active: boolean, caller = ''): void {
 		if (this.captureSessionActive === active) {
 			return;
 		}
@@ -102,7 +102,7 @@ class DesktopCapturerSourcesService {
 		this.log.warn(
 			active
 				? 'host capture session started'
-				: 'host capture session ended',
+				: `host capture session ended | caller=${caller}`,
 		);
 	}
 

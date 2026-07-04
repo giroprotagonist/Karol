@@ -60,6 +60,7 @@ export default function handleSelfDestroy(
 	};
 	peerConnection.isCallStarted = false;
 	peerConnection.pendingCallPeer = false;
+	peerConnection.awaitingReconnect = false;
 	peerConnection.sentCallSignalCount = 0;
 	peerConnection.signalsDataToCallUser = [];
 

@@ -538,6 +538,7 @@ export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 	ipcMain.handle(IpcEvents.SetHostCaptureSessionActive, (_, active: boolean) => {
 		getDeskreenGlobal().desktopCapturerSourcesService.setCaptureSessionActive(
 			Boolean(active),
+			active ? 'ipc-start' : 'ipc-stop',
 		);
 		if (!active) {
 			restoreMacOutputVolume();
