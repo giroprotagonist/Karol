@@ -10,20 +10,50 @@ export default async function captureDesktopMediaStream(
 	videoConstraints: VideoConstraints,
 	includeSystemAudio = true,
 ): Promise<MediaStream> {
-	// NOTE: do NOT call setHostCaptureSessionActive(true) here.
-	// The display-media handler in configureScreenCaptureSession.ts
-	// is the sole authority on capture-session state.
-	//
-	// Also, do NOT request audio from getDisplayMedia.  On macOS
-	// the combined video+audio request often produces a stream
-	// with zero video tracks, forcing a fallback that tears down
-	// and recreates the capture session — which leaves the
-	// receiver-side video track permanently muted.
-	// System audio is added separately by syncHostCastAudioOutput.
-	const _unused = includeSystemAudio; // keep signature for callers
+	// NOTE: do NOT call setHostCaptureSessionActive here — the
+	// display-media handler in configureScreenCaptureSession.ts
+	// is the sole authority on capture-session state.  Calling it
+	// prematurely deadlocks source enumeration.
 
-	return navigator.mediaDevices.getDisplayMedia({
-		video: videoConstraints,
-		audio: false,
-	});
+	const systemAudioConstraints = {
+		echoCancellation: false,
+		noiseSuppression: false,
+		autoGainControl: false,
+		channelCount: 2,
+		sampleRate: 48000,
+	} as MediaTrackConstraints;
+
+	const captureVideoOnly = async (): Promise<MediaStream> => {
+		return navigator.mediaDevices.getDisplayMedia({
+			video: videoConstraints,
+			audio: false,
+		});
+	};
+
+	if (!includeSystemAudio) {
+		return await captureVideoOnly();
+	}
+
+	// First attempt: video + system audio via the display-media handler
+	// (which responds with audio: 'loopback').  On macOS this sometimes
+	// produces a stream with zero video tracks — when that happens we
+	// stop the tracks and fall back to video-only.  The fallback works
+	// now because the capture-session deadlock has been fixed.
+	try {
+		const streamWithAudio = await navigator.mediaDevices.getDisplayMedia({
+			video: videoConstraints,
+			audio: systemAudioConstraints,
+		});
+		if (streamWithAudio.getVideoTracks().length > 0) {
+			return streamWithAudio;
+		}
+		streamWithAudio.getTracks().forEach((track) => track.stop());
+	} catch (error) {
+		console.warn(
+			'system audio capture unavailable, falling back to video only',
+			error,
+		);
+	}
+
+	return await captureVideoOnly();
 }

@@ -119,7 +119,7 @@ export default function configureScreenCaptureSession(): void {
 				}
 				callback({
 					video: selected,
-					audio: request.audioRequested ? 'loopback' : undefined,
+					audio: 'loopback',
 				});
 			} catch (error) {
 				if (!hadActiveCapture) {
