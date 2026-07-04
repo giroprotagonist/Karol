@@ -76,7 +76,6 @@ class MainActivity : AppCompatActivity() {
 		super.onCreate(savedInstanceState)
 		setContentView(R.layout.activity_main)
 
-		window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 		acquireCastWakeLock()
 		enterImmersiveMode()
 
@@ -343,8 +342,10 @@ class MainActivity : AppCompatActivity() {
 	private fun acquireCastWakeLock() {
 		val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
 		castWakeLock?.release()
+		// PARTIAL_WAKE_LOCK keeps CPU + network alive while allowing the screen to turn off.
+		// This lets the tablet stream video with the screen locked.
 		castWakeLock = powerManager.newWakeLock(
-			PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+			PowerManager.PARTIAL_WAKE_LOCK,
 			"DeskreenReceiver::Cast",
 		).apply {
 			acquire(10 * 60 * 60 * 1000L)
@@ -363,6 +364,49 @@ class MainActivity : AppCompatActivity() {
 	override fun onDestroy() {
 		releaseCastWakeLock()
 		super.onDestroy()
+	}
+
+	/**
+	 * When connected and streaming, aggressively keep the WebView alive.
+	 * Android's default WebView lifecycle pauses JS timers and media
+	 * when the Activity loses focus (screen lock), even with a WakeLock.
+	 * We counter by calling webView.onResume() immediately after super.onPause().
+	 */
+	override fun onPause() {
+		super.onPause()
+		if (isConnected) {
+			// Counter the system-level JS throttle by immediately
+			// resuming the WebView after the framework paused it.
+			if (this::webView.isInitialized) {
+				webView.onResume()
+			}
+			// Re-acquire the wake lock in case the system released it
+			acquireCastWakeLock()
+			return
+		}
+		if (this::webView.isInitialized) {
+			webView.onPause()
+		}
+	}
+
+	override fun onResume() {
+		super.onResume()
+		if (this::webView.isInitialized) {
+			webView.onResume()
+		}
+	}
+
+	/**
+	 * When the window loses focus (screen lock), pump the WebView
+	 * back to life.  Without this, Samsung's power manager may
+	 * still throttle the renderer despite the WakeLock.
+	 */
+	override fun onWindowFocusChanged(hasFocus: Boolean) {
+		super.onWindowFocusChanged(hasFocus)
+		if (!hasFocus && isConnected && this::webView.isInitialized) {
+			webView.onResume()
+			acquireCastWakeLock()
+		}
 	}
 
 	override fun onNewIntent(intent: Intent) {
