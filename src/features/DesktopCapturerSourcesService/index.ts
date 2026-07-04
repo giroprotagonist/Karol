@@ -50,6 +50,8 @@ class DesktopCapturerSourcesService {
 
 	captureSessionActive: boolean;
 
+	heartbeatInterval: ReturnType<typeof setInterval> | null;
+
 	permissionWarningLogged: boolean;
 
 	getSourcesChain: Promise<unknown>;
@@ -71,6 +73,7 @@ class DesktopCapturerSourcesService {
 		this.portalSelectionPromise = null;
 		this.lastRefreshError = null;
 		this.captureSessionActive = false;
+		this.heartbeatInterval = null;
 		this.permissionWarningLogged = false;
 		this.getSourcesChain = Promise.resolve();
 
@@ -104,6 +107,21 @@ class DesktopCapturerSourcesService {
 				? 'host capture session started'
 				: `host capture session ended | caller=${caller}`,
 		);
+
+		if (this.heartbeatInterval) {
+			clearInterval(this.heartbeatInterval);
+			this.heartbeatInterval = null;
+		}
+
+		if (active) {
+			const startTime = Date.now();
+			this.heartbeatInterval = setInterval(() => {
+				const uptimeSec = Math.round((Date.now() - startTime) / 1000);
+				this.log.warn(
+					`[HEARTBEAT] capture session alive for ${uptimeSec}s | sources=${this.sources.size}`,
+				);
+			}, 30000);
+		}
 	}
 
 	private shouldSkipLiveGetSources(reason: string): boolean {

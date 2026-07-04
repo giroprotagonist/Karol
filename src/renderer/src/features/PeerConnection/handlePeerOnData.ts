@@ -118,17 +118,79 @@ export default async function handlePeerOnData(
 			return;
 		}
 
-		const maxVideoQualityMultiplier = dataJSON.payload.value;
-		if (maxVideoQualityMultiplier >= 1) {
-			return;
-		}
+		const multiplier = dataJSON.payload.value as number;
+
+		const frameRate = multiplier >= 1 ? 30
+			: multiplier >= 0.8 ? 24
+			: multiplier >= 0.6 ? 20
+			: multiplier >= 0.4 ? 15
+			: 10;
 
 		try {
 			await videoTrack.applyConstraints({
-				frameRate: { max: 30, ideal: 24 },
+				frameRate: { max: frameRate, ideal: frameRate },
 			});
-		} catch (error) {
-			console.warn('failed to apply video quality constraints', error);
+		} catch (_error) {
+			console.warn('failed to apply frameRate constraint', _error);
+		}
+
+		if (multiplier < 1) {
+			try {
+				const simplePeer = peerConnection.peer as any;
+				const pc: RTCPeerConnection | undefined = simplePeer?._pc;
+				if (pc) {
+					const senders = pc.getSenders();
+					const videoSender = senders.find(
+						(s: RTCRtpSender) => s.track?.kind === 'video',
+					);
+					if (videoSender) {
+						const params = videoSender.getParameters();
+						if (params.encodings && params.encodings.length > 0) {
+							const targetKbps = Math.round(8000 * multiplier);
+							params.encodings[0].maxBitrate = targetKbps * 1000;
+							params.encodings[0].scaleResolutionDownBy =
+								multiplier >= 0.8 ? undefined
+								: multiplier >= 0.6 ? 1.25
+								: multiplier >= 0.4 ? 1.5
+								: 2;
+							await videoSender.setParameters(params);
+							console.warn(
+								'[QUALITY] applied bitrate',
+								targetKbps,
+								'kbps',
+								'fps',
+								frameRate,
+								'scale',
+								params.encodings[0].scaleResolutionDownBy,
+							);
+						}
+					}
+				}
+			} catch (_error) {
+				console.warn('failed to apply sender bitrate', _error);
+			}
+		} else {
+			try {
+				const simplePeer = peerConnection.peer as any;
+				const pc: RTCPeerConnection | undefined = simplePeer?._pc;
+				if (pc) {
+					const senders = pc.getSenders();
+					const videoSender = senders.find(
+						(s: RTCRtpSender) => s.track?.kind === 'video',
+					);
+					if (videoSender) {
+						const params = videoSender.getParameters();
+						if (params.encodings && params.encodings.length > 0) {
+							params.encodings[0].maxBitrate = 8000 * 1000;
+							params.encodings[0].scaleResolutionDownBy = undefined;
+							await videoSender.setParameters(params);
+							console.warn('[QUALITY] restored full 8000 kbps');
+						}
+					}
+				}
+			} catch (_error) {
+				console.warn('failed to restore sender bitrate', _error);
+			}
 		}
 	}
 
