@@ -211,4 +211,18 @@ export default (peerConnection: PeerConnection) => {
 			);
 		}
 	});
+
+	// Auto-recreate the peer on close so the tablet is ready when
+	// the Mac side sends a fresh CALL_USER for reconnection
+	peerConnection.peer.on('close', () => {
+		console.warn('[TABLET_RECONNECT] peer closed — recreating for possible reconnect');
+		peerConnection.peer?.removeAllListeners();
+		peerConnection.peer?.destroy();
+		peerConnection.createPeer();
+	});
+
+	peerConnection.peer.on('error', (e: Error) => {
+		console.error('[TABLET_RECONNECT] peer error:', e?.message);
+		// Let the close handler (if any) clean up — SimplePeer fires 'close' after 'error'
+	});
 };
