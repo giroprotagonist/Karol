@@ -17,7 +17,9 @@ export function attachCaptureTrackEndedHandler(
 	let recoveryAttempts = 0;
 
 	const recoverCapture = async (endedTrack: MediaStreamTrack): Promise<void> => {
+		console.warn('[RECOVER] attempt', recoveryAttempts + 1, 'of', MAX_CAPTURE_RECOVERY_ATTEMPTS);
 		if (peerConnection.peer === NullSimplePeer || !peerConnection.localStream) {
+			console.warn('[RECOVER] bail — peer is null or no localStream');
 			return;
 		}
 
@@ -26,6 +28,7 @@ export function attachCaptureTrackEndedHandler(
 			console.error(
 				'desktop capture track ended and recovery attempts exhausted',
 			);
+			console.warn('[RECOVER] exhaustion -> selfDestroy');
 			void setHostCaptureSessionActive(false);
 			peerConnection.selfDestroy();
 			return;
@@ -79,7 +82,7 @@ export function attachCaptureTrackEndedHandler(
 	};
 
 	videoTrack.onended = () => {
-		console.error('desktop capture track ended unexpectedly');
+		console.error('[RECOVER] desktop capture track ended unexpectedly — starting recovery');
 		void recoverCapture(videoTrack);
 	};
 }
@@ -164,23 +167,32 @@ export default function handleCreatePeer(
 					handlePeerOnData(peerConnection, data);
 				});
 
-				// ensure cleanup on peer end/error to prevent dangling helper window
-				peerConnection.peer.on('close', () => {
-					const videoTrack = peerConnection.localStream?.getVideoTracks()[0];
-					if (videoTrack?.readyState === 'ended') {
-						return;
-					}
-					peerConnection.selfDestroy();
-				});
+		// ensure cleanup on peer end/error — but ONLY if the capture track
+		// is actually dead.  A transient ICE disconnection (WiFi blip) will
+		// fire 'close' even though the capture stream is still fine.
+		// Track lifecycle (onended → recovery) is the authority.
+		peerConnection.peer.on('close', () => {
+			const videoTrack = peerConnection.localStream?.getVideoTracks()[0];
+			console.warn('[SELF_DESTROY] peer.close fired — videoTrack=', !!videoTrack, 'readyState=', videoTrack?.readyState);
+			if (!videoTrack || videoTrack.readyState === 'ended') {
+				// Track is dead — clean up
+				peerConnection.selfDestroy();
+				return;
+			}
+			// Track is still live — keep the session alive
+			// The capture track onended handler is the authority on session lifetime
+			console.warn('[SELF_DESTROY] keeping session alive — capture track is still live');
+		});
 
-				peerConnection.peer.on('error', (e: Error) => {
-					console.error('peerConnection peer error', e);
-					const videoTrack = peerConnection.localStream?.getVideoTracks()[0];
-					if (videoTrack?.readyState === 'ended') {
-						return;
-					}
-					peerConnection.selfDestroy();
-				});
+		peerConnection.peer.on('error', (e: Error) => {
+			const videoTrack = peerConnection.localStream?.getVideoTracks()[0];
+			console.error('[SELF_DESTROY] peer.error fired:', e?.message, 'readyState=', videoTrack?.readyState);
+			if (!videoTrack || videoTrack.readyState === 'ended') {
+				peerConnection.selfDestroy();
+				return;
+			}
+			console.warn('[SELF_DESTROY] keeping session alive despite peer error — capture track is still live');
+		});
 				resolve(undefined);
 			})
 			.catch((e) => {

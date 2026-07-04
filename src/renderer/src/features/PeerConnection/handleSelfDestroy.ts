@@ -8,6 +8,7 @@ import { resetRemoteControlSessionNotification } from './handlePeerOnData';
 export default function handleSelfDestroy(
 	peerConnection: PeerConnection,
 ): void {
+	console.warn('[SELF_DESTROY] called — capturing stack for diagnostics', new Error().stack);
 	resetRemoteControlSessionNotification();
 	peerConnection.partner = NullUser;
 	window.electron.ipcRenderer.invoke(
