@@ -24,6 +24,7 @@ export enum IpcEvents {
 	RequestDesktopCapturerPortalSource = 'request-desktop-capturer-portal-source',
 	GetDesktopSharingSourceIds = 'get-desktop-sharing-source-ids',
 	GetScreenCapturePermissionStatus = 'get-screen-capture-permission-status',
+	OpenScreenCaptureSettings = 'open-screen-capture-settings',
 	GetOrPickDefaultSharingSourceId = 'get-or-pick-default-sharing-source-id',
 	AutoConnectTrustedReceiver = 'auto-connect-trusted-receiver',
 	SetDesktopCapturerSourceId = 'set-desktop-capturer-source-id',

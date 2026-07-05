@@ -1,3 +1,5 @@
+import NullSimplePeer from './NullSimplePeer';
+
 export default (peerConnection: PeerConnection): void => {
 	if (peerConnection.isSocketRoomLocked) {
 		peerConnection.toggleLockRoom(false);

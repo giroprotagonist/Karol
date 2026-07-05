@@ -122,7 +122,7 @@ export class ReceiverStreamHealthMonitor {
 			const staleMs = Date.now() - this.lastProgressAt;
 			const frozenThresholdMs = getFrozenThresholdMs();
 			const frameStaleMs = getFrameStaleMs();
-			if (staleMs >= frozenThresholdMs) {
+			if (staleMs >= frozenThresholdMs && this.video.paused) {
 				this.video.play().catch(() => {
 					// autoplay policy — ignore
 				});

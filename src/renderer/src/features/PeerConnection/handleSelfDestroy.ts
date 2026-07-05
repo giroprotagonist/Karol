@@ -3,6 +3,7 @@ import NullSimplePeer from './NullSimplePeer';
 import NullUser from './NullUser';
 import setHostCaptureSessionActive from './setHostCaptureSessionActive';
 import syncHostCastAudioOutput from './syncHostCastAudioOutput';
+import { releaseHostMonoAudioMix } from './hostMonoAudioMix';
 import { resetRemoteControlSessionNotification } from './handlePeerOnData';
 
 export default function handleSelfDestroy(
@@ -41,6 +42,7 @@ export default function handleSelfDestroy(
 	if (peerConnection.localStream) {
 		void syncHostCastAudioOutput(null, false);
 		void setHostCaptureSessionActive(false);
+		releaseHostMonoAudioMix(peerConnection.localStream);
 		peerConnection.localStream.getTracks().forEach((track) => {
 			track.stop();
 		});

@@ -20,6 +20,7 @@ import {
 	setReceiverQualityBufferPreference,
 } from '../../utils/receiverQualityBufferPreference';
 import { applyReceiverQualityBufferFromPreference } from '../../utils/receiverJitterBuffer';
+import { initPlaybackRateLock } from '../../utils/playbackRateLock';
 import { RECEIVER_QUALITY_BUFFER_DELAY_MS } from '../../constants/castReliabilityConstants';
 import { ReceiverStreamHealthMonitor } from '../../utils/receiverStreamHealth';
 import type { RemoteControlCapabilityPayload } from '../../../../common/RemoteInputTypes';
@@ -521,6 +522,20 @@ function PlayerView(props: PlayerViewProps) {
 		};
 	}, [streamUrl, isWithControls, isPlaying, setPlaying, t]);
 
+	// Lock playbackRate to 1.0 — Chromium WebRTC jitter buffer compensation.
+	useEffect(() => {
+		if (!streamUrl || !isWithControls) return;
+		const video = videoRef.current;
+		if (!video) return;
+		return initPlaybackRateLock(video);
+	}, [streamUrl, isWithControls]);
+
+	// Apply quality buffer jitter targets when receiver prefs are active.
+	useEffect(() => {
+		if (!receiverMode || !isQualityBufferEnabled) return;
+		applyReceiverQualityBufferFromPreference();
+	}, [receiverMode, isQualityBufferEnabled, streamUrl]);
+
 	// --- PERIODIC VIDEO STATE MONITOR ---
 	useEffect(() => {
 		if (!streamUrl || !isWithControls) return;
@@ -528,14 +543,6 @@ function PlayerView(props: PlayerViewProps) {
 		if (!video) return;
 		const id = setInterval(() => {
 			const vt = streamUrl.getVideoTracks()[0];
-			if (video.playbackRate !== 1) {
-				console.warn(
-					'[RATE_LOCK] monitor: resetting playbackRate from',
-					video.playbackRate,
-					'to 1.0',
-				);
-				video.playbackRate = 1;
-			}
 			console.log(
 				'[VIDEO_MON]',
 				'trackMuted=', vt?.muted,
@@ -628,21 +635,6 @@ function PlayerView(props: PlayerViewProps) {
 									height: '100%',
 									objectFit: 'contain',
 									backgroundColor: 'black',
-								}}
-								onRateChange={(e) => {
-									// Chromium's WebRTC jitter buffer may internally
-									// adjust playbackRate to accelerate/decelerate
-									// playout. Lock it to 1.0 to prevent audible
-									// speed fluctuations (chipmunk / slowdown).
-									const v = e.currentTarget;
-									if (v.playbackRate !== 1) {
-										console.warn(
-											'[RATE_LOCK] browser changed playbackRate to',
-											v.playbackRate,
-											'— resetting to 1.0',
-										);
-										v.playbackRate = 1;
-									}
 								}}
 							/>
 							{isControlModeEnabled && controlAvailable ? (

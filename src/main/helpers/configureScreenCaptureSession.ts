@@ -14,8 +14,16 @@ export function getPreferredDesktopCapturerSourceId(): string {
 	return preferredCapturerSourceId;
 }
 
+function isCaptureRelatedPermission(permission: string): boolean {
+	return (
+		permission === 'display-capture' ||
+		permission === 'media' ||
+		permission === 'audioCapture'
+	);
+}
+
 async function pickDesktopCapturerSource(
-	audioRequested: boolean,
+	_audioRequested: boolean,
 ): Promise<DesktopCapturerSource | null> {
 	const capturerService = getDeskreenGlobal()?.desktopCapturerSourcesService;
 
@@ -78,11 +86,7 @@ export default function configureScreenCaptureSession(): void {
 
 	defaultSession.setPermissionRequestHandler(
 		(_webContents, permission, callback) => {
-			if (
-				permission === 'display-capture' ||
-				permission === 'media' ||
-				permission === 'audioCapture'
-			) {
+			if (isCaptureRelatedPermission(String(permission))) {
 				callback(true);
 				return;
 			}
@@ -91,11 +95,7 @@ export default function configureScreenCaptureSession(): void {
 	);
 
 	defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-		return (
-			permission === 'display-capture' ||
-			permission === 'media' ||
-			permission === 'audioCapture'
-		);
+		return isCaptureRelatedPermission(String(permission));
 	});
 
 	defaultSession.setDisplayMediaRequestHandler(

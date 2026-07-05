@@ -2,7 +2,6 @@ import { prepare as prepareMessage } from '../../utils/message';
 import { connectSocket } from '../../../../common/connectSocket';
 import handleCreatePeer, {
 	attachCaptureTrackEndedHandler,
-	warmReconnectPeer,
 } from './handleCreatePeer';
 import handleSocket from './handleSocket';
 import { handleRecieveEncryptedMessage } from '../../utils/handleRecieveEncryptedMessage';
@@ -15,6 +14,7 @@ import getAppLanguage from '../../../../common/getAppLanguage';
 import { IpcEvents } from '../../../../common/IpcEvents.enum';
 import getDesktopSourceStreamBySourceID from './getDesktopSourceStreamBySourceID';
 import syncHostCastAudioOutput from './syncHostCastAudioOutput';
+import { releaseHostMonoAudioMix } from './hostMonoAudioMix';
 
 import { Device } from '../../../../common/Device';
 import { LocalPeerUser } from '../../../../common/LocalPeerUser';
@@ -177,6 +177,7 @@ export default class PeerConnection {
 
 				// store reference to old stream before replacement
 				const oldStream = this.localStream;
+				releaseHostMonoAudioMix(oldStream);
 
 				// replace the track in the existing peer
 				// replaceTrack will add the new track to the old stream

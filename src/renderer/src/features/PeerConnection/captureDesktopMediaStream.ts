@@ -1,3 +1,5 @@
+import { applyHostMonoAudioMix } from './hostMonoAudioMix';
+
 type VideoConstraints = {
 	frameRate: {
 		min?: number;
@@ -5,6 +7,13 @@ type VideoConstraints = {
 		max?: number;
 	};
 };
+
+async function withHostMonoAudio(stream: MediaStream): Promise<MediaStream> {
+	if (stream.getAudioTracks().length === 0) {
+		return stream;
+	}
+	return applyHostMonoAudioMix(stream);
+}
 
 export default async function captureDesktopMediaStream(
 	videoConstraints: VideoConstraints,
@@ -45,7 +54,7 @@ export default async function captureDesktopMediaStream(
 			audio: systemAudioConstraints,
 		});
 		if (streamWithAudio.getVideoTracks().length > 0) {
-			return streamWithAudio;
+			return await withHostMonoAudio(streamWithAudio);
 		}
 		streamWithAudio.getTracks().forEach((track) => track.stop());
 	} catch (error) {

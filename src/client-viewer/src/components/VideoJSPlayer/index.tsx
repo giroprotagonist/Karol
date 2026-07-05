@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
 import './videojs-contain.css';
+import { initPlaybackRateLock } from '../../utils/playbackRateLock';
 
 interface VideoJSPlayerProps {
 	stream: MediaStream | null;
@@ -35,19 +36,7 @@ function VideoJSPlayer(props: VideoJSPlayerProps) {
 		videoEl.style.height = '100%';
 		videoEl.style.objectFit = 'contain';
 		videoEl.style.backgroundColor = 'black';
-		// Lock playbackRate to 1.0 — Chromium's WebRTC jitter buffer
-		// may adjust it to accelerate/decelerate playout.
-		videoEl.playbackRate = 1;
-		videoEl.addEventListener('ratechange', () => {
-			if (videoEl.playbackRate !== 1) {
-				console.warn(
-					'[RATE_LOCK] VideoJS: browser changed playbackRate to',
-					videoEl.playbackRate,
-					'— resetting to 1.0',
-				);
-				videoEl.playbackRate = 1;
-			}
-		});
+		const releaseRateLock = initPlaybackRateLock(videoEl);
 		// set container background to black to show letterboxing
 		try {
 			containerEl.style.backgroundColor = 'black';
@@ -68,6 +57,7 @@ function VideoJSPlayer(props: VideoJSPlayerProps) {
 		});
 
 		return () => {
+			releaseRateLock();
 			try {
 				if (playerRef.current) {
 					const instance = playerRef.current;

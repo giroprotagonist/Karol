@@ -6,6 +6,7 @@ import getDesktopSourceStreamBySourceID from './getDesktopSourceStreamBySourceID
 import DesktopCapturerSourceType from '../../../../common/DesktopCapturerSourceType';
 import setHostCaptureSessionActive from './setHostCaptureSessionActive';
 import syncHostCastAudioOutput from './syncHostCastAudioOutput';
+import { releaseHostMonoAudioMix } from './hostMonoAudioMix';
 import simplePeerHandleSdpTransform from './simplePeerHandleSdpTransform';
 
 const MAX_CAPTURE_RECOVERY_ATTEMPTS = 8;
@@ -54,6 +55,8 @@ export function attachCaptureTrackEndedHandler(
 			if (!oldStream) {
 				return;
 			}
+
+			releaseHostMonoAudioMix(oldStream);
 
 			await peerConnection.peer.replaceTrack(
 				endedTrack,
@@ -106,6 +109,7 @@ export default function handleCreatePeer(
 		if (peerConnection.localStream) {
 			void syncHostCastAudioOutput(null, false);
 			void setHostCaptureSessionActive(false);
+			releaseHostMonoAudioMix(peerConnection.localStream);
 			peerConnection.localStream.getTracks().forEach((track) => {
 				track.stop();
 			});
