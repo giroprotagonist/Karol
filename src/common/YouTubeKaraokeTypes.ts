@@ -5,15 +5,21 @@ export type YouTubeQueueItem = {
 	title: string;
 	thumbnail: string;
 	status: 'queued' | 'loading' | 'playing' | 'ended' | 'error';
+	errorReason?: string;
+	durationSec?: number;
 };
+
+export type YouTubeKaraokeMode = 'queue' | 'hotswap' | 'manual';
 
 export type YouTubeKaraokeState = {
 	queue: YouTubeQueueItem[];
 	currentIndex: number;
-	mode: 'queue' | 'hotswap';
+	mode: YouTubeKaraokeMode;
 	isPlaying: boolean;
 	currentTitle: string;
 	currentThumbnail: string;
+	currentTime: number;
+	duration: number;
 };
 
 export type YouTubeSearchResult = {
@@ -22,4 +28,12 @@ export type YouTubeSearchResult = {
 	channelTitle: string;
 	thumbnailUrl: string;
 	url: string;
+};
+
+export type YouTubeDjNowPlaying = {
+	title: string;
+	videoId: string;
+	currentTime: number;
+	duration: number;
+	state: number;
 };

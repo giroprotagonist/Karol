@@ -18,6 +18,7 @@ export default (
 			ErrorMessage.UNKNOWN_ERROR ||
 		isDisconnectError
 	) {
+		console.error('[DESKREEN_RECEIVER_ERROR]', errorMessage);
 		peerConnection.UIHandler.setDialogErrorMessageCallback(errorMessage);
 		peerConnection.UIHandler.setIsErrorDialogOpen(true);
 		peerConnection.UIHandler.errorDialogMessage = errorMessage;

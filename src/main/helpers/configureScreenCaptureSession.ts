@@ -3,6 +3,20 @@ import type { DesktopCapturerSource } from 'electron';
 import getScreenCapturePermissionStatus from '../utils/getScreenCapturePermissionStatus';
 import DesktopCapturerSourceType from '../../common/DesktopCapturerSourceType';
 import { getDeskreenGlobal } from './getDeskreenGlobal';
+import { store } from '../../common/deskreen-electron-store';
+import { ElectronStoreKeys } from '../../common/ElectronStoreKeys.enum';
+import { isYouTubeOutputCapturerSourceName } from './youtubeOutputPlayer';
+
+function isYouTubeKaraokeCaptureActive(): boolean {
+	return (
+		store.has(ElectronStoreKeys.YouTubeKaraokeActive) &&
+		store.get(ElectronStoreKeys.YouTubeKaraokeActive) === 'true'
+	);
+}
+
+function isYouTubePlayerWindowSource(source: DesktopCapturerSource): boolean {
+	return isYouTubeOutputCapturerSourceName(source.name);
+}
 
 let preferredCapturerSourceId = '';
 
@@ -32,7 +46,12 @@ async function pickDesktopCapturerSource(
 			preferredCapturerSourceId,
 		);
 		if (cached) {
-			return cached;
+			if (
+				!isYouTubeKaraokeCaptureActive() ||
+				isYouTubePlayerWindowSource(cached)
+			) {
+				return cached;
+			}
 		}
 	}
 
@@ -70,8 +89,6 @@ async function pickDesktopCapturerSource(
 		if (preferred) {
 			return preferred;
 		}
-		// Do not silently fall back to another source when the user (or session)
-		// explicitly chose one — that made window picks share the entire screen.
 		return null;
 	}
 

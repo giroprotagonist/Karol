@@ -25,11 +25,15 @@ export class ReceiverAudioPipelineController {
 
 	private delayNode: DelayNode | null = null;
 
+	private outputGain: GainNode | null = null;
+
 	private videoElement: HTMLVideoElement | null = null;
 
 	private isMonoEnabled = false;
 
 	private isBufferEnabled = false;
+
+	private playoutHoldSilence = false;
 
 	private bufferDelaySeconds = RECEIVER_QUALITY_BUFFER_DELAY_MS / 1000;
 
@@ -81,6 +85,13 @@ export class ReceiverAudioPipelineController {
 		this.applyRouting();
 	}
 
+	setPlayoutHoldSilence(hold: boolean): void {
+		this.playoutHoldSilence = hold;
+		if (this.outputGain) {
+			this.outputGain.gain.value = hold ? 0 : 1;
+		}
+	}
+
 	release(): void {
 		this.disconnectSource();
 		this.monoGraph = null;
@@ -93,6 +104,8 @@ export class ReceiverAudioPipelineController {
 		this.videoElement = null;
 		this.isMonoEnabled = false;
 		this.isBufferEnabled = false;
+		this.playoutHoldSilence = false;
+		this.outputGain = null;
 	}
 
 	private needsWebAudio(): boolean {
@@ -155,12 +168,23 @@ export class ReceiverAudioPipelineController {
 		return this.monoGraph;
 	}
 
+	private ensureOutputGain(): GainNode {
+		if (!this.audioContext) {
+			throw new Error('AudioContext is not initialized');
+		}
+		if (!this.outputGain) {
+			this.outputGain = this.audioContext.createGain();
+			this.outputGain.gain.value = this.playoutHoldSilence ? 0 : 1;
+		}
+		return this.outputGain;
+	}
+
 	private ensureDelayNode(): DelayNode {
 		if (!this.audioContext) {
 			throw new Error('AudioContext is not initialized');
 		}
 		if (!this.delayNode) {
-			this.delayNode = this.audioContext.createDelay(10);
+			this.delayNode = this.audioContext.createDelay(12);
 		}
 		this.delayNode.delayTime.value = this.isBufferEnabled
 			? this.bufferDelaySeconds
@@ -193,6 +217,13 @@ export class ReceiverAudioPipelineController {
 				// ignore
 			}
 		}
+		if (this.outputGain) {
+			try {
+				this.outputGain.disconnect();
+			} catch {
+				// ignore
+			}
+		}
 	}
 
 	private applyRouting(): void {
@@ -208,13 +239,17 @@ export class ReceiverAudioPipelineController {
 			outputNode = graph.merger;
 		}
 
+		const destinationGain = this.ensureOutputGain();
+
 		if (this.isBufferEnabled) {
 			const delay = this.ensureDelayNode();
 			outputNode.connect(delay);
-			delay.connect(this.audioContext.destination);
+			delay.connect(destinationGain);
+			destinationGain.connect(this.audioContext.destination);
 			return;
 		}
 
-		outputNode.connect(this.audioContext.destination);
+		outputNode.connect(destinationGain);
+		destinationGain.connect(this.audioContext.destination);
 	}
 }

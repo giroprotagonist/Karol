@@ -6,6 +6,7 @@ import Logger from '../../main/utils/LoggerWithFilePrefix';
 import DesktopCapturerSourceType from '../../common/DesktopCapturerSourceType';
 import isLinuxWaylandSession from '../../main/utils/isLinuxWaylandSession';
 import getScreenCapturePermissionStatus from '../../main/utils/getScreenCapturePermissionStatus';
+import { isYouTubeOutputCapturerSourceName } from '../../main/helpers/youtubeOutputPlayer';
 
 export interface DesktopCapturerSourceWithType {
 	source: import('electron').DesktopCapturerSource;
@@ -216,7 +217,7 @@ class DesktopCapturerSourcesService {
 		for (const [, source] of this.sources) {
 			if (
 				source.type === DesktopCapturerSourceType.WINDOW &&
-				source.source.name === 'Deskreen YouTube Player'
+				isYouTubeOutputCapturerSourceName(source.source.name)
 			) {
 				return source.source;
 			}
@@ -326,6 +327,14 @@ class DesktopCapturerSourcesService {
 			return null;
 		}
 		return this.sources.get(trimmed)?.source ?? null;
+	}
+
+	/** Upsert a window source into the cache (e.g. YouTube output player before cast). */
+	registerCachedWindowSource(source: DesktopCapturerSource): void {
+		this.sources.set(source.id, {
+			type: DesktopCapturerSourceType.WINDOW,
+			source,
+		});
 	}
 
 	async refreshDesktopCapturerSources(): Promise<void> {

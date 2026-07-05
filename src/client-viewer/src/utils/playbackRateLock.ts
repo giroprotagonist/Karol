@@ -1,11 +1,18 @@
-import { applyReceiverQualityBufferFromPreference } from './receiverJitterBuffer';
+import { getReceiverQualityBufferPreference } from './receiverQualityBufferPreference';
 
 const TARGET_RATE = 1;
 
+/** Clamp only pathological chipmunk / extreme slowdown. */
+const EXTREME_MIN_RATE = 0.5;
+const EXTREME_MAX_RATE = 1.5;
+
 let rateLockResetCount = 0;
 
-function lockPlaybackRate(video: HTMLVideoElement): void {
-	if (video.playbackRate === TARGET_RATE && video.defaultPlaybackRate === TARGET_RATE) {
+function lockPlaybackRateStrict(video: HTMLVideoElement): void {
+	if (
+		video.playbackRate === TARGET_RATE &&
+		video.defaultPlaybackRate === TARGET_RATE
+	) {
 		return;
 	}
 
@@ -23,14 +30,30 @@ function lockPlaybackRate(video: HTMLVideoElement): void {
 			')',
 		);
 	}
+}
 
-	applyReceiverQualityBufferFromPreference();
+function lockPlaybackRateWithQualityBuffer(video: HTMLVideoElement): void {
+	const rate = video.playbackRate;
+	if (rate >= EXTREME_MIN_RATE && rate <= EXTREME_MAX_RATE) {
+		return;
+	}
+	video.defaultPlaybackRate = TARGET_RATE;
+	video.playbackRate = TARGET_RATE;
+	console.warn('[RATE_LOCK] clamped extreme playbackRate', rate, 'to 1.0');
+}
+
+function lockPlaybackRate(video: HTMLVideoElement): void {
+	if (getReceiverQualityBufferPreference()) {
+		lockPlaybackRateWithQualityBuffer(video);
+		return;
+	}
+	lockPlaybackRateStrict(video);
 }
 
 /**
- * Pin HTMLMediaElement playback speed to 1.0. Chromium's WebRTC jitter buffer
- * may adjust playbackRate to accelerate/decelerate playout; this prevents
- * audible speed fluctuations (chipmunk / slowdown).
+ * Pin HTMLMediaElement playback speed to 1.0 in low-latency mode.
+ * When quality buffer is enabled, allow mild rate variation so Chromium's
+ * jitter buffer can absorb WiFi jitter without fighting every frame.
  */
 export function initPlaybackRateLock(video: HTMLVideoElement): () => void {
 	video.defaultPlaybackRate = TARGET_RATE;
@@ -53,7 +76,9 @@ export function initPlaybackRateLock(video: HTMLVideoElement): () => void {
 
 	let rafId = 0;
 	const tick = () => {
-		lockPlaybackRate(video);
+		if (!getReceiverQualityBufferPreference()) {
+			lockPlaybackRateStrict(video);
+		}
 		rafId = requestAnimationFrame(tick);
 	};
 	rafId = requestAnimationFrame(tick);
@@ -62,4 +87,4 @@ export function initPlaybackRateLock(video: HTMLVideoElement): () => void {
 		video.removeEventListener('ratechange', onRateChange);
 		cancelAnimationFrame(rafId);
 	};
-}
+};

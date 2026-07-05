@@ -1,115 +1,72 @@
 import Router from 'koa-router';
+import type { Context } from 'koa';
 import { BrowserWindow } from 'electron';
 import { IpcEvents } from '../common/IpcEvents.enum';
-import type { YouTubeQueueItem } from '../common/YouTubeKaraokeTypes';
+import type { YouTubeQueueItem, YouTubeDjNowPlaying } from '../common/YouTubeKaraokeTypes';
 import {
 	openYouTubePlayerWindow,
 	loadYouTubeVideo,
-	getYouTubeWindowSourceId,
-} from '../main/helpers/youtubeKaraokeWindow';
+	getYouTubePlayerInfo,
+} from '../main/helpers/youtubeOutputPlayer';
+import { autoSelectYouTubeWindowSource } from '../main/helpers/youtubeCaptureSource';
 import { signalingServer } from './index';
 import { store } from '../common/deskreen-electron-store';
 import { ElectronStoreKeys } from '../common/ElectronStoreKeys.enum';
-import { getDeskreenGlobal } from '../main/helpers/getDeskreenGlobal';
-import { setPreferredDesktopCapturerSourceId } from '../main/helpers/configureScreenCaptureSession';
 
-const PLAYER_HTML = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Deskreen YouTube Player</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' https://www.youtube.com https://*.youtube.com https://*.ytimg.com https://*.ggpht.com https://*.googleapis.com; script-src 'self' https://www.youtube.com https://*.youtube.com 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src https://www.youtube.com; media-src 'self'; connect-src https://www.youtube.com https://*.youtube.com https://*.googleapis.com;">
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-#player { width: 100%; height: 100%; }
-#status { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.6); font-family: -apple-system, sans-serif; font-size: 18px; pointer-events: none; z-index: 2; }
-</style>
-</head>
-<body>
-<div id="player"></div>
-<div id="status">Waiting for video...</div>
-<script src="https://www.youtube.com/iframe_api"></script>
-<script>
-(function () {
-  var player = null;
-  var currentVideoId = '';
-  var lastState = -2;
+type QueueRequestBody = {
+	url?: string;
+	action?: 'queue' | 'play-now';
+};
 
-  function hideStatus() { var el = document.getElementById('status'); if (el) el.style.display = 'none'; }
-  function showStatus(msg) { var el = document.getElementById('status'); if (el) { el.style.display = 'block'; el.textContent = msg; } }
+async function handleQueueAction(
+	url: string,
+	action: 'queue' | 'play-now',
+): Promise<{ ok: boolean; videoId?: string; error?: string }> {
+	const videoId = extractUrlVideoId(url);
+	if (!videoId) {
+		return { ok: false, error: 'invalid YouTube URL' };
+	}
 
-  function notifyState(state) {
-    if (state === lastState) return;
-    lastState = state;
-    var title = player && player.getVideoData ? (player.getVideoData().title || '') : '';
-    console.log('[YT_STATE]', JSON.stringify({ state: state, videoId: currentVideoId, title: title }));
-  }
+	const item: YouTubeQueueItem = {
+		id: `ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+		url,
+		videoId,
+		title: `YouTube: ${videoId}`,
+		thumbnail: '',
+		status: 'queued',
+	};
 
-  function createPlayer() {
-    if (player) return;
-    player = new YT.Player('player', {
-      height: '100%', width: '100%', videoId: '',
-      playerVars: { autoplay: 1, controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1, rel: 0, showinfo: 0, origin: window.location.origin },
-      events: {
-        onReady: function () { hideStatus(); notifyState(-2); },
-        onStateChange: function (event) { notifyState(event.data); },
-        onError: function (event) { console.error('[YT_ERROR] code=' + event.data); notifyState(-1); }
-      }
-    });
-  }
+	if (action === 'play-now') {
+		try {
+			store.set(ElectronStoreKeys.YouTubeKaraokeActive, 'true');
+			openYouTubePlayerWindow(signalingServer.port);
+			await new Promise((resolve) => setTimeout(resolve, 800));
+			await autoSelectYouTubeWindowSource();
+			await loadYouTubeVideo(videoId, signalingServer.port);
+		} catch (err) {
+			console.error('[YT_DJ_API] failed to setup play-now:', err);
+		}
+	}
 
-  window.onYouTubeIframeAPIReady = function () { createPlayer(); };
-  if (typeof YT !== 'undefined' && YT.Player) { createPlayer(); }
+	const windows = BrowserWindow.getAllWindows();
+	for (const win of windows) {
+		if (!win.isDestroyed()) {
+			win.webContents.send(IpcEvents.YOUTUBE_KARAOKE_QUEUE_VIDEO, item);
+			if (action === 'play-now') {
+				win.webContents.send('youtube-karaoke-play-now-from-api', videoId);
+			}
+		}
+	}
 
-  var attempts = 0;
-  var tryCreate = setInterval(function () {
-    attempts++;
-    if (player) { clearInterval(tryCreate); return; }
-    if (typeof YT !== 'undefined' && YT.Player) createPlayer();
-    if (attempts > 30) clearInterval(tryCreate);
-  }, 500);
-
-  window.addEventListener('message', function (event) {
-    var data = event.data;
-    if (!data || !data.type) return;
-    switch (data.type) {
-      case 'loadVideo':
-        if (player && player.loadVideoById) {
-          currentVideoId = data.videoId;
-          showStatus('Loading...');
-          player.loadVideoById({ videoId: data.videoId, startSeconds: 0 });
-        }
-        break;
-      case 'pauseVideo': if (player && player.pauseVideo) player.pauseVideo(); break;
-      case 'playVideo': if (player && player.playVideo) player.playVideo(); break;
-      case 'seekTo': if (player && player.seekTo) player.seekTo(data.seconds, true); break;
-      case 'getInfo':
-        var info = { currentTime: 0, duration: 0, state: lastState };
-        if (player && player.getCurrentTime) info.currentTime = player.getCurrentTime();
-        if (player && player.getDuration) info.duration = player.getDuration();
-        console.log('[YT_INFO]', JSON.stringify(info));
-        break;
-    }
-  });
-})();
-</script>
-</body>
-</html>`;
+	return { ok: true, videoId };
+}
 
 export function registerYouTubeKaraokeApi(router: Router): void {
-	// Serve the YouTube player HTML page at a proper origin (required by YouTube IFrame API)
-	router.get('/youtube-player', (ctx) => {
-		ctx.type = 'text/html';
-		ctx.body = PLAYER_HTML;
-	});
-	router.post('/api/youtube-karaoke/queue', async (ctx) => {
-		const body = ctx.request.body as {
-			url?: string;
-			action?: 'queue' | 'play-now';
-		};
-		const url = body?.url || '';
-		const action = body?.action || 'queue';
+	const queueHandler = async (ctx: Context) => {
+		const body = (ctx.request as Context['request'] & { body?: QueueRequestBody })
+			.body ?? {};
+		const url = body.url || '';
+		const action = body.action || 'queue';
 
 		if (!url) {
 			ctx.status = 400;
@@ -117,80 +74,50 @@ export function registerYouTubeKaraokeApi(router: Router): void {
 			return;
 		}
 
-		const videoId = extractUrlVideoId(url);
-		if (!videoId) {
+		const result = await handleQueueAction(url, action);
+		if (!result.ok) {
 			ctx.status = 400;
-			ctx.body = { error: 'invalid YouTube URL' };
+			ctx.body = { error: result.error };
 			return;
 		}
 
-		const item: YouTubeQueueItem = {
-			id: `ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-			url,
-			videoId,
-			title: `YouTube: ${videoId}`,
-			thumbnail: '',
-			status: 'queued',
-		};
+		ctx.body = { ok: true, videoId: result.videoId, action };
+	};
 
-		// Open the YouTube player window and load the video directly from the main process,
-		// bypassing the renderer so it works even when karaoke mode hasn't been toggled on yet.
-		if (action === 'play-now') {
-			try {
-				// Persist karaoke mode so auto-connect prefers the YouTube window
-				store.set(ElectronStoreKeys.YouTubeKaraokeActive, 'true');
-				const serverPort = signalingServer.port;
+	router.post('/api/youtube-karaoke/queue', queueHandler);
+	router.post('/api/youtube-dj/queue', queueHandler);
 
-				// Open the YouTube player window
-				openYouTubePlayerWindow(serverPort);
-				await new Promise((resolve) => setTimeout(resolve, 1000));
-
-				// Load the video
-				loadYouTubeVideo(videoId, serverPort);
-				await new Promise((resolve) => setTimeout(resolve, 500));
-
-				// Get the YouTube window's native source ID directly from the
-				// BrowserWindow (avoids source refresh which is blocked during
-				// active capture).
-				const ytSourceId = getYouTubeWindowSourceId();
-				if (ytSourceId) {
-					setPreferredDesktopCapturerSourceId(ytSourceId);
-					store.set(ElectronStoreKeys.LastDesktopCapturerSourceId, ytSourceId);
-
-					// Swap the capture source on all existing sessions mid‑stream.
-					// setDesktopCapturerSourceID triggers a track‑replacement via
-					// peer.replaceTrack() — the tablet doesn't even notice the switch.
-					const deskreenGlobal = getDeskreenGlobal();
-					const sessions = deskreenGlobal.sharingSessionService.sharingSessions;
-					for (const [, session] of sessions) {
-						session.setDesktopCapturerSourceID(ytSourceId);
-					}
-
-					// Also set on the waiting‑for‑connection session (future connects)
-					const waitingSession = deskreenGlobal.sharingSessionService.waitingForConnectionSharingSession;
-					waitingSession?.setDesktopCapturerSourceID(ytSourceId);
-				}
-			} catch (err) {
-				console.error('[YT_API] failed to setup karaoke session:', err);
-			}
+	router.post('/api/youtube-dj/play-now', async (ctx: Context) => {
+		const body = (ctx.request as Context['request'] & { body?: QueueRequestBody })
+			.body ?? {};
+		const url = body.url || '';
+		if (!url) {
+			ctx.status = 400;
+			ctx.body = { error: 'url is required' };
+			return;
 		}
-
-		// Also send IPC events to all renderer windows so the karaoke panel UI updates
-		const windows = BrowserWindow.getAllWindows();
-		for (const win of windows) {
-			if (!win.isDestroyed()) {
-				win.webContents.send(IpcEvents.YOUTUBE_KARAOKE_QUEUE_VIDEO, item);
-				if (action === 'play-now') {
-					win.webContents.send('youtube-karaoke-play-now-from-api', videoId);
-				}
-			}
-		}
-
-		ctx.body = { ok: true, videoId, action };
+		const result = await handleQueueAction(url, 'play-now');
+		ctx.body = result;
 	});
 
 	router.get('/api/youtube-karaoke/health', (ctx) => {
 		ctx.body = { ok: true };
+	});
+
+	router.get('/api/youtube-dj/health', (ctx) => {
+		ctx.body = { ok: true };
+	});
+
+	router.get('/api/youtube-dj/now-playing', async (ctx) => {
+		const info = await getYouTubePlayerInfo();
+		const payload: YouTubeDjNowPlaying = {
+			title: info?.title || '',
+			videoId: info?.videoId || '',
+			currentTime: info?.currentTime || 0,
+			duration: info?.duration || 0,
+			state: info?.state ?? -2,
+		};
+		ctx.body = payload;
 	});
 }
 
@@ -203,6 +130,11 @@ function extractUrlVideoId(url: string): string | null {
 		if (u.hostname.includes('youtu.be')) {
 			return u.pathname.slice(1).split('/')[0] || null;
 		}
-	} catch (_) {}
+	} catch {
+		// invalid URL
+	}
+	if (/^[a-zA-Z0-9_-]{11}$/.test(url.trim())) {
+		return url.trim();
+	}
 	return null;
 }

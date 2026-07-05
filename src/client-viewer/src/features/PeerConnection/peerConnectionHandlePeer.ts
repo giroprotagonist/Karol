@@ -42,13 +42,6 @@ export default (peerConnection: PeerConnection) => {
 		throw new PeerConnectionPeerIsNullError();
 	}
 	peerConnection.peer.on('stream', (stream) => {
-		const vt = stream.getVideoTracks()[0];
-		console.log(
-			'[VIDEO_DBG] stream arrived: vidTrack=', !!vt,
-			'muted=', vt?.muted, 'enabled=', vt?.enabled,
-			'readyState=', vt?.readyState,
-			'audioTracks=', stream.getAudioTracks().length,
-		);
 		peerConnection.setUrlCallback(stream);
 
 		if (isReceiverMode() && peerConnection.peer) {
@@ -155,6 +148,14 @@ export default (peerConnection: PeerConnection) => {
 		setTimeout(getSharingShourceType, 1000, peerConnection);
 
 		if (isReceiverMode()) {
+			applyReceiverQualityBufferFromPreference();
+			const jitterBufferRefresh = window.setInterval(() => {
+				applyReceiverQualityBufferFromPreference();
+			}, 10000);
+			stream.addEventListener('inactive', () => {
+				window.clearInterval(jitterBufferRefresh);
+			});
+
 			const capabilityPoll = window.setInterval(() => {
 				getSharingShourceType(peerConnection);
 			}, 8000);

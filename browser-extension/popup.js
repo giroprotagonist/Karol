@@ -52,23 +52,30 @@ async function sendToDeskreen(action) {
 	if (!isYouTube || !currentUrl) return;
 
 	const host = hostInput.value.trim() || 'localhost:3131';
-	const apiUrl = `http://${host}/api/youtube-karaoke/queue`;
+	const endpoints = [
+		`http://${host}/api/youtube-dj/queue`,
+		`http://${host}/api/youtube-karaoke/queue`,
+	];
 
-	try {
-		const response = await fetch(apiUrl, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ url: currentUrl, action }),
-		});
-		const data = await response.json();
-		if (data.ok) {
-			showStatus(action === 'play-now' ? 'Playing now!' : 'Added to queue!', 'success');
-		} else {
+	for (const apiUrl of endpoints) {
+		try {
+			const response = await fetch(apiUrl, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ url: currentUrl, action }),
+			});
+			const data = await response.json();
+			if (data.ok) {
+				showStatus(action === 'play-now' ? 'Playing now!' : 'Added to queue!', 'success');
+				return;
+			}
 			showStatus(data.error || 'Failed', 'error');
+			return;
+		} catch {
+			// try next endpoint
 		}
-	} catch (err) {
-		showStatus('Connection error. Is Deskreen running?', 'error');
 	}
+	showStatus('Connection error. Is Deskreen running?', 'error');
 }
 
 // Get current tab info

@@ -739,9 +739,13 @@ export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 				if (ytSource) {
 					pickedSourceId = ytSource.id;
 					console.error('[auto-connect] using YouTube window source', pickedSourceId);
+				} else {
+					console.error(
+						'[auto-connect] YouTube DJ active but output window not in capturer sources',
+					);
+					return { ok: false, reason: 'youtube-window-not-found' };
 				}
-			}
-			if (!pickedSourceId) {
+			} else if (!pickedSourceId) {
 				const screens =
 					deskreenGlobal.desktopCapturerSourcesService.getScreenSources();
 				if (screens.length > 0) {

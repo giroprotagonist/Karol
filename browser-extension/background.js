@@ -10,18 +10,28 @@ chrome.commands.onCommand.addListener((command) => {
 
 			chrome.storage.local.get(['deskreenHost'], (result) => {
 				const host = result.deskreenHost || 'localhost:3131';
-				fetch(`http://${host}/api/youtube-karaoke/queue`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ url, action: 'play-now' }),
-				})
-				.then((res) => res.json())
-				.then((data) => {
-					console.log('[Deskreen Karaoke] sent:', url, data.ok ? 'OK' : 'FAIL');
-				})
-				.catch((err) => {
-					console.error('[Deskreen Karaoke] error:', err.message);
-				});
+				const endpoints = [
+					`http://${host}/api/youtube-dj/queue`,
+					`http://${host}/api/youtube-karaoke/queue`,
+				];
+				const payload = JSON.stringify({ url, action: 'play-now' });
+				const trySend = (index) => {
+					if (index >= endpoints.length) {
+						console.error('[Deskreen DJ] connection failed');
+						return;
+					}
+					fetch(endpoints[index], {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: payload,
+					})
+						.then((res) => res.json())
+						.then((data) => {
+							console.log('[Deskreen DJ] sent:', url, data.ok ? 'OK' : 'FAIL');
+						})
+						.catch(() => trySend(index + 1));
+				};
+				trySend(0);
 			});
 		});
 	}

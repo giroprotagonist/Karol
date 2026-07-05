@@ -102,7 +102,17 @@ export default class PeerConnection {
 	}
 
 	async setDesktopCapturerSourceID(id: string): Promise<void> {
-		this.desktopCapturerSourceID = id;
+		const trimmedId = id.trim();
+		const existingTrack = this.localStream?.getVideoTracks()[0];
+		if (
+			trimmedId !== '' &&
+			trimmedId === this.desktopCapturerSourceID &&
+			existingTrack?.readyState === 'live'
+		) {
+			return;
+		}
+
+		this.desktopCapturerSourceID = trimmedId;
 		if (process.env.RUN_MODE === 'test') return;
 
 		// clear old display size when switching sources to ensure new source uses correct dimensions

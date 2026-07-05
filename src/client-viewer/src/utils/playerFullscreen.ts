@@ -1,5 +1,6 @@
 import screenfull from 'screenfull';
 import { PLAYER_WRAPPER_ID } from '../constants/appConstants';
+import isReceiverMode from './isReceiverMode';
 
 type LegacyFullscreenElement = HTMLElement & {
 	webkitRequestFullscreen?: () => Promise<void> | void;
@@ -140,6 +141,15 @@ export const enterPlayerFullscreen = async (): Promise<boolean> => {
 	const container = getPlayerContainer();
 	const ios = isIOSDevice();
 	const android = isAndroidDevice();
+	const receiver = isReceiverMode();
+
+	// Receiver: fullscreen the container so buffer UI stays visible and WebRTC
+	// is not moved to a separate Android video surface (which flushes jitter buffer).
+	if (receiver && videoContainer) {
+		if (await requestStandardFullscreen(videoContainer)) {
+			return true;
+		}
+	}
 
 	// iOS Safari: native video fullscreen layer.
 	if (video && ios) {

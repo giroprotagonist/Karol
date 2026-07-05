@@ -6,6 +6,14 @@ type VideoConstraints = {
 		ideal?: number;
 		max?: number;
 	};
+	width?: {
+		ideal?: number;
+		max?: number;
+	};
+	height?: {
+		ideal?: number;
+		max?: number;
+	};
 };
 
 async function withHostMonoAudio(stream: MediaStream): Promise<MediaStream> {

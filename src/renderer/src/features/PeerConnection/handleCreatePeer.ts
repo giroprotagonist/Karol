@@ -8,6 +8,7 @@ import setHostCaptureSessionActive from './setHostCaptureSessionActive';
 import syncHostCastAudioOutput from './syncHostCastAudioOutput';
 import { releaseHostMonoAudioMix } from './hostMonoAudioMix';
 import simplePeerHandleSdpTransform from './simplePeerHandleSdpTransform';
+import { applyHostStreamEncodingPreferences } from './applyHostStreamEncoding';
 
 const MAX_CAPTURE_RECOVERY_ATTEMPTS = 8;
 
@@ -169,6 +170,10 @@ export default function handleCreatePeer(
 
 				peerConnection.peer.on('data', (data) => {
 					handlePeerOnData(peerConnection, data);
+				});
+
+				peerConnection.peer.on('connect', () => {
+					applyHostStreamEncodingPreferences(peerConnection);
 				});
 
 		// ensure cleanup on peer end/error — but ONLY if the capture track

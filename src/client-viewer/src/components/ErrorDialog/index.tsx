@@ -1,5 +1,6 @@
 import { Classes, Dialog, Divider, H1, H2, H3, Icon } from '@blueprintjs/core';
 import { Col, Row } from 'react-flexbox-grid';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import './index.css';
 import { type ErrorMessageType } from './ErrorMessageEnum';
@@ -13,6 +14,12 @@ interface ErrorDialogProps {
 function ErrorDialog(props: ErrorDialogProps) {
 	const { t } = useTranslation();
 	const { errorMessage, isOpen, setIsOpen } = props;
+
+	useEffect(() => {
+		if (isOpen) {
+			console.error('[DESKREEN_RECEIVER_ERROR]', errorMessage);
+		}
+	}, [isOpen, errorMessage]);
 
 	return (
 		<Dialog
@@ -58,7 +65,12 @@ function ErrorDialog(props: ErrorDialogProps) {
 			</Row>
 			<Divider />
 			<div className={Classes.DIALOG_BODY}>
-				<H3 className={Classes.TEXT_MUTED}>{t(`${errorMessage}`)}</H3>
+				<H2 style={{ color: '#F55656', marginBottom: '12px', fontWeight: 600 }}>
+					{t(`${errorMessage}`)}
+				</H2>
+				<H3 className={Classes.TEXT_MUTED} style={{ fontSize: 14 }}>
+					{t('Deskreen CE Error Dialog')}
+				</H3>
 				<Divider />
 				<H2>{`${t('You may close this browser window then try to connect again')}.`}</H2>
 			</div>

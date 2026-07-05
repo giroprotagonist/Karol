@@ -29,6 +29,30 @@ export function extractVideoId(url: string): string | null {
 	return null;
 }
 
+export function extractPlaylistId(input: string): string | null {
+	const trimmed = input.trim();
+	if (!trimmed) {
+		return null;
+	}
+	if (/^PL[a-zA-Z0-9_-]+$/.test(trimmed)) {
+		return trimmed;
+	}
+	try {
+		const u = new URL(trimmed);
+		if (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) {
+			const list = u.searchParams.get('list');
+			if (list && list.startsWith('PL')) {
+				return list;
+			}
+		}
+	} catch (_) {}
+	return null;
+}
+
+export function isPlaylistUrl(input: string): boolean {
+	return extractPlaylistId(input) !== null;
+}
+
 export function extractVideoTitleFromUrl(url: string): string {
 	try {
 		const u = new URL(url);

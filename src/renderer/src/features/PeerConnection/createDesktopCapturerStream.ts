@@ -43,6 +43,23 @@ export default async function createDesktopCapturerStream(
 		);
 	}
 
+	if (trimmedSourceId.includes(DesktopCapturerSourceType.WINDOW)) {
+		try {
+			const { sourceId: ytSourceId } = (await window.electron.ipcRenderer.invoke(
+				IpcEvents.YOUTUBE_DJ_GET_CAPTURER_SOURCE_ID,
+			)) as { sourceId: string | null };
+			if (ytSourceId && ytSourceId !== trimmedSourceId) {
+				peerConnection.localStream = await captureWithSourceId(
+					peerConnection,
+					ytSourceId,
+				);
+				return;
+			}
+		} catch (ytResolveError) {
+			console.warn('youtube capturer resolve failed', ytResolveError);
+		}
+	}
+
 	try {
 		const isEntireScreenToShareChosen =
 			trimmedSourceId === '' ||

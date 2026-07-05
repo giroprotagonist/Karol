@@ -1,4 +1,8 @@
-import { type YouTubeQueueItem, type YouTubeKaraokeState } from '@common/YouTubeKaraokeTypes';
+import {
+	type YouTubeQueueItem,
+	type YouTubeKaraokeState,
+	type YouTubeKaraokeMode,
+} from '@common/YouTubeKaraokeTypes';
 
 let state: YouTubeKaraokeState = {
 	queue: [],
@@ -7,17 +11,24 @@ let state: YouTubeKaraokeState = {
 	isPlaying: false,
 	currentTitle: '',
 	currentThumbnail: '',
+	currentTime: 0,
+	duration: 0,
 };
 
 type StateChangeListener = (state: YouTubeKaraokeState) => void;
 let listeners: StateChangeListener[] = [];
 
 function notifyListeners(): void {
-	const snap = { ...state, queue: [...state.queue] };
+	const snap: YouTubeKaraokeState = {
+		...state,
+		queue: [...state.queue],
+	};
 	for (const fn of listeners) {
 		try {
 			fn(snap);
-		} catch (_) {}
+		} catch {
+			// ignore listener errors
+		}
 	}
 }
 
@@ -32,66 +43,205 @@ export function getKaraokeState(): YouTubeKaraokeState {
 	return { ...state, queue: [...state.queue] };
 }
 
-export function setKaraokeMode(mode: 'queue' | 'hotswap'): void {
+export function setKaraokeMode(mode: YouTubeKaraokeMode): void {
 	state.mode = mode;
+	saveQueue();
 	notifyListeners();
 }
 
 export function addToQueue(item: YouTubeQueueItem): void {
-	state.queue.push({ ...item, status: 'queued' });
+	state.queue.push({ ...item, status: item.status || 'queued' });
+	saveQueue();
+	notifyListeners();
+}
+
+export function addManyToQueue(items: YouTubeQueueItem[]): void {
+	for (const item of items) {
+		state.queue.push({ ...item, status: item.status || 'queued' });
+	}
 	saveQueue();
 	notifyListeners();
 }
 
 export function removeFromQueue(id: string): void {
+	const removedIndex = state.queue.findIndex((item) => item.id === id);
 	state.queue = state.queue.filter((item) => item.id !== id);
+	if (removedIndex >= 0 && removedIndex < state.currentIndex) {
+		state.currentIndex -= 1;
+	}
 	if (state.currentIndex >= state.queue.length) {
 		state.currentIndex = state.queue.length - 1;
+	}
+	if (state.queue.length === 0) {
+		state.currentIndex = -1;
+		state.isPlaying = false;
+		state.currentTitle = '';
 	}
 	saveQueue();
 	notifyListeners();
 }
 
-export function setNowPlaying(title: string, thumbnail: string): void {
+export function reorderQueue(fromIndex: number, toIndex: number): void {
+	if (
+		fromIndex < 0 ||
+		toIndex < 0 ||
+		fromIndex >= state.queue.length ||
+		toIndex >= state.queue.length ||
+		fromIndex === toIndex
+	) {
+		return;
+	}
+	const [item] = state.queue.splice(fromIndex, 1);
+	state.queue.splice(toIndex, 0, item);
+	if (state.currentIndex === fromIndex) {
+		state.currentIndex = toIndex;
+	} else if (
+		fromIndex < state.currentIndex &&
+		toIndex >= state.currentIndex
+	) {
+		state.currentIndex -= 1;
+	} else if (
+		fromIndex > state.currentIndex &&
+		toIndex <= state.currentIndex
+	) {
+		state.currentIndex += 1;
+	}
+	saveQueue();
+	notifyListeners();
+}
+
+export function moveQueueItemUp(id: string): void {
+	const index = state.queue.findIndex((item) => item.id === id);
+	if (index > 0) {
+		reorderQueue(index, index - 1);
+	}
+}
+
+export function moveQueueItemDown(id: string): void {
+	const index = state.queue.findIndex((item) => item.id === id);
+	if (index >= 0 && index < state.queue.length - 1) {
+		reorderQueue(index, index + 1);
+	}
+}
+
+export function setNowPlaying(
+	title: string,
+	thumbnail: string,
+	currentTime = 0,
+	duration = 0,
+): void {
 	state.currentTitle = title;
 	state.currentThumbnail = thumbnail;
+	state.currentTime = currentTime;
+	state.duration = duration;
 	state.isPlaying = true;
 	if (state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
 		state.queue[state.currentIndex].status = 'playing';
+		if (title) {
+			state.queue[state.currentIndex].title = title;
+		}
 	}
 	notifyListeners();
 }
 
-export function onVideoEnded(): void {
+export function setPlaybackProgress(currentTime: number, duration: number): void {
+	state.currentTime = currentTime;
+	state.duration = duration;
+	notifyListeners();
+}
+
+export function markCurrentError(reason: string): void {
+	if (state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
+		state.queue[state.currentIndex].status = 'error';
+		state.queue[state.currentIndex].errorReason = reason;
+	}
+	state.isPlaying = false;
+	saveQueue();
+	notifyListeners();
+}
+
+export function onVideoEnded(): string | null {
 	if (state.currentIndex >= 0 && state.currentIndex < state.queue.length) {
 		state.queue[state.currentIndex].status = 'ended';
 	}
+
+	if (state.mode === 'manual') {
+		state.isPlaying = false;
+		notifyListeners();
+		return null;
+	}
+
 	if (state.mode === 'queue') {
 		const nextIndex = state.currentIndex + 1;
 		if (nextIndex < state.queue.length) {
 			state.currentIndex = nextIndex;
 			state.queue[nextIndex].status = 'loading';
+			saveQueue();
 			notifyListeners();
-			return;
+			return state.queue[nextIndex].videoId;
 		}
 	}
+
 	state.isPlaying = false;
 	state.currentTitle = '';
+	state.currentTime = 0;
+	state.duration = 0;
+	saveQueue();
 	notifyListeners();
+	return null;
 }
 
-export function playNow(id: string): void {
+export function playNow(id: string): string | null {
 	const index = state.queue.findIndex((item) => item.id === id);
-	if (index === -1) return;
+	if (index === -1) {
+		return null;
+	}
 	state.currentIndex = index;
 	state.queue[index].status = 'loading';
 	state.isPlaying = true;
 	saveQueue();
 	notifyListeners();
+	return state.queue[index].videoId;
+}
+
+export function skipNext(): string | null {
+	if (state.queue.length === 0) {
+		return null;
+	}
+	const nextIndex =
+		state.currentIndex < 0 ? 0 : Math.min(state.currentIndex + 1, state.queue.length - 1);
+	state.currentIndex = nextIndex;
+	state.queue[nextIndex].status = 'loading';
+	state.isPlaying = true;
+	saveQueue();
+	notifyListeners();
+	return state.queue[nextIndex].videoId;
+}
+
+export function skipPrev(): string | null {
+	if (state.queue.length === 0) {
+		return null;
+	}
+	const prevIndex = Math.max(0, state.currentIndex <= 0 ? 0 : state.currentIndex - 1);
+	state.currentIndex = prevIndex;
+	state.queue[prevIndex].status = 'loading';
+	state.isPlaying = true;
+	saveQueue();
+	notifyListeners();
+	return state.queue[prevIndex].videoId;
+}
+
+export function getCurrentVideoId(): string | null {
+	if (state.currentIndex < 0 || state.currentIndex >= state.queue.length) {
+		return null;
+	}
+	return state.queue[state.currentIndex].videoId;
 }
 
 export function getNextVideoId(): string | null {
-	if (state.mode !== 'queue') return null;
+	if (state.mode !== 'queue') {
+		return null;
+	}
 	const nextIndex = state.currentIndex + 1;
 	if (nextIndex < state.queue.length) {
 		return state.queue[nextIndex].videoId;
@@ -104,6 +254,9 @@ export function clearQueue(): void {
 	state.currentIndex = -1;
 	state.isPlaying = false;
 	state.currentTitle = '';
+	state.currentThumbnail = '';
+	state.currentTime = 0;
+	state.duration = 0;
 	saveQueue();
 	notifyListeners();
 }
@@ -116,20 +269,67 @@ function saveQueue(): void {
 			mode: state.mode,
 		};
 		localStorage.setItem('deskreen_yt_queue', JSON.stringify(data));
-	} catch (_) {}
+	} catch {
+		// ignore quota errors
+	}
 }
 
 export function loadQueueFromStorage(): void {
 	try {
 		const raw = localStorage.getItem('deskreen_yt_queue');
-		if (raw) {
-			const data = JSON.parse(raw);
-			if (Array.isArray(data.queue)) {
-				state.queue = data.queue;
-				state.currentIndex =
-					typeof data.currentIndex === 'number' ? data.currentIndex : -1;
-				state.mode = data.mode === 'hotswap' ? 'hotswap' : 'queue';
+		if (!raw) {
+			return;
+		}
+		const data = JSON.parse(raw) as {
+			queue?: YouTubeQueueItem[];
+			currentIndex?: number;
+			mode?: YouTubeKaraokeMode;
+		};
+		if (Array.isArray(data.queue)) {
+			state.queue = data.queue;
+			state.currentIndex =
+				typeof data.currentIndex === 'number' ? data.currentIndex : -1;
+			if (data.mode === 'hotswap' || data.mode === 'manual' || data.mode === 'queue') {
+				state.mode = data.mode;
 			}
 		}
-	} catch (_) {}
+	} catch {
+		// ignore corrupt storage
+	}
+}
+
+export function exportQueueJson(): string {
+	return JSON.stringify(
+		{
+			queue: state.queue,
+			currentIndex: state.currentIndex,
+			mode: state.mode,
+		},
+		null,
+		2,
+	);
+}
+
+export function importQueueJson(raw: string): boolean {
+	try {
+		const data = JSON.parse(raw) as {
+			queue?: YouTubeQueueItem[];
+			currentIndex?: number;
+			mode?: YouTubeKaraokeMode;
+		};
+		if (!Array.isArray(data.queue)) {
+			return false;
+		}
+		state.queue = data.queue;
+		state.currentIndex =
+			typeof data.currentIndex === 'number' ? data.currentIndex : -1;
+		if (data.mode === 'hotswap' || data.mode === 'manual' || data.mode === 'queue') {
+			state.mode = data.mode;
+		}
+		saveQueue();
+		notifyListeners();
+		return true;
+	} catch {
+		return false;
+	}
 }

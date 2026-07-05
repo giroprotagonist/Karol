@@ -1,13 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Deskreen YouTube Karaoke",
-  "version": "1.0.0",
-  "description": "Send YouTube videos to Deskreen for karaoke DJ mode",
+  "name": "Deskreen YouTube DJ",
+  "version": "1.1.0",
+  "description": "Send YouTube videos to Deskreen DJ/Karaoke queue",
   "permissions": ["activeTab", "storage"],
-  "host_permissions": ["http://localhost:3131/*", "http://127.0.0.1:3131/*"],
+  "host_permissions": [
+    "http://localhost:3131/*",
+    "http://127.0.0.1:3131/*",
+    "http://localhost:3132/*",
+    "http://127.0.0.1:3132/*",
+    "http://*/*"
+  ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Send to Deskreen"
+    "default_title": "Send to Deskreen DJ"
   },
   "commands": {
     "send-to-deskreen": {
@@ -15,7 +21,7 @@
         "default": "Ctrl+Shift+K",
         "mac": "Command+Shift+K"
       },
-      "description": "Send current YouTube tab to Deskreen"
+      "description": "Send current YouTube tab to Deskreen DJ"
     }
   },
   "background": {

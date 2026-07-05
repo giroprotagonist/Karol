@@ -8,7 +8,10 @@ import {
 	PLAYER_WRAPPER_ID,
 } from '../../constants/appConstants';
 import { type VideoQualityType } from '../../features/VideoAutoQualityOptimizer/VideoQualityEnum';
-import { togglePlayerFullscreen } from '../../utils/playerFullscreen';
+import {
+	togglePlayerFullscreen,
+	subscribeToPlayerFullscreenChange,
+} from '../../utils/playerFullscreen';
 import isReceiverMode, { isMobilePlaybackDevice } from '../../utils/isReceiverMode';
 import { ReceiverAudioPipelineController } from '../../utils/receiverAudioPipeline';
 import {
@@ -20,8 +23,13 @@ import {
 	setReceiverQualityBufferPreference,
 } from '../../utils/receiverQualityBufferPreference';
 import { applyReceiverQualityBufferFromPreference } from '../../utils/receiverJitterBuffer';
+import {
+	getReceiverPlayoutBufferDelayMs,
+	isReceiverPlayoutBufferActive,
+	reapplyReceiverPlayoutBufferAfterFullscreen,
+	startReceiverPlayoutWithBuffer,
+} from '../../utils/receiverPlayoutBuffer';
 import { initPlaybackRateLock } from '../../utils/playbackRateLock';
-import { RECEIVER_QUALITY_BUFFER_DELAY_MS } from '../../constants/castReliabilityConstants';
 import { ReceiverStreamHealthMonitor } from '../../utils/receiverStreamHealth';
 import type { RemoteControlCapabilityPayload } from '../../../../common/RemoteInputTypes';
 import type { RemoteInputPayload } from '../../../../common/RemoteInputTypes';
@@ -88,6 +96,7 @@ function PlayerView(props: PlayerViewProps) {
 	const streamHealthMonitorRef = useRef<ReceiverStreamHealthMonitor | null>(
 		null,
 	);
+	const playoutCancelRef = useRef<(() => void) | null>(null);
 	const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 	const toasterRef = useRef<Awaited<ReturnType<typeof OverlayToaster.create>> | null>(null);
 	const mobileLike =
@@ -102,12 +111,18 @@ function PlayerView(props: PlayerViewProps) {
 	const [isQualityBufferEnabled, setIsQualityBufferEnabled] = useState(
 		() => getReceiverQualityBufferPreference(),
 	);
+	const [isPlayoutBuffering, setIsPlayoutBuffering] = useState(false);
+	const handlePlayoutBufferingChange = useCallback((buffering: boolean) => {
+		setIsPlayoutBuffering(buffering);
+		monoAudioControllerRef.current?.setPlayoutHoldSilence(buffering);
+	}, []);
 	const [isControlModeEnabled, setIsControlModeEnabled] = useState(
 		() => getReceiverControlModePreference(),
 	);
 	const [touchRipples, setTouchRipples] = useState<TouchRipple[]>([]);
 	const [showKaraokeOverlay] = useState(true);
 	const [karaokeTitle, setKaraokeTitle] = useState('');
+	const karaokeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	// Listen for karaoke info from host via data channel
 	useEffect(() => {
@@ -115,10 +130,21 @@ function PlayerView(props: PlayerViewProps) {
 			const detail = (e as CustomEvent).detail as { title?: string };
 			if (detail?.title) {
 				setKaraokeTitle(detail.title);
+				if (karaokeTimerRef.current) {
+					clearTimeout(karaokeTimerRef.current);
+				}
+				karaokeTimerRef.current = setTimeout(() => {
+					setKaraokeTitle('');
+				}, 8000);
 			}
 		};
 		window.addEventListener('deskreen-karaoke-info', handler);
-		return () => window.removeEventListener('deskreen-karaoke-info', handler);
+		return () => {
+			window.removeEventListener('deskreen-karaoke-info', handler);
+			if (karaokeTimerRef.current) {
+				clearTimeout(karaokeTimerRef.current);
+			}
+		};
 	}, []);
 	const controlAvailable =
 		receiverMode &&
@@ -144,8 +170,8 @@ function PlayerView(props: PlayerViewProps) {
 
 		controller.attach(videoRef.current, {
 			monoEnabled: showMonoOutputToggle && isMonoOutputEnabled,
-			bufferEnabled: isQualityBufferEnabled,
-			bufferDelayMs: RECEIVER_QUALITY_BUFFER_DELAY_MS,
+			bufferEnabled: false,
+			bufferDelayMs: 0,
 		});
 	}, [
 		showMonoOutputToggle,
@@ -181,6 +207,9 @@ function PlayerView(props: PlayerViewProps) {
 		streamHealthMonitorRef.current.attach(videoRef.current, {
 			qualityBufferEnabled: isQualityBufferEnabled,
 			onFrozen: () => {
+				if (isReceiverPlayoutBufferActive()) {
+					return;
+				}
 				videoRef.current?.play().catch(() => {
 					// ignore autoplay policy errors
 				});
@@ -211,6 +240,9 @@ function PlayerView(props: PlayerViewProps) {
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
 				void requestWakeLock();
+				if (isReceiverPlayoutBufferActive()) {
+					return;
+				}
 				if (videoRef.current?.paused) {
 					videoRef.current.play().catch(() => {
 						// ignore
@@ -240,10 +272,7 @@ function PlayerView(props: PlayerViewProps) {
 		setIsQualityBufferEnabled(enabled);
 		setReceiverQualityBufferPreference(enabled);
 		applyReceiverQualityBufferFromPreference();
-		await monoAudioControllerRef.current?.setBufferEnabled(
-			enabled,
-			RECEIVER_QUALITY_BUFFER_DELAY_MS,
-		);
+		await monoAudioControllerRef.current?.setBufferEnabled(false, 0);
 	}, [isControlModeEnabled]);
 
 	const handleControlModeToggle = useCallback(async (enabled: boolean) => {
@@ -269,10 +298,7 @@ function PlayerView(props: PlayerViewProps) {
 		setIsQualityBufferEnabled(restoreBuffer);
 		setReceiverQualityBufferPreference(restoreBuffer);
 		applyReceiverQualityBufferFromPreference();
-		await monoAudioControllerRef.current?.setBufferEnabled(
-			restoreBuffer,
-			RECEIVER_QUALITY_BUFFER_DELAY_MS,
-		);
+		await monoAudioControllerRef.current?.setBufferEnabled(false, 0);
 	}, [isQualityBufferEnabled]);
 
 	useEffect(() => {
@@ -337,53 +363,68 @@ function PlayerView(props: PlayerViewProps) {
 			}
 
 			const hasAudio = streamUrl.getAudioTracks().length > 0;
-			const wasMuted = videoRef.current.muted;
-			if (hasAudio && isReceiverMode()) {
+			const unmutedAfterBuffer = hasAudio && isReceiverMode();
+			if (unmutedAfterBuffer) {
 				audioUnlockedRef.current = true;
-				videoRef.current.muted = false;
-			} else {
-				// Mobile/WebView: muted autoplay so video renders immediately.
-				videoRef.current.muted = mobileLike
-					? !audioUnlockedRef.current
-					: !isPlaying;
 			}
 
-			console.log(
-				'[VIDEO_DBG] srcObject set:',
-				'hasAudio=', hasAudio,
-				'wasMuted=', wasMuted, 'nowMuted=', videoRef.current.muted,
-				'paused=', videoRef.current.paused,
-				'mobileLike=', mobileLike,
-			);
-
-			videoRef.current.play().then(() => {
-				console.log(
-					'[VIDEO_DBG] play() SUCCESS:',
-					'videoW=', videoRef.current?.videoWidth,
-					'videoH=', videoRef.current?.videoHeight,
-					'readyState=', videoRef.current?.readyState,
-					'paused=', videoRef.current?.paused,
-				);
-			}).catch((error) => {
-				console.error('[VIDEO_DBG] play() FAILED:', error?.name, error?.message);
-				if (hasAudio && isReceiverMode() && videoRef.current) {
-					videoRef.current.muted = true;
-					videoRef.current.play().catch((retryError) => {
-						console.error('[VIDEO_DBG] play() retry FAILED:', retryError?.name, retryError?.message);
-					});
-					return;
-				}
-				console.error('[VIDEO_DBG] play() error:', error);
+			const cancelPlayout = startReceiverPlayoutWithBuffer(videoRef.current, {
+				onBufferingChange: handlePlayoutBufferingChange,
+				unmutedAfterBuffer,
+				reason: 'stream-start',
 			});
-			return;
+			playoutCancelRef.current = cancelPlayout;
+
+			return () => {
+				cancelPlayout();
+				if (playoutCancelRef.current === cancelPlayout) {
+					playoutCancelRef.current = null;
+				}
+				setIsPlayoutBuffering(false);
+			};
 		}
 
 		// video.js mode (default) doesn't need imperative src assignment here
-	}, [streamUrl, isWithControls, isPlaying, mobileLike]);
+	}, [streamUrl, isWithControls, mobileLike, isQualityBufferEnabled, handlePlayoutBufferingChange]);
+
+	useEffect(() => {
+		if (!receiverMode || !isQualityBufferEnabled || !streamUrl || !isWithControls) {
+			return;
+		}
+
+		let wasFullscreen = false;
+
+		return subscribeToPlayerFullscreenChange((isFullscreen) => {
+			const video = videoRef.current;
+			if (!video) {
+				return;
+			}
+
+			if (isFullscreen === wasFullscreen) {
+				return;
+			}
+			wasFullscreen = isFullscreen;
+
+			const reason = isFullscreen ? 'fullscreen-enter' : 'fullscreen-exit';
+
+			playoutCancelRef.current?.();
+			playoutCancelRef.current = reapplyReceiverPlayoutBufferAfterFullscreen(
+				video,
+				{
+					onBufferingChange: handlePlayoutBufferingChange,
+					unmutedAfterBuffer: Boolean(streamUrl?.getAudioTracks().length),
+					reason,
+				},
+			);
+		});
+	}, [receiverMode, isQualityBufferEnabled, streamUrl, isWithControls, handlePlayoutBufferingChange]);
 
 	useEffect(() => {
 		if (isWithControls) {
 			if (!videoRef.current) return;
+			if (isReceiverPlayoutBufferActive()) {
+				return;
+			}
 		if (mobileLike) {
 			videoRef.current.muted = !audioUnlockedRef.current;
 		} else if (isReceiverMode() && streamUrl?.getAudioTracks().length) {
@@ -391,16 +432,16 @@ function PlayerView(props: PlayerViewProps) {
 		} else {
 			videoRef.current.muted = !isPlaying;
 		}
-			if (isPlaying) {
+			if (isPlaying && !isPlayoutBuffering) {
 				videoRef.current.play().catch((error) => {
 					console.error('Error playing video:', error);
 				});
-			} else {
+			} else if (!isPlaying) {
 				videoRef.current.pause();
 			}
 		}
 		// react-player play/pause is handled via its `playing` prop
-	}, [isPlaying, isWithControls, mobileLike, streamUrl]);
+	}, [isPlaying, isWithControls, mobileLike, streamUrl, isPlayoutBuffering]);
 
 	// initialize toaster
 	useEffect(() => {
@@ -434,12 +475,6 @@ function PlayerView(props: PlayerViewProps) {
 		if (nextPlaying && isMonoOutputEnabled) {
 			void monoAudioControllerRef.current?.setMonoEnabled(true);
 		}
-		if (nextPlaying && isQualityBufferEnabled) {
-			void monoAudioControllerRef.current?.setBufferEnabled(
-				true,
-				RECEIVER_QUALITY_BUFFER_DELAY_MS,
-			);
-		}
 		handlePlayPause();
 		
 		// show notification after a small delay to ensure state is updated
@@ -470,6 +505,9 @@ function PlayerView(props: PlayerViewProps) {
 		};
 
 		const handleFullscreenEnd = () => {
+			if (receiverMode && isQualityBufferEnabled) {
+				return;
+			}
 			// small delay to ensure video state is updated after fullscreen exit
 			setTimeout(() => {
 				const video = getVideoElement();
@@ -550,30 +588,6 @@ function PlayerView(props: PlayerViewProps) {
 		applyReceiverQualityBufferFromPreference();
 	}, [receiverMode, isQualityBufferEnabled, streamUrl]);
 
-	// --- PERIODIC VIDEO STATE MONITOR ---
-	useEffect(() => {
-		if (!streamUrl || !isWithControls) return;
-		const video = videoRef.current;
-		if (!video) return;
-		const id = setInterval(() => {
-			const vt = streamUrl.getVideoTracks()[0];
-			console.log(
-				'[VIDEO_MON]',
-				'trackMuted=', vt?.muted,
-				'trackEnabled=', vt?.enabled,
-				'videoW=', video.videoWidth,
-				'videoH=', video.videoHeight,
-				'readyState=', video.readyState,
-				'paused=', video.paused,
-				'networkState=', video.networkState,
-				'error=', video.error?.code,
-				'mutedAttr=', video.muted,
-			);
-		}, 5000);
-		return () => clearInterval(id);
-	}, [streamUrl, isWithControls]);
-
-	// @ts-ignore
 	return (
 		<div
 			style={{
@@ -641,7 +655,6 @@ function PlayerView(props: PlayerViewProps) {
 						<>
 							<video
 								ref={videoRef}
-								autoPlay
 								playsInline
 								className="absolute top-0 left-0 w-full h-full"
 								style={{
@@ -692,6 +705,25 @@ function PlayerView(props: PlayerViewProps) {
 						/>
 					)}
 				</div>
+				{isPlayoutBuffering && isWithControls ? (
+					<div
+						style={{
+							position: 'absolute',
+							inset: 0,
+							zIndex: 20,
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							backgroundColor: '#000',
+							color: '#fff',
+							fontSize: '1.1rem',
+							fontWeight: 600,
+							pointerEvents: 'none',
+						}}
+					>
+						{`Buffering (${Math.round(getReceiverPlayoutBufferDelayMs() / 1000)}s)…`}
+					</div>
+				) : null}
 				<canvas id={COMPARISON_CANVAS_ID} style={{ display: 'none' }}></canvas>
 				{showKaraokeOverlay && karaokeTitle && (
 					<div
@@ -700,13 +732,14 @@ function PlayerView(props: PlayerViewProps) {
 							bottom: 0,
 							left: 0,
 							right: 0,
-							background: 'rgba(0,0,0,0.7)',
-							color: '#fff',
-							padding: '8px 16px',
-							fontSize: 16,
+							zIndex: 5,
+							padding: '12px 20px',
+							background: 'linear-gradient(transparent, rgba(0,0,0,0.75))',
+							color: 'white',
+							fontSize: '16px',
 							fontWeight: 600,
 							textAlign: 'center',
-							zIndex: 5,
+							textShadow: '0 1px 4px rgba(0,0,0,0.5)',
 							pointerEvents: 'none',
 						}}
 					>
