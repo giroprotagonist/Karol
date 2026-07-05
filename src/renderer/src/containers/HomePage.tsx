@@ -8,6 +8,7 @@ import DeskreenStepper from './DeskreenStepper';
 import { Device } from '../../../common/Device';
 import TopPanel from '@renderer/components/TopPanel';
 import { IpcEvents } from '../../../common/IpcEvents.enum';
+import YouTubeKaraokePanel from '@renderer/components/YouTubeKaraokePanel/YouTubeKaraokePanel';
 
 // @ts-ignore: it is ok here, be like js it is fine
 // eslint-disable-next-line react/prop-types
@@ -149,6 +150,7 @@ export default function HomePage(): React.ReactElement {
 			<RemoteControlSessionListener />
 			<div className={Classes.TREE}>
 				<TopPanel handleReset={handleResetWithSharingSessionRestart} />
+				<YouTubeKaraokePanel />
 				<DeskreenStepper
 					activeStep={activeStep}
 					setActiveStep={setActiveStep}

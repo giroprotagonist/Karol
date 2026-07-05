@@ -210,6 +210,14 @@ export default (peerConnection: PeerConnection) => {
 				dataJSON.payload,
 			);
 		}
+
+		if (dataJSON.type === 'karaoke_info') {
+			window.dispatchEvent(
+				new CustomEvent('deskreen-karaoke-info', {
+					detail: dataJSON.payload,
+				}),
+			);
+		}
 	});
 
 	// Auto-recreate the peer on close so the tablet is ready when

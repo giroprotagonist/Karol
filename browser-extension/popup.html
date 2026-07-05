@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Deskreen Karaoke</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 300px;
+  padding: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+}
+h2 { font-size: 16px; margin-bottom: 12px; color: #fff; }
+h2 span { color: #e040fb; }
+#status { font-size: 12px; color: #4caf50; margin-bottom: 10px; min-height: 18px; }
+#status.error { color: #f44336; }
+#tab-title { font-size: 12px; color: #aaa; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 8px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+button:hover { opacity: 0.85; }
+.btn-queue {
+  background: #2196f3;
+  color: #fff;
+}
+.btn-play {
+  background: #4caf50;
+  color: #fff;
+}
+.btn-disabled {
+  background: #555;
+  color: #999;
+  cursor: not-allowed;
+}
+.footer {
+  margin-top: 12px;
+  font-size: 11px;
+  color: #666;
+  text-align: center;
+}
+.footer kbd {
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: monospace;
+  font-size: 10px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.settings-row input {
+  flex: 1;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #eee;
+  font-size: 12px;
+}
+</style>
+</head>
+<body>
+<h2>Deskreen <span>Karaoke</span></h2>
+<div id="status"></div>
+<div class="settings-row">
+  <label for="deskreen-host">Host:</label>
+  <input type="text" id="deskreen-host" placeholder="localhost:3131" value="localhost:3131" />
+  <button style="width:auto;padding:4px 8px;font-size:11px;margin:0;" onclick="saveHost()">Save</button>
+</div>
+<div id="tab-title">Loading...</div>
+<button class="btn-queue" id="btn-queue">Add to Queue</button>
+<button class="btn-play" id="btn-play">Play Now</button>
+<div class="footer">Shortcut: <kbd>Cmd+Shift+K</kbd></div>
+<script src="popup.js"></script>
+</body>
+</html>

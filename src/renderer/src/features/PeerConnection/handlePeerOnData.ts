@@ -216,6 +216,27 @@ export default async function handlePeerOnData(
 	}
 }
 
+/**
+ * Send karaoke overlay info over the data channel to the receiver.
+ * Called periodically from the karaoke panel to push the current song title.
+ */
+export function sendKaraokeInfoToReceiver(
+	peerConnection: PeerConnection,
+	title: string,
+): void {
+	if (!peerConnection.peer || !title) return;
+	try {
+		peerConnection.peer.send(
+			JSON.stringify({
+				type: 'karaoke_info',
+				payload: { title },
+			}),
+		);
+	} catch (_) {
+		// ignore closed data channel
+	}
+}
+
 export function resetRemoteControlSessionNotification(): void {
 	remoteControlSessionNotified = false;
 }
