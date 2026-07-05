@@ -2,6 +2,7 @@ import {
 	type YouTubeQueueItem,
 	type YouTubeKaraokeState,
 	type YouTubeKaraokeMode,
+	type YouTubeSearchResult,
 } from '@common/YouTubeKaraokeTypes';
 
 let state: YouTubeKaraokeState = {
@@ -61,6 +62,87 @@ export function addManyToQueue(items: YouTubeQueueItem[]): void {
 	}
 	saveQueue();
 	notifyListeners();
+}
+
+export function getQueuedVideoIds(): Set<string> {
+	const ids = new Set<string>();
+	for (const item of state.queue) {
+		if (
+			item.status === 'queued' ||
+			item.status === 'loading' ||
+			item.status === 'playing'
+		) {
+			ids.add(item.videoId);
+		}
+	}
+	return ids;
+}
+
+export function tryAddToQueue(item: YouTubeQueueItem): boolean {
+	if (getQueuedVideoIds().has(item.videoId)) {
+		return false;
+	}
+	addToQueue(item);
+	return true;
+}
+
+export function updateQueueItemMetadata(
+	videoId: string,
+	title: string,
+	thumbnail = '',
+): boolean {
+	let changed = false;
+	for (const item of state.queue) {
+		if (item.videoId !== videoId) {
+			continue;
+		}
+		if (title && item.title !== title) {
+			item.title = title;
+			changed = true;
+		}
+		if (thumbnail && !item.thumbnail) {
+			item.thumbnail = thumbnail;
+			changed = true;
+		}
+	}
+	if (changed) {
+		saveQueue();
+		notifyListeners();
+	}
+	return changed;
+}
+
+export function addNewVideosToQueue(
+	videos: YouTubeSearchResult[],
+	source: 'playlist' | 'manual' | 'extension',
+): YouTubeQueueItem[] {
+	const ids = getQueuedVideoIds();
+	const added: YouTubeQueueItem[] = [];
+	const now = Date.now();
+
+	for (let index = 0; index < videos.length; index += 1) {
+		const video = videos[index];
+		if (ids.has(video.videoId)) {
+			continue;
+		}
+		ids.add(video.videoId);
+		const item: YouTubeQueueItem = {
+			id: `${source}-${now}-${index}-${video.videoId}`,
+			url: video.url,
+			videoId: video.videoId,
+			title: video.title,
+			thumbnail: video.thumbnailUrl,
+			status: 'queued',
+		};
+		state.queue.push(item);
+		added.push(item);
+	}
+
+	if (added.length > 0) {
+		saveQueue();
+		notifyListeners();
+	}
+	return added;
 }
 
 export function removeFromQueue(id: string): void {

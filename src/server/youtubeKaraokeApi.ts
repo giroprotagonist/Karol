@@ -9,6 +9,7 @@ import {
 	getYouTubePlayerInfo,
 } from '../main/helpers/youtubeOutputPlayer';
 import { autoSelectYouTubeWindowSource } from '../main/helpers/youtubeCaptureSource';
+import { setPlaylistMode } from '../main/helpers/youtubePlaylistSync';
 import { signalingServer } from './index';
 import { store } from '../common/deskreen-electron-store';
 import { ElectronStoreKeys } from '../common/ElectronStoreKeys.enum';
@@ -16,6 +17,11 @@ import { ElectronStoreKeys } from '../common/ElectronStoreKeys.enum';
 type QueueRequestBody = {
 	url?: string;
 	action?: 'queue' | 'play-now';
+};
+
+type PlaylistSetRequestBody = {
+	playlistUrl?: string;
+	enabled?: boolean;
 };
 
 async function handleQueueAction(
@@ -31,7 +37,7 @@ async function handleQueueAction(
 		id: `ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 		url,
 		videoId,
-		title: `YouTube: ${videoId}`,
+		title: '',
 		thumbnail: '',
 		status: 'queued',
 	};
@@ -118,6 +124,31 @@ export function registerYouTubeKaraokeApi(router: Router): void {
 			state: info?.state ?? -2,
 		};
 		ctx.body = payload;
+	});
+
+	router.post('/api/youtube-dj/playlist', async (ctx: Context) => {
+		const body = (ctx.request as Context['request'] & { body?: PlaylistSetRequestBody })
+			.body ?? {};
+		const playlistUrl = body.playlistUrl?.trim() ?? '';
+		const enabled = body.enabled ?? true;
+
+		if (!playlistUrl) {
+			ctx.status = 400;
+			ctx.body = { error: 'playlistUrl is required' };
+			return;
+		}
+
+		try {
+			const config = await setPlaylistMode({
+				enabled,
+				playlistUrlOrId: playlistUrl,
+			});
+			ctx.body = { ok: true, config };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'failed to set playlist';
+			ctx.status = 400;
+			ctx.body = { ok: false, error: message };
+		}
 	});
 }
 

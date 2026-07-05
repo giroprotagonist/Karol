@@ -66,5 +66,12 @@ export enum IpcEvents {
 	YOUTUBE_DJ_FOCUS_PLAYER = 'youtube-dj-focus-player',
 	YOUTUBE_DJ_VIDEO_READY = 'youtube-dj-video-ready',
 	YOUTUBE_KARAOKE_IMPORT_PLAYLIST = 'youtube-karaoke-import-playlist',
+	YOUTUBE_DJ_SET_PLAYLIST_MODE = 'youtube-dj-set-playlist-mode',
+	YOUTUBE_DJ_GET_PLAYLIST_MODE = 'youtube-dj-get-playlist-mode',
+	YOUTUBE_DJ_SYNC_PLAYLIST_NOW = 'youtube-dj-sync-playlist-now',
+	YOUTUBE_DJ_PLAYLIST_SYNC_RESULT = 'youtube-dj-playlist-sync-result',
+	YOUTUBE_DJ_SET_API_KEY = 'youtube-dj-set-api-key',
+	YOUTUBE_DJ_GET_API_KEY = 'youtube-dj-get-api-key',
 	YOUTUBE_DJ_DEBUG_PLAYER = 'youtube-dj-debug-player',
+	YOUTUBE_DJ_RESOLVE_VIDEO_TITLES = 'youtube-dj-resolve-video-titles',
 }

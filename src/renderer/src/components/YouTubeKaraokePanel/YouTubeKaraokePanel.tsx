@@ -15,12 +15,13 @@ import type {
 	YouTubeKaraokeState,
 	YouTubeQueueItem,
 	YouTubeSearchResult,
+	YouTubeDjPlaylistModeConfig,
 } from '@common/YouTubeKaraokeTypes';
 import {
 	getKaraokeState,
 	setKaraokeMode,
-	addToQueue,
-	addManyToQueue,
+	addNewVideosToQueue,
+	tryAddToQueue,
 	removeFromQueue,
 	playNow,
 	clearQueue,
@@ -39,7 +40,21 @@ import {
 	extractVideoId,
 	isPlaylistUrl,
 } from '../../features/YouTubeKaraoke/youtubeSearch';
-import { YOUTUBE_DJ_TEST_PLAYLIST_URL } from '@common/youtubeDjDefaults';
+import { YOUTUBE_DJ_TEST_PLAYLIST_URL, PLAYLIST_SYNC_INTERVAL_MS } from '@common/youtubeDjDefaults';
+import { getQueueItemDisplayTitle } from '@common/youtubeQueueUtils';
+import {
+	formatPlaylistSyncTime,
+	getPlaylistModeConfig,
+	getYouTubeApiKey,
+	setPlaylistMode,
+	setYouTubeApiKey,
+	subscribeToPlaylistSyncResult,
+	syncPlaylistNow,
+} from '../../features/YouTubeKaraoke/youtubePlaylistMode';
+import {
+	resolveMissingQueueTitles,
+	scheduleQueueTitleResolution,
+} from '../../features/YouTubeKaraoke/youtubeQueueTitles';
 import {
 	startDjSession,
 	switchCaptureToYouTubeWindow,
@@ -60,6 +75,17 @@ const YT_STATES: Record<number, string> = {
 	5: 'cued',
 };
 
+function createQueueItem(url: string, videoId: string): YouTubeQueueItem {
+	return {
+		id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+		url,
+		videoId,
+		title: '',
+		thumbnail: '',
+		status: 'queued',
+	};
+}
+
 export default function YouTubeKaraokePanel(): React.ReactElement {
 	const [isEnabled, setIsEnabled] = useState(false);
 	const [state, setState] = useState<YouTubeKaraokeState>(getKaraokeState());
@@ -75,6 +101,11 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 	const [volume, setVolume] = useState(1);
 	const [manualMode, setManualMode] = useState(false);
 	const [isImportingPlaylist, setIsImportingPlaylist] = useState(false);
+	const [playlistModeConfig, setPlaylistModeConfig] =
+		useState<YouTubeDjPlaylistModeConfig | null>(null);
+	const [centralPlaylistUrl, setCentralPlaylistUrl] = useState(YOUTUBE_DJ_TEST_PLAYLIST_URL);
+	const [isSyncingPlaylist, setIsSyncingPlaylist] = useState(false);
+	const [persistApiKey, setPersistApiKey] = useState(true);
 	const [castStatus, setCastStatus] = useState<{
 		ok: boolean;
 		reason?: string;
@@ -86,9 +117,43 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 	useEffect(() => {
 		loadQueueFromStorage();
 		setState(getKaraokeState());
+		void resolveMissingQueueTitles().then(() => {
+			setState(getKaraokeState());
+		});
 		const unsub = subscribeToKaraokeState(setState);
+		void (async () => {
+			const config = await getPlaylistModeConfig();
+			setPlaylistModeConfig(config);
+			if (config.playlistUrl) {
+				setCentralPlaylistUrl(config.playlistUrl);
+			}
+			const storedKey = await getYouTubeApiKey();
+			if (storedKey) {
+				setApiKey(storedKey);
+				apiKeySetRef.current = true;
+				await setYouTubeApiKey(storedKey, false);
+			}
+		})();
 		return unsub;
 	}, []);
+
+	const applyPlaylistSyncResult = useCallback(
+		(result: { added?: YouTubeSearchResult[]; error?: string; syncedAt?: number }) => {
+			if (result.added && result.added.length > 0) {
+				addNewVideosToQueue(result.added, 'playlist');
+				scheduleQueueTitleResolution(result.added.map((video) => video.videoId));
+				setState(getKaraokeState());
+			}
+			void getPlaylistModeConfig().then(setPlaylistModeConfig);
+		},
+		[],
+	);
+
+	useEffect(() => {
+		return subscribeToPlaylistSyncResult((result) => {
+			applyPlaylistSyncResult(result);
+		});
+	}, [applyPlaylistSyncResult]);
 
 	useEffect(() => {
 		const checkCasting = async () => {
@@ -159,18 +224,11 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 					return;
 				}
 
-				const items: YouTubeQueueItem[] = videos.map((video, index) => ({
-					id: `pl-${Date.now()}-${index}-${video.videoId}`,
-					url: video.url,
-					videoId: video.videoId,
-					title: video.title,
-					thumbnail: video.thumbnailUrl,
-					status: 'queued' as const,
-				}));
-				addManyToQueue(items);
+				const added = addNewVideosToQueue(videos, 'manual');
+				scheduleQueueTitleResolution(videos.map((video) => video.videoId));
 				setState(getKaraokeState());
 
-				if (playFirst && items[0]) {
+				if (playFirst && added[0]) {
 					if (!sourceReady) {
 						setCastStatus((prev) => ({
 							ok: prev?.ok ?? false,
@@ -178,9 +236,9 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 						}));
 						return;
 					}
-					playNow(items[0].id);
+					playNow(added[0].id);
 					setState(getKaraokeState());
-					await loadVideoById(items[0].videoId);
+					await loadVideoById(added[0].videoId);
 				}
 			} finally {
 				setIsImportingPlaylist(false);
@@ -243,7 +301,8 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 
 	useEffect(() => {
 		const handler = (_event: unknown, item: YouTubeQueueItem) => {
-			addToQueue(item);
+			tryAddToQueue(item);
+			scheduleQueueTitleResolution([item.videoId]);
 			setState(getKaraokeState());
 		};
 		window.electron.ipcRenderer.on(IpcEvents.YOUTUBE_KARAOKE_QUEUE_VIDEO, handler);
@@ -260,16 +319,14 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 			setIsEnabled(true);
 			setSourceReady(true);
 			const url = `https://www.youtube.com/watch?v=${videoId}`;
-			const item: YouTubeQueueItem = {
-				id: `api-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-				url,
-				videoId,
-				title: `YouTube: ${videoId}`,
-				thumbnail: '',
-				status: 'queued',
-			};
-			addToQueue(item);
-			playNow(item.id);
+			const item = createQueueItem(url, videoId);
+			const existing = getKaraokeState().queue.find((q) => q.videoId === videoId);
+			const queueId = existing?.id ?? item.id;
+			if (!existing) {
+				tryAddToQueue(item);
+				scheduleQueueTitleResolution([videoId]);
+			}
+			playNow(queueId);
 			setState(getKaraokeState());
 			await loadVideoById(videoId);
 		};
@@ -319,9 +376,34 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 		if (!apiKey.trim()) {
 			return;
 		}
-		await window.electron.ipcRenderer.invoke('youtube-karaoke-set-api-key', apiKey.trim());
+		await setYouTubeApiKey(apiKey.trim(), persistApiKey);
 		apiKeySetRef.current = true;
-	}, [apiKey]);
+	}, [apiKey, persistApiKey]);
+
+	const handlePlaylistModeToggle = useCallback(
+		async (enabled: boolean) => {
+			try {
+				const config = await setPlaylistMode({
+					enabled,
+					playlistUrlOrId: centralPlaylistUrl.trim() || YOUTUBE_DJ_TEST_PLAYLIST_URL,
+				});
+				setPlaylistModeConfig(config);
+			} catch (error) {
+				console.error('[PLAYLIST_MODE]', error);
+			}
+		},
+		[centralPlaylistUrl],
+	);
+
+	const handleSyncPlaylistNow = useCallback(async () => {
+		setIsSyncingPlaylist(true);
+		try {
+			const result = await syncPlaylistNow();
+			applyPlaylistSyncResult(result);
+		} finally {
+			setIsSyncingPlaylist(false);
+		}
+	}, [applyPlaylistSyncResult]);
 
 	const handleSearch = useCallback(async () => {
 		if (!searchQuery.trim()) {
@@ -347,16 +429,14 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 				return;
 			}
 
-			const item: YouTubeQueueItem = {
-				id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-				url,
-				videoId,
-				title: `YouTube: ${videoId}`,
-				thumbnail: '',
-				status: 'queued',
-			};
-			addToQueue(item);
-			playNow(item.id);
+			const item = createQueueItem(url, videoId);
+			const existing = getKaraokeState().queue.find((q) => q.videoId === videoId);
+			const queueId = existing?.id ?? item.id;
+			if (!existing) {
+				tryAddToQueue(item);
+				scheduleQueueTitleResolution([videoId]);
+			}
+			playNow(queueId);
 			setState(getKaraokeState());
 			await loadVideoById(videoId);
 			setInputUrl('');
@@ -377,15 +457,9 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 				return;
 			}
 
-			const item: YouTubeQueueItem = {
-				id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-				url,
-				videoId,
-				title: `YouTube: ${videoId}`,
-				thumbnail: '',
-				status: 'queued',
-			};
-			addToQueue(item);
+			const item = createQueueItem(url, videoId);
+			tryAddToQueue(item);
+			scheduleQueueTitleResolution([videoId]);
 			setInputUrl('');
 			setState(getKaraokeState());
 		},
@@ -643,6 +717,62 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 				</Card>
 			</div>
 
+			<div style={{ padding: '0 20px 12px' }}>
+				<Card style={{ padding: 12 }}>
+					<div
+						style={{
+							display: 'flex',
+							justifyContent: 'space-between',
+							alignItems: 'center',
+							marginBottom: 8,
+						}}
+					>
+						<Text style={{ fontWeight: 600 }}>Central Playlist Mode</Text>
+						<Switch
+							checked={Boolean(playlistModeConfig?.enabled)}
+							onChange={(e) => void handlePlaylistModeToggle(e.currentTarget.checked)}
+							label={playlistModeConfig?.enabled ? 'On' : 'Off'}
+						/>
+					</div>
+					<InputGroup
+						placeholder="Collaborative YouTube playlist URL"
+						value={centralPlaylistUrl}
+						onChange={(e) => setCentralPlaylistUrl(e.target.value)}
+						disabled={Boolean(playlistModeConfig?.enabled)}
+						style={{ marginBottom: 8 }}
+					/>
+					<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+						<Button
+							icon="refresh"
+							small
+							loading={isSyncingPlaylist}
+							disabled={!playlistModeConfig?.enabled}
+							onClick={() => void handleSyncPlaylistNow()}
+						>
+							Sync now
+						</Button>
+						<Button
+							icon="list"
+							small
+							onClick={() => setCentralPlaylistUrl(YOUTUBE_DJ_TEST_PLAYLIST_URL)}
+							disabled={Boolean(playlistModeConfig?.enabled)}
+						>
+							Use test playlist
+						</Button>
+					</div>
+					<Text style={{ fontSize: 12, color: '#666' }}>
+						{playlistModeConfig?.enabled
+							? `Polling every ${Math.round(PLAYLIST_SYNC_INTERVAL_MS / 60_000)} min · ${playlistModeConfig.playlistId || 'no playlist'} · last sync ${formatPlaylistSyncTime(playlistModeConfig.lastSyncAt)} · +${playlistModeConfig.lastAddedCount} last run`
+							: 'Friends add songs on YouTube or via the browser extension; new playlist items auto-queue for the tablet.'}
+					</Text>
+					{playlistModeConfig?.lastSyncError ? (
+						<Text style={{ fontSize: 12, color: '#c23030', display: 'block', marginTop: 4 }}>
+							Sync error: {playlistModeConfig.lastSyncError}
+						</Text>
+					) : null}
+				</Card>
+			</div>
+
 			<div style={{ padding: '0 20px 8px' }}>
 				<ControlGroup fill>
 					<InputGroup
@@ -747,21 +877,26 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 				</Text>
 			</div>
 
-			{!apiKeySetRef.current && (
-				<div style={{ padding: '0 20px 8px' }}>
-					<ControlGroup fill>
-						<InputGroup
-							placeholder="YouTube Data API v3 key (optional, enables search)"
-							value={apiKey}
-							onChange={(e) => setApiKey(e.target.value)}
-							type="password"
-						/>
-						<Button icon="key" onClick={() => void handleSetApiKey()} disabled={!apiKey.trim()}>
-							Set
-						</Button>
-					</ControlGroup>
+			<div style={{ padding: '0 20px 8px' }}>
+				<ControlGroup fill>
+					<InputGroup
+						placeholder="YouTube Data API v3 key (recommended for playlist sync + search)"
+						value={apiKey}
+						onChange={(e) => setApiKey(e.target.value)}
+						type="password"
+					/>
+					<Button icon="key" onClick={() => void handleSetApiKey()} disabled={!apiKey.trim()}>
+						Save
+					</Button>
+				</ControlGroup>
+				<div style={{ marginTop: 6 }}>
+					<Switch
+						checked={persistApiKey}
+						onChange={(e) => setPersistApiKey(e.currentTarget.checked)}
+						label="Remember API key on this Mac"
+					/>
 				</div>
-			)}
+			</div>
 
 			{state.queue.length > 0 && (
 				<div style={{ padding: '0 20px 12px' }}>
@@ -806,8 +941,9 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 										textOverflow: 'ellipsis',
 										whiteSpace: 'nowrap',
 									}}
+									title={getQueueItemDisplayTitle(item.title, item.videoId)}
 								>
-									{item.title || item.videoId}
+									{getQueueItemDisplayTitle(item.title, item.videoId)}
 								</Text>
 								<Text style={{ fontSize: 11, color: '#888' }}>{item.status}</Text>
 								<Tooltip content="Move up">

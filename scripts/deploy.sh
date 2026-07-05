@@ -63,6 +63,36 @@ xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
 echo "Copied $SRC_APP → $APP_PATH"
 
 echo ""
+echo "=== Step 6b: Install private YouTube API key (local only, never in git) ==="
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LOCAL_KEY_FILE="$REPO_ROOT/config/youtube-api-key.local"
+USER_DATA_DIR="$HOME/Library/Application Support/deskreen-ce"
+USER_KEY_FILE="$USER_DATA_DIR/youtube-api-key.local"
+STORAGE_FILE="$USER_DATA_DIR/deskreen-ce-storage.json"
+
+if [ -f "$LOCAL_KEY_FILE" ]; then
+	mkdir -p "$USER_DATA_DIR"
+	cp "$LOCAL_KEY_FILE" "$USER_KEY_FILE"
+	chmod 600 "$USER_KEY_FILE" 2>/dev/null || true
+	KEY_VALUE="$(tr -d '[:space:]' < "$LOCAL_KEY_FILE" | head -c 200)"
+	if [ -n "$KEY_VALUE" ] && [ -f "$STORAGE_FILE" ]; then
+		python3 - "$STORAGE_FILE" "$KEY_VALUE" <<'PY'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data["youtubeDjApiKey"] = key
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+	fi
+	echo "Installed YouTube API key into Application Support (not bundled in .app)."
+else
+	echo "No config/youtube-api-key.local found — skip key install (use DJ panel or create file)."
+fi
+
+echo ""
 echo "=== Step 7: Clean dist to save space ==="
 rm -rf dist/mac-arm64 dist/mac-unpacked 2>/dev/null || true
 

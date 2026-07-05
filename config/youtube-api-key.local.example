@@ -1,0 +1,3 @@
+# Copy to youtube-api-key.local (gitignored) and paste your key on the first line.
+# Or use JSON: {"apiKey":"YOUR_KEY_HERE"}
+YOUR_YOUTUBE_DATA_API_KEY

@@ -12,3 +12,6 @@ export const YOUTUBE_DJ_TEST_PLAYLIST_VIDEO_IDS = [
 	'c18441Eh_WE',
 	'r7ERoX099ao',
 ] as const;
+
+/** How often to poll the central YouTube playlist for new songs. */
+export const PLAYLIST_SYNC_INTERVAL_MS = 180_000;

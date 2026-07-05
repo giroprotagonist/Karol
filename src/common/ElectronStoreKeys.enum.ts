@@ -5,4 +5,11 @@ export enum ElectronStoreKeys {
 	MuteMacSpeakersWhileCasting = 'muteMacSpeakersWhileCasting',
 	AllowTabletControlWhileCasting = 'allowTabletControlWhileCasting',
 	YouTubeKaraokeActive = 'youtubeKaraokeActive',
+	YouTubeDjPlaylistModeEnabled = 'youtubeDjPlaylistModeEnabled',
+	YouTubeDjCentralPlaylistId = 'youtubeDjCentralPlaylistId',
+	YouTubeDjCentralPlaylistUrl = 'youtubeDjCentralPlaylistUrl',
+	YouTubeDjSyncedVideoIds = 'youtubeDjSyncedVideoIds',
+	YouTubeDjPlaylistLastSyncAt = 'youtubeDjPlaylistLastSyncAt',
+	YouTubeDjPlaylistLastSyncError = 'youtubeDjPlaylistLastSyncError',
+	YouTubeDjApiKey = 'youtubeDjApiKey',
 }

@@ -37,3 +37,25 @@ export type YouTubeDjNowPlaying = {
 	duration: number;
 	state: number;
 };
+
+export type YouTubeDjPlaylistModeConfig = {
+	enabled: boolean;
+	playlistId: string;
+	playlistUrl: string;
+	syncedVideoIds: string[];
+	lastSyncAt: number | null;
+	lastSyncError: string | null;
+	lastAddedCount: number;
+};
+
+export type YouTubeDjPlaylistSyncResult = {
+	added: YouTubeSearchResult[];
+	playlistId: string;
+	syncedAt: number;
+	error?: string;
+};
+
+export type YouTubeDjSetPlaylistModeInput = {
+	enabled: boolean;
+	playlistUrlOrId?: string;
+};

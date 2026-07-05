@@ -1,7 +1,10 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { IpcEvents } from '../../common/IpcEvents.enum';
 import { type YouTubeQueueItem } from '../../common/YouTubeKaraokeTypes';
-import type { YouTubeSearchResult } from '../../common/YouTubeKaraokeTypes';
+import type {
+	YouTubeDjSetPlaylistModeInput,
+	YouTubeSearchResult,
+} from '../../common/YouTubeKaraokeTypes';
 import { signalingServer } from '../../server';
 import { getDeskreenGlobal } from './getDeskreenGlobal';
 import { store } from '../../common/deskreen-electron-store';
@@ -9,6 +12,19 @@ import { ElectronStoreKeys } from '../../common/ElectronStoreKeys.enum';
 import { YOUTUBE_DJ_TEST_PLAYLIST_URL } from '../../common/youtubeDjDefaults';
 import { fetchYouTubePlaylistVideos } from './youtubePlaylistFetch';
 import { autoSelectYouTubeWindowSource, resolveYouTubeCapturerSourceId } from './youtubeCaptureSource';
+import {
+	bootstrapYouTubeApiKey,
+	getInMemoryYouTubeApiKey,
+	setInMemoryYouTubeApiKey,
+	setPersistedYouTubeApiKey,
+} from './youtubeApiKeyConfig';
+import {
+	getPlaylistModeConfig,
+	restorePlaylistSyncIfEnabled,
+	setPlaylistMode,
+	syncPlaylistNow,
+} from './youtubePlaylistSync';
+import { fetchYouTubeVideoMetadata } from './youtubeVideoMetadata';
 import {
 	openYouTubePlayerWindow,
 	closeYouTubePlayerWindow,
@@ -25,8 +41,6 @@ import {
 
 export { autoSelectYouTubeWindowSource } from './youtubeCaptureSource';
 
-let youtubeApiKey = '';
-
 const SEARCH_ENDPOINT = 'https://www.googleapis.com/youtube/v3/search';
 const MAX_SEARCH_RESULTS = 12;
 
@@ -34,7 +48,13 @@ function getServerPort(): number {
 	return signalingServer.port;
 }
 
+function getYouTubeApiKey(): string {
+	return getInMemoryYouTubeApiKey();
+}
+
 export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
+	bootstrapYouTubeApiKey();
+
 	ipcMain.handle(IpcEvents.YOUTUBE_KARAOKE_OPEN_WINDOW, async () => {
 		store.set(ElectronStoreKeys.YouTubeKaraokeActive, 'true');
 		openYouTubePlayerWindow(getServerPort());
@@ -102,11 +122,49 @@ export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 					: YOUTUBE_DJ_TEST_PLAYLIST_URL;
 			const { videos, playlistId } = await fetchYouTubePlaylistVideos(
 				input,
-				youtubeApiKey,
+				getYouTubeApiKey(),
 			);
 			return { ok: videos.length > 0, videos, playlistId, playFirst: Boolean(playFirst) };
 		},
 	);
+
+	ipcMain.handle(
+		IpcEvents.YOUTUBE_DJ_SET_PLAYLIST_MODE,
+		async (_, input: YouTubeDjSetPlaylistModeInput) => {
+			try {
+				const config = await setPlaylistMode(input);
+				return { ok: true, config };
+			} catch (error) {
+				const message =
+					error instanceof Error ? error.message : 'failed to set playlist mode';
+				return { ok: false, error: message, config: getPlaylistModeConfig() };
+			}
+		},
+	);
+
+	ipcMain.handle(IpcEvents.YOUTUBE_DJ_GET_PLAYLIST_MODE, () => {
+		return getPlaylistModeConfig();
+	});
+
+	ipcMain.handle(IpcEvents.YOUTUBE_DJ_SYNC_PLAYLIST_NOW, async () => {
+		return syncPlaylistNow();
+	});
+
+	ipcMain.handle(
+		IpcEvents.YOUTUBE_DJ_SET_API_KEY,
+		(_, payload: { apiKey?: string; persist?: boolean }) => {
+			const apiKey = typeof payload?.apiKey === 'string' ? payload.apiKey.trim() : '';
+			setInMemoryYouTubeApiKey(apiKey);
+			if (payload?.persist) {
+				setPersistedYouTubeApiKey(apiKey);
+			}
+			return { ok: true };
+		},
+	);
+
+	ipcMain.handle(IpcEvents.YOUTUBE_DJ_GET_API_KEY, () => {
+		return { apiKey: getInMemoryYouTubeApiKey() };
+	});
 
 	ipcMain.handle(IpcEvents.YOUTUBE_DJ_PLAY, async () => {
 		await playYouTubeVideo();
@@ -150,8 +208,30 @@ export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 		return { ok: Boolean(info), info };
 	});
 
+	ipcMain.handle(
+		IpcEvents.YOUTUBE_DJ_RESOLVE_VIDEO_TITLES,
+		async (_, videoIds: string[]) => {
+			const ids = Array.isArray(videoIds)
+				? videoIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+				: [];
+			if (ids.length === 0) {
+				return { videos: [] as YouTubeSearchResult[] };
+			}
+			const videos = await fetchYouTubeVideoMetadata(ids, getYouTubeApiKey());
+			return {
+				videos: videos.map((video) => ({
+					videoId: video.videoId,
+					title: video.title,
+					channelTitle: '',
+					thumbnailUrl: video.thumbnailUrl,
+					url: `https://www.youtube.com/watch?v=${video.videoId}`,
+				})),
+			};
+		},
+	);
+
 	ipcMain.handle(IpcEvents.YOUTUBE_KARAOKE_SEARCH, async (_, query: string) => {
-		if (!youtubeApiKey || !query.trim()) {
+		if (!getYouTubeApiKey() || !query.trim()) {
 			return { results: [] as YouTubeSearchResult[] };
 		}
 		try {
@@ -160,7 +240,7 @@ export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 			url.searchParams.set('maxResults', String(MAX_SEARCH_RESULTS));
 			url.searchParams.set('q', query);
 			url.searchParams.set('type', 'video');
-			url.searchParams.set('key', youtubeApiKey);
+			url.searchParams.set('key', getYouTubeApiKey());
 
 			const res = await fetch(url.toString());
 			const data = await res.json();
@@ -189,7 +269,7 @@ export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 	});
 
 	ipcMain.handle('youtube-karaoke-set-api-key', (_, key: string) => {
-		youtubeApiKey = key;
+		setInMemoryYouTubeApiKey(key);
 		return { ok: true };
 	});
 
@@ -200,4 +280,6 @@ export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 		const sourceId = await autoSelectYouTubeWindowSource();
 		return { ok: true, sourceId };
 	});
+
+	restorePlaylistSyncIfEnabled();
 }
