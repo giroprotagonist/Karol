@@ -25,6 +25,7 @@ import {
 	syncPlaylistNow,
 } from './youtubePlaylistSync';
 import { fetchYouTubeVideoMetadata } from './youtubeVideoMetadata';
+import { initYoutubeDjApiBridge, invokeRendererCommand } from './youtubeDjApiBridge';
 import {
 	openYouTubePlayerWindow,
 	closeYouTubePlayerWindow,
@@ -38,6 +39,11 @@ import {
 	getYouTubePlayerInfo,
 	getYouTubePlayerDebugInfo,
 } from './youtubeOutputPlayer';
+import {
+	closeYouTubeQueueWindow,
+	openYouTubeQueueWindow,
+} from './youtubeQueueWindow';
+import type { YouTubeDjRemoteCommandType } from '../../common/YouTubeKaraokeTypes';
 
 export { autoSelectYouTubeWindowSource } from './youtubeCaptureSource';
 
@@ -54,6 +60,7 @@ function getYouTubeApiKey(): string {
 
 export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 	bootstrapYouTubeApiKey();
+	initYoutubeDjApiBridge(mainWindow);
 
 	ipcMain.handle(IpcEvents.YOUTUBE_KARAOKE_OPEN_WINDOW, async () => {
 		store.set(ElectronStoreKeys.YouTubeKaraokeActive, 'true');
@@ -280,6 +287,36 @@ export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 		const sourceId = await autoSelectYouTubeWindowSource();
 		return { ok: true, sourceId };
 	});
+
+	ipcMain.handle(IpcEvents.YOUTUBE_DJ_OPEN_QUEUE_WINDOW, () => {
+		openYouTubeQueueWindow();
+		return { ok: true };
+	});
+
+	ipcMain.handle(IpcEvents.YOUTUBE_DJ_CLOSE_QUEUE_WINDOW, () => {
+		closeYouTubeQueueWindow();
+		return { ok: true };
+	});
+
+	ipcMain.handle(
+		IpcEvents.YOUTUBE_DJ_INVOKE_REMOTE,
+		async (
+			_,
+			payload: {
+				type?: YouTubeDjRemoteCommandType;
+				id?: string;
+				fromIndex?: number;
+				toIndex?: number;
+				mode?: string;
+			},
+		) => {
+			if (!payload?.type) {
+				throw new Error('remote command type is required');
+			}
+			const { type, ...args } = payload;
+			return invokeRendererCommand(type, args);
+		},
+	);
 
 	restorePlaylistSyncIfEnabled();
 }

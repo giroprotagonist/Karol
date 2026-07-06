@@ -20,6 +20,10 @@ AGENTS.md
 android-receiver/.gradle/
 android-receiver/**/build/
 android-receiver/local.properties
+android-controller/.gradle/
+android-controller/**/build/
+android-controller/local.properties
+android-controller/.idea/
 
 # Private YouTube API key — never commit the real file
 config/youtube-api-key.local

@@ -102,6 +102,13 @@ export function handleIpcRenderer(): void {
 			}
 		});
 
+		window.electron.ipcRenderer.on(IpcEvents.DeskreenShutdownPeers, () => {
+			if (peerConnection) {
+				peerConnection.selfDestroy();
+				peerConnection = undefined;
+			}
+		});
+
 		window.electron.ipcRenderer.on(
 			'send-karaoke-info',
 			(_, data: { title: string }) => {

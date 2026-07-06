@@ -4,6 +4,7 @@ import {
 	type YouTubeKaraokeMode,
 	type YouTubeSearchResult,
 } from '@common/YouTubeKaraokeTypes';
+import { IpcEvents } from '@common/IpcEvents.enum';
 
 let state: YouTubeKaraokeState = {
 	queue: [],
@@ -349,8 +350,12 @@ function saveQueue(): void {
 			queue: state.queue,
 			currentIndex: state.currentIndex,
 			mode: state.mode,
+			currentTitle: state.currentTitle,
+			currentTime: state.currentTime,
+			duration: state.duration,
 		};
 		localStorage.setItem('deskreen_yt_queue', JSON.stringify(data));
+		window.electron.ipcRenderer.send(IpcEvents.YOUTUBE_DJ_QUEUE_SNAPSHOT, data);
 	} catch {
 		// ignore quota errors
 	}

@@ -31,8 +31,7 @@ import {
 	onVideoEnded,
 	skipNext,
 	skipPrev,
-	moveQueueItemUp,
-	moveQueueItemDown,
+	reorderQueue,
 	setPlaybackProgress,
 	markCurrentError,
 } from '../../features/YouTubeKaraoke/youtubeKaraokeQueue';
@@ -41,7 +40,7 @@ import {
 	isPlaylistUrl,
 } from '../../features/YouTubeKaraoke/youtubeSearch';
 import { YOUTUBE_DJ_TEST_PLAYLIST_URL, PLAYLIST_SYNC_INTERVAL_MS } from '@common/youtubeDjDefaults';
-import { getQueueItemDisplayTitle } from '@common/youtubeQueueUtils';
+import YouTubeQueuePanel from './YouTubeQueuePanel';
 import {
 	formatPlaylistSyncTime,
 	getPlaylistModeConfig,
@@ -349,7 +348,11 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 			if ((result?.connectedDevices ?? 0) === 0) {
 				await tryAutoConnect();
 			} else {
-				setCastStatus({ ok: true, sourceId: result?.sourceId ?? undefined });
+				const switchResult = await switchCaptureToYouTubeWindow();
+				setCastStatus({
+					ok: Boolean(switchResult?.ok),
+					sourceId: switchResult?.sourceId ?? result?.sourceId ?? undefined,
+				});
 			}
 		} else {
 			setIsEnabled(false);
@@ -368,7 +371,11 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 		if ((result?.connectedDevices ?? 0) === 0) {
 			await tryAutoConnect();
 		} else {
-			setCastStatus({ ok: true, sourceId: result?.sourceId ?? undefined });
+			const switchResult = await switchCaptureToYouTubeWindow();
+			setCastStatus({
+				ok: Boolean(switchResult?.ok),
+				sourceId: switchResult?.sourceId ?? result?.sourceId ?? undefined,
+			});
 		}
 	}, [tryAutoConnect]);
 
@@ -504,6 +511,15 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 	const handleClearQueue = useCallback(() => {
 		clearQueue();
 		setState(getKaraokeState());
+	}, []);
+
+	const handleReorderQueue = useCallback((fromIndex: number, toIndex: number) => {
+		reorderQueue(fromIndex, toIndex);
+		setState(getKaraokeState());
+	}, []);
+
+	const handlePopOutQueue = useCallback(() => {
+		void window.electron.ipcRenderer.invoke(IpcEvents.YOUTUBE_DJ_OPEN_QUEUE_WINDOW);
 	}, []);
 
 	const handleModeToggle = useCallback((queueMode: boolean) => {
@@ -898,99 +914,17 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 				</div>
 			</div>
 
-			{state.queue.length > 0 && (
-				<div style={{ padding: '0 20px 12px' }}>
-					<div
-						style={{
-							display: 'flex',
-							justifyContent: 'space-between',
-							alignItems: 'center',
-							marginBottom: 6,
-						}}
-					>
-						<Text>Queue ({state.queue.length})</Text>
-						<Button icon="trash" minimal small onClick={handleClearQueue}>
-							Clear
-						</Button>
-					</div>
-					{state.queue.map((item, index) => (
-						<Card
-							key={item.id}
-							style={{
-								padding: '8px 12px',
-								marginBottom: 4,
-								backgroundColor:
-									index === state.currentIndex
-										? 'rgba(19, 124, 189, 0.12)'
-										: 'transparent',
-								borderLeft:
-									index === state.currentIndex
-										? '3px solid #137cbd'
-										: '3px solid transparent',
-							}}
-						>
-							<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-								<Text style={{ fontSize: 12, color: '#888', minWidth: 20 }}>
-									{index + 1}
-								</Text>
-								<Text
-									style={{
-										flex: 1,
-										fontSize: 13,
-										overflow: 'hidden',
-										textOverflow: 'ellipsis',
-										whiteSpace: 'nowrap',
-									}}
-									title={getQueueItemDisplayTitle(item.title, item.videoId)}
-								>
-									{getQueueItemDisplayTitle(item.title, item.videoId)}
-								</Text>
-								<Text style={{ fontSize: 11, color: '#888' }}>{item.status}</Text>
-								<Tooltip content="Move up">
-									<Button
-										icon="arrow-up"
-										minimal
-										small
-										disabled={index === 0}
-										onClick={() => {
-											moveQueueItemUp(item.id);
-											setState(getKaraokeState());
-										}}
-									/>
-								</Tooltip>
-								<Tooltip content="Move down">
-									<Button
-										icon="arrow-down"
-										minimal
-										small
-										disabled={index === state.queue.length - 1}
-										onClick={() => {
-											moveQueueItemDown(item.id);
-											setState(getKaraokeState());
-										}}
-									/>
-								</Tooltip>
-								<Tooltip content="Play now">
-									<Button
-										icon="play"
-										minimal
-										small
-										onClick={() => void handlePlayQueueItem(item.id)}
-									/>
-								</Tooltip>
-								<Tooltip content="Remove">
-									<Button
-										icon="cross"
-										minimal
-										small
-										onClick={() => handleRemoveItem(item.id)}
-									/>
-								</Tooltip>
-							</div>
-						</Card>
-					))}
-				</div>
-			)}
+			<div style={{ padding: '0 20px 12px' }}>
+				<YouTubeQueuePanel
+					state={state}
+					onReorder={handleReorderQueue}
+					onPlay={(id) => void handlePlayQueueItem(id)}
+					onRemove={handleRemoveItem}
+					onClear={handleClearQueue}
+					showPopOutButton
+					onPopOut={handlePopOutQueue}
+				/>
+			</div>
 		</div>
 	);
 }

@@ -96,6 +96,11 @@ import { initGlobals } from './helpers/initGlobals';
 import { ElectronStoreKeys } from '../common/ElectronStoreKeys.enum';
 import { getDeskreenGlobal } from './helpers/getDeskreenGlobal';
 import { startLogBufferCleanup } from './utils/LoggerWithFilePrefix';
+import {
+	isDeskreenShutdownComplete,
+	requestDeskreenQuit,
+	shutdownDeskreen,
+} from './helpers/appShutdown';
 import configureScreenCaptureSession, {
 	probeScreenCaptureAccess,
 	requestScreenCaptureAccessOnStartup,
@@ -120,6 +125,17 @@ export default class DeskreenApp {
 	menuBuilder: MenuBuilder | null = null;
 
 	latestAppVersion = '';
+
+	private isQuitting = false;
+
+	isAppQuitting(): boolean {
+		return this.isQuitting;
+	}
+
+	requestQuit(): void {
+		this.isQuitting = true;
+		requestDeskreenQuit();
+	}
 
 	initElectronAppObject(): void {
 		/**
@@ -157,12 +173,26 @@ export default class DeskreenApp {
 			optimizer.watchWindowShortcuts(window);
 		});
 
+		app.on('before-quit', (event) => {
+			if (isDeskreenShutdownComplete()) {
+				return;
+			}
+			event.preventDefault();
+			this.isQuitting = true;
+			void shutdownDeskreen('before-quit').then(() => {
+				app.quit();
+			});
+		});
+
 		app.on('activate', (e) => {
 			e.preventDefault();
 			// On macOS it's common to re-create a window in the app when the
 			// dock icon is clicked and there are no other windows open.
 			if (this.mainWindow === null) {
 				this.createWindow();
+			} else if (!this.mainWindow.isDestroyed() && !this.mainWindow.isVisible()) {
+				this.mainWindow.show();
+				this.mainWindow.focus();
 			}
 		});
 
@@ -303,6 +333,19 @@ export default class DeskreenApp {
 			// TODO: the app will run until user didn't kill it in system tray
 			if (process.platform !== 'darwin') {
 				app.quit();
+			}
+		});
+
+		this.mainWindow.on('close', (event) => {
+			if (this.isQuitting) {
+				return;
+			}
+			const djActive =
+				store.has(ElectronStoreKeys.YouTubeKaraokeActive) &&
+				store.get(ElectronStoreKeys.YouTubeKaraokeActive) === 'true';
+			if (djActive && this.mainWindow && !this.mainWindow.isDestroyed()) {
+				event.preventDefault();
+				this.mainWindow.hide();
 			}
 		});
 

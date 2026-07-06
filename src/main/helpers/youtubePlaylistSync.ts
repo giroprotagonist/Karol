@@ -17,6 +17,7 @@ import {
 	fetchYouTubePlaylistVideos,
 } from './youtubePlaylistFetch';
 import { getInMemoryYouTubeApiKey } from './youtubeApiKeyConfig';
+import { broadcastSyncResult } from './youtubePlaylistBroadcast';
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let syncInFlight = false;
@@ -93,6 +94,10 @@ function stopPolling(): void {
 		clearInterval(pollTimer);
 		pollTimer = null;
 	}
+}
+
+export function stopPlaylistSyncPolling(): void {
+	stopPolling();
 }
 
 function startPolling(): void {
@@ -224,6 +229,31 @@ export async function setPlaylistMode(
 
 export async function syncPlaylistNow(): Promise<YouTubeDjPlaylistSyncResult> {
 	return runPlaylistSync();
+}
+
+export async function patchPlaylistMode(input: {
+	enabled?: boolean;
+	playlistUrl?: string;
+}): Promise<YouTubeDjPlaylistModeConfig> {
+	if (input.enabled === false) {
+		return setPlaylistMode({ enabled: false });
+	}
+
+	const config = getPlaylistModeConfig();
+	const playlistUrlOrId =
+		input.playlistUrl?.trim() ||
+		config.playlistUrl ||
+		config.playlistId ||
+		YOUTUBE_DJ_TEST_PLAYLIST_URL;
+
+	if (input.enabled === true || input.playlistUrl) {
+		return setPlaylistMode({
+			enabled: true,
+			playlistUrlOrId,
+		});
+	}
+
+	return config;
 }
 
 export function restorePlaylistSyncIfEnabled(): void {

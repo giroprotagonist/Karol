@@ -74,4 +74,12 @@ export enum IpcEvents {
 	YOUTUBE_DJ_GET_API_KEY = 'youtube-dj-get-api-key',
 	YOUTUBE_DJ_DEBUG_PLAYER = 'youtube-dj-debug-player',
 	YOUTUBE_DJ_RESOLVE_VIDEO_TITLES = 'youtube-dj-resolve-video-titles',
+	YOUTUBE_DJ_REMOTE_COMMAND = 'youtube-dj-remote-command',
+	YOUTUBE_DJ_REMOTE_RESPONSE = 'youtube-dj-remote-response',
+	YOUTUBE_DJ_QUEUE_SNAPSHOT = 'youtube-dj-queue-snapshot',
+	YOUTUBE_DJ_QUEUE_SNAPSHOT_PUSH = 'youtube-dj-queue-snapshot-push',
+	YOUTUBE_DJ_INVOKE_REMOTE = 'youtube-dj-invoke-remote',
+	YOUTUBE_DJ_OPEN_QUEUE_WINDOW = 'youtube-dj-open-queue-window',
+	YOUTUBE_DJ_CLOSE_QUEUE_WINDOW = 'youtube-dj-close-queue-window',
+	DeskreenShutdownPeers = 'deskreen-shutdown-peers',
 }

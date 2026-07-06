@@ -24,13 +24,19 @@ import {
 } from '../../utils/receiverQualityBufferPreference';
 import { applyReceiverQualityBufferFromPreference } from '../../utils/receiverJitterBuffer';
 import {
+	startReceiverSyncMonitor,
+	stopReceiverSyncMonitor,
+} from '../../utils/receiverSyncMonitor';
+import {
 	getReceiverPlayoutBufferDelayMs,
 	isReceiverPlayoutBufferActive,
+	isReceiverAvStartPending,
 	reapplyReceiverPlayoutBufferAfterFullscreen,
 	startReceiverPlayoutWithBuffer,
 } from '../../utils/receiverPlayoutBuffer';
 import { initPlaybackRateLock } from '../../utils/playbackRateLock';
 import { ReceiverStreamHealthMonitor } from '../../utils/receiverStreamHealth';
+import { receiverPlaybackDebug } from '../../utils/receiverPlaybackDebug';
 import type { RemoteControlCapabilityPayload } from '../../../../common/RemoteInputTypes';
 import type { RemoteInputPayload } from '../../../../common/RemoteInputTypes';
 import {
@@ -104,7 +110,7 @@ function PlayerView(props: PlayerViewProps) {
 	const receiverMode = isReceiverMode();
 	const hasStreamAudio = Boolean(streamUrl?.getAudioTracks().length);
 	const showMonoOutputToggle = receiverMode && hasStreamAudio;
-	const showQualityBufferToggle = receiverMode;
+	const showQualityBufferToggle = false;
 	const [isMonoOutputEnabled, setIsMonoOutputEnabled] = useState(
 		() => getReceiverMonoOutputPreference(),
 	);
@@ -207,7 +213,7 @@ function PlayerView(props: PlayerViewProps) {
 		streamHealthMonitorRef.current.attach(videoRef.current, {
 			qualityBufferEnabled: isQualityBufferEnabled,
 			onFrozen: () => {
-				if (isReceiverPlayoutBufferActive()) {
+				if (isReceiverPlayoutBufferActive() || isQualityBufferEnabled) {
 					return;
 				}
 				videoRef.current?.play().catch(() => {
@@ -240,7 +246,7 @@ function PlayerView(props: PlayerViewProps) {
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
 				void requestWakeLock();
-				if (isReceiverPlayoutBufferActive()) {
+				if (isReceiverPlayoutBufferActive() || isReceiverAvStartPending()) {
 					return;
 				}
 				if (videoRef.current?.paused) {
@@ -374,6 +380,11 @@ function PlayerView(props: PlayerViewProps) {
 				reason: 'stream-start',
 			});
 			playoutCancelRef.current = cancelPlayout;
+			receiverPlaybackDebug('stream-attached', {
+				mono: isMonoOutputEnabled,
+				qualityBuffer: isQualityBufferEnabled,
+				hasAudio,
+			});
 
 			return () => {
 				cancelPlayout();
@@ -422,7 +433,7 @@ function PlayerView(props: PlayerViewProps) {
 	useEffect(() => {
 		if (isWithControls) {
 			if (!videoRef.current) return;
-			if (isReceiverPlayoutBufferActive()) {
+			if (isReceiverPlayoutBufferActive() || isReceiverAvStartPending()) {
 				return;
 			}
 		if (mobileLike) {
@@ -587,6 +598,22 @@ function PlayerView(props: PlayerViewProps) {
 		if (!receiverMode || !isQualityBufferEnabled) return;
 		applyReceiverQualityBufferFromPreference();
 	}, [receiverMode, isQualityBufferEnabled, streamUrl]);
+
+	// A/V drift monitor — re-applies RTP hints and micro-nudges when needed.
+	useEffect(() => {
+		if (!receiverMode || !streamUrl || !isWithControls) {
+			stopReceiverSyncMonitor();
+			return;
+		}
+		const video = videoRef.current;
+		if (!video) {
+			return;
+		}
+		startReceiverSyncMonitor(video);
+		return () => {
+			stopReceiverSyncMonitor();
+		};
+	}, [receiverMode, streamUrl, isWithControls, isQualityBufferEnabled]);
 
 	return (
 		<div

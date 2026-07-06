@@ -38,5 +38,6 @@ i18nInitPromise.then(() => {
 // });
 
 window.onbeforeunload = () => {
-	window.electron.ipcRenderer.invoke('main-window-onbeforeunload');
+	// Fallback only — main process runs coordinated shutdown via before-quit.
+	void window.electron.ipcRenderer.invoke('main-window-onbeforeunload');
 };

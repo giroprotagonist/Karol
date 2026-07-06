@@ -64,6 +64,24 @@ const copySimplePeerMinJsStaticFiles = () => {
 	};
 };
 
+const copyDjControllerStaticFiles = () => {
+	return {
+		name: 'copy-dj-controller-static-files',
+		async writeBundle() {
+			const sourceDir = resolve(__dirname, 'src/dj-controller/dist');
+			const destDir = resolve(__dirname, 'out/dj-controller');
+
+			try {
+				await fs.emptyDir(destDir);
+				await fs.copy(sourceDir, destDir);
+				console.log('Successfully copied dj-controller/dist to out/dj-controller');
+			} catch (err) {
+				console.error(`Error copying dj-controller static files: ${err}`);
+			}
+		},
+	};
+};
+
 export default defineConfig({
 	main: {
 		plugins: [externalizeDepsPlugin(), bytecodePlugin()],
@@ -89,6 +107,7 @@ export default defineConfig({
 						__dirname,
 						'src/renderer/peerConnectionHelperRendererWindowIndex.html',
 					),
+					queueWindow: resolve(__dirname, 'src/renderer/queueWindowIndex.html'),
 				},
 			},
 		},
@@ -101,6 +120,7 @@ export default defineConfig({
 		plugins: [
 			react(),
 			copyClientViewerStaticFiles(),
+			copyDjControllerStaticFiles(),
 			copySimplePeerMinJsStaticFiles(),
 		],
 	},

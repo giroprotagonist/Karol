@@ -95,7 +95,8 @@ async function pickDesktopCapturerSource(
 	const firstScreen = sources.find((source) =>
 		source.id.includes(DesktopCapturerSourceType.SCREEN),
 	);
-	return firstScreen ?? sources[0] ?? null;
+	const selected = firstScreen ?? sources[0] ?? null;
+	return selected;
 }
 
 export default function configureScreenCaptureSession(): void {

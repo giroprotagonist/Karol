@@ -59,3 +59,46 @@ export type YouTubeDjSetPlaylistModeInput = {
 	enabled: boolean;
 	playlistUrlOrId?: string;
 };
+
+export type YouTubeDjQueueSnapshot = {
+	queue: YouTubeQueueItem[];
+	currentIndex: number;
+	mode: YouTubeKaraokeMode;
+	currentTitle?: string;
+	currentTime?: number;
+	duration?: number;
+};
+
+export type YouTubeDjRemoteCommandType =
+	| 'getState'
+	| 'playNow'
+	| 'skipNext'
+	| 'skipPrev'
+	| 'clearQueue'
+	| 'removeFromQueue'
+	| 'moveQueueItemUp'
+	| 'moveQueueItemDown'
+	| 'reorderQueue'
+	| 'setMode'
+	| 'addVideos'
+	| 'applySyncResult';
+
+export type YouTubeDjRemoteCommandPayload = {
+	requestId: string;
+	type: YouTubeDjRemoteCommandType;
+	id?: string;
+	fromIndex?: number;
+	toIndex?: number;
+	mode?: YouTubeKaraokeMode;
+	videos?: YouTubeSearchResult[];
+	source?: 'playlist' | 'manual' | 'extension';
+	result?: YouTubeDjPlaylistSyncResult;
+};
+
+export type YouTubeDjStatus = {
+	ok: boolean;
+	djActive: boolean;
+	castConnected: boolean;
+	captureReady: boolean;
+	port: number;
+};

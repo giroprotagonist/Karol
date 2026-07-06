@@ -12,6 +12,8 @@ files:
 extraResources:
   - from: out/client-viewer
     to: client-viewer
+  - from: out/dj-controller
+    to: dj-controller
 asarUnpack:
   - resources/**
 win:

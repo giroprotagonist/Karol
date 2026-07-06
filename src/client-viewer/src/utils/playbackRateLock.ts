@@ -1,4 +1,6 @@
+import { getReceiverControlModePreference } from './receiverControlModePreference';
 import { getReceiverQualityBufferPreference } from './receiverQualityBufferPreference';
+import isReceiverMode from './isReceiverMode';
 
 const TARGET_RATE = 1;
 
@@ -42,8 +44,18 @@ function lockPlaybackRateWithQualityBuffer(video: HTMLVideoElement): void {
 	console.warn('[RATE_LOCK] clamped extreme playbackRate', rate, 'to 1.0');
 }
 
+function shouldUseRelaxedRateLock(): boolean {
+	if (getReceiverControlModePreference()) {
+		return false;
+	}
+	if (isReceiverMode() && getReceiverQualityBufferPreference()) {
+		return true;
+	}
+	return getReceiverQualityBufferPreference();
+}
+
 function lockPlaybackRate(video: HTMLVideoElement): void {
-	if (getReceiverQualityBufferPreference()) {
+	if (shouldUseRelaxedRateLock()) {
 		lockPlaybackRateWithQualityBuffer(video);
 		return;
 	}
@@ -76,9 +88,7 @@ export function initPlaybackRateLock(video: HTMLVideoElement): () => void {
 
 	let rafId = 0;
 	const tick = () => {
-		if (!getReceiverQualityBufferPreference()) {
-			lockPlaybackRateStrict(video);
-		}
+		lockPlaybackRate(video);
 		rafId = requestAnimationFrame(tick);
 	};
 	rafId = requestAnimationFrame(tick);

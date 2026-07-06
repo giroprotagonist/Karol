@@ -195,5 +195,6 @@
 	"allow-tablet-control-while-casting-description": "Lets a connected tablet tap and scroll on the cast stream to control this Mac. Requires Accessibility permission in System Settings.",
 	"tablet-control-active": "Tablet control active",
 	"auto-casting-to-your-tablet": "Casting to your tablet automatically.",
-	"pick-a-screen-to-start-casting": "Choose a screen once — Deskreen will remember it for next time."
+	"pick-a-screen-to-start-casting": "Choose a screen once — Deskreen will remember it for next time.",
+	"start-youtube-dj-open-player-window-first": "Start YouTube DJ and open the player window before connecting your tablet."
 }

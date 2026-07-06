@@ -151,7 +151,7 @@ export default (peerConnection: PeerConnection) => {
 			applyReceiverQualityBufferFromPreference();
 			const jitterBufferRefresh = window.setInterval(() => {
 				applyReceiverQualityBufferFromPreference();
-			}, 10000);
+			}, 5000);
 			stream.addEventListener('inactive', () => {
 				window.clearInterval(jitterBufferRefresh);
 			});

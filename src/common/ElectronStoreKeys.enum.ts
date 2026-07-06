@@ -12,4 +12,5 @@ export enum ElectronStoreKeys {
 	YouTubeDjPlaylistLastSyncAt = 'youtubeDjPlaylistLastSyncAt',
 	YouTubeDjPlaylistLastSyncError = 'youtubeDjPlaylistLastSyncError',
 	YouTubeDjApiKey = 'youtubeDjApiKey',
+	YouTubeDjQueueSnapshot = 'youtubeDjQueueSnapshot',
 }

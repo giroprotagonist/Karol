@@ -18,11 +18,28 @@ export const SOCKET_PING_TIMEOUT_MS = 5000;
 
 export const SOCKET_HEALTH_CHECK_INTERVAL_MS = 5000;
 
+/** Standard receiver playout buffer — pre-roll + playoutDelayHint target. */
+export const RECEIVER_BUFFER_STANDARD_MS = 7000;
+
+/** Chromium Android WebView caps jitterBufferTarget (ms). */
+export const RECEIVER_JITTER_BUFFER_TARGET_MAX_MS = 4000;
+
 /** Target playout delay when receiver quality buffer is enabled. */
-export const RECEIVER_QUALITY_BUFFER_DELAY_MS = 7000;
+export const RECEIVER_QUALITY_BUFFER_DELAY_MS = RECEIVER_BUFFER_STANDARD_MS;
+
+/** Extra RTP playout delay on audio vs video — tuned via drift monitor. */
+export const RECEIVER_AUDIO_PLAYOUT_OFFSET_MS = 0;
 
 /** Longer frame-stall tolerance while quality buffer is filling. */
-export const RECEIVER_QUALITY_BUFFER_FRAME_STALE_MS = 35000;
+export const RECEIVER_QUALITY_BUFFER_FRAME_STALE_MS =
+	RECEIVER_BUFFER_STANDARD_MS * 10 - 1000;
 
 /** Longer frozen threshold before recovery kicks in with quality buffer. */
-export const RECEIVER_QUALITY_BUFFER_FROZEN_THRESHOLD_MS = 25000;
+export const RECEIVER_QUALITY_BUFFER_FROZEN_THRESHOLD_MS =
+	RECEIVER_BUFFER_STANDARD_MS * 7;
+
+/** Max wait after pre-roll for first video frame before falling back to audio unlock. */
+export const RECEIVER_AV_START_MAX_WAIT_MS = RECEIVER_BUFFER_STANDARD_MS + 3000;
+
+/** Re-apply RTP jitter hints during pre-roll/priming (WebRTC may reset on track events). */
+export const RECEIVER_PREROLL_JITTER_REAPPLY_MS = 2000;

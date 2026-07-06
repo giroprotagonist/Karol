@@ -73,15 +73,13 @@ export async function autoSelectYouTubeWindowSource(): Promise<string | null> {
 	setPreferredDesktopCapturerSourceId(id);
 	store.set(ElectronStoreKeys.LastDesktopCapturerSourceId, id);
 
-	if (!captureActive) {
-		const waitingSession =
-			deskreenGlobal.sharingSessionService.waitingForConnectionSharingSession;
-		waitingSession?.setDesktopCapturerSourceID(id);
+	const waitingSession =
+		deskreenGlobal.sharingSessionService.waitingForConnectionSharingSession;
+	waitingSession?.setDesktopCapturerSourceID(id);
 
-		const sessions = deskreenGlobal.sharingSessionService.sharingSessions;
-		for (const [, session] of sessions) {
-			session.setDesktopCapturerSourceID(id);
-		}
+	const sessions = deskreenGlobal.sharingSessionService.sharingSessions;
+	for (const [, session] of sessions) {
+		session.setDesktopCapturerSourceID(id);
 	}
 
 	console.log('[YT_DJ] auto-selected window source:', id, `(${from})`);

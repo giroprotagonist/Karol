@@ -38,6 +38,7 @@ import {
 } from '../utils/macInputInjection';
 import type { RemoteInputPayload } from '../../common/RemoteInputTypes';
 import { initYouTubeKaraokeIpc } from './youtubeKaraokeIpc';
+import { cleanupDeskreenSessions } from './cleanupDeskreenSessions';
 
 export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 	ipcMain.on('client-changed-language', async (_, newLangCode) => {
@@ -118,26 +119,24 @@ export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 	);
 
 	ipcMain.handle('main-window-onbeforeunload', () => {
+		cleanupDeskreenSessions();
+	});
+
+	ipcMain.handle(IpcEvents.DeskreenShutdownPeers, () => {
 		const deskreenGlobal = getDeskreenGlobal();
-		deskreenGlobal.connectedDevicesService = new ConnectedDevicesService();
-		deskreenGlobal.roomIDService = new RoomIDService();
-		deskreenGlobal.sharingSessionService.sharingSessions.forEach(
-			(sharingSession: SharingSession) => {
-				sharingSession.denyConnectionForPartner();
-				sharingSession.destroy();
-			},
-		);
-
-		deskreenGlobal.rendererWebrtcHelpersService.helpers.forEach(
-			(helperWindow) => {
-				helperWindow.close();
-			},
-		);
-
-		deskreenGlobal.sharingSessionService.waitingForConnectionSharingSession =
-			null;
-		deskreenGlobal.rendererWebrtcHelpersService.helpers.clear();
-		deskreenGlobal.sharingSessionService.sharingSessions.clear();
+		for (const sharingSession of deskreenGlobal.sharingSessionService
+			.sharingSessions.values()) {
+			const helper = sharingSession.peerConnectionHelperRenderer;
+			if (helper && !helper.isDestroyed()) {
+				helper.webContents.send(IpcEvents.DeskreenShutdownPeers);
+			}
+		}
+		const waiting =
+			deskreenGlobal.sharingSessionService.waitingForConnectionSharingSession;
+		const waitingHelper = waiting?.peerConnectionHelperRenderer;
+		if (waitingHelper && !waitingHelper.isDestroyed()) {
+			waitingHelper.webContents.send(IpcEvents.DeskreenShutdownPeers);
+		}
 	});
 
 	ipcMain.handle('get-latest-version', () => {
@@ -698,20 +697,6 @@ export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 		}
 
 		await deskreenGlobal.desktopCapturerSourcesService.refreshDesktopCapturerSources();
-		const savedId = store.get(ElectronStoreKeys.LastDesktopCapturerSourceId);
-		const sourcesMap =
-			deskreenGlobal.desktopCapturerSourcesService.getSourcesMap();
-
-		if (typeof savedId !== 'string' || savedId === '' || !sourcesMap.has(savedId)) {
-			const screens =
-				deskreenGlobal.desktopCapturerSourcesService.getScreenSources();
-			if (screens.length === 0) {
-				const canUseDisplayMedia = await probeScreenCaptureAccess();
-				if (!canUseDisplayMedia) {
-					return { ok: false, reason: 'no-source' };
-				}
-			}
-		}
 
 		const waitingSession =
 			deskreenGlobal.sharingSessionService.waitingForConnectionSharingSession;
@@ -719,51 +704,29 @@ export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 			return { ok: false, reason: 'no-waiting-session' };
 		}
 
-		let pickedSourceId = '';
-		// When YouTube Karaoke mode is active, prefer the YouTube player window
 		const karaokeActive =
 			store.has(ElectronStoreKeys.YouTubeKaraokeActive) &&
 			store.get(ElectronStoreKeys.YouTubeKaraokeActive) === 'true';
-		if (
-			typeof savedId === 'string' &&
-			savedId !== '' &&
-			sourcesMap.has(savedId) &&
-			!karaokeActive  // don't use stale saved ID when karaoke mode is on
-		) {
-			pickedSourceId = savedId;
+
+		let pickedSourceId = '';
+
+		if (karaokeActive) {
+			const ytSource =
+				deskreenGlobal.desktopCapturerSourcesService.getYouTubeWindowSource();
+			if (ytSource) {
+				pickedSourceId = ytSource.id;
+				console.error('[auto-connect] using YouTube window source', pickedSourceId);
+			} else {
+				console.error(
+					'[auto-connect] YouTube DJ active but output window not in capturer sources',
+				);
+				return { ok: false, reason: 'youtube-window-not-found' };
+			}
 		} else {
-			if (karaokeActive) {
-				// Look for the YouTube window first
-				const ytSource =
-					deskreenGlobal.desktopCapturerSourcesService.getYouTubeWindowSource();
-				if (ytSource) {
-					pickedSourceId = ytSource.id;
-					console.error('[auto-connect] using YouTube window source', pickedSourceId);
-				} else {
-					console.error(
-						'[auto-connect] YouTube DJ active but output window not in capturer sources',
-					);
-					return { ok: false, reason: 'youtube-window-not-found' };
-				}
-			} else if (!pickedSourceId) {
-				const screens =
-					deskreenGlobal.desktopCapturerSourcesService.getScreenSources();
-				if (screens.length > 0) {
-					pickedSourceId = screens[0].id;
-				} else {
-					const windows =
-						deskreenGlobal.desktopCapturerSourcesService.getAppWindowSources();
-					if (windows.length > 0) {
-						pickedSourceId = windows[0].id;
-					}
-				}
-			}
-			// Persist this pick for future connects
-			if (pickedSourceId) {
-				store.set(ElectronStoreKeys.LastDesktopCapturerSourceId, pickedSourceId);
-			}
+			return { ok: false, reason: 'pick-required' };
 		}
 
+		store.set(ElectronStoreKeys.LastDesktopCapturerSourceId, pickedSourceId);
 		waitingSession.setDesktopCapturerSourceID(pickedSourceId);
 
 		const ready = await waitForPeerStreamReady(waitingSession, 120000);
@@ -791,7 +754,7 @@ export const initIpcMainHandlers = (mainWindow: BrowserWindow): void => {
 			`[auto-connect] success sourceId=${pickedSourceId || 'display-media'}`,
 		);
 
-		return { ok: true, sourceId: pickedSourceId || 'display-media' };
+		return { ok: true, sourceId: pickedSourceId };
 	});
 
 	ipcMain.handle(IpcEvents.GetIsFirstTimeAppStart, () => {

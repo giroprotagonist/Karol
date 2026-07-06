@@ -1,10 +1,16 @@
-import { RECEIVER_QUALITY_BUFFER_DELAY_MS } from '../constants/castReliabilityConstants';
+import {
+	RECEIVER_AV_START_MAX_WAIT_MS,
+	RECEIVER_PREROLL_JITTER_REAPPLY_MS,
+	RECEIVER_QUALITY_BUFFER_DELAY_MS,
+} from '../constants/castReliabilityConstants';
 import isReceiverMode from './isReceiverMode';
 import { getReceiverQualityBufferPreference } from './receiverQualityBufferPreference';
 import {
 	applyReceiverJitterBufferTargets,
 	getActiveReceiverPeerConnection,
 } from './receiverJitterBuffer';
+import { receiverPlaybackDebug } from './receiverPlaybackDebug';
+import { waitForReceiverVideoReady } from './waitForReceiverVideoReady';
 
 export function getReceiverPlayoutBufferDelayMs(): number {
 	if (!isReceiverMode() || !getReceiverQualityBufferPreference()) {
@@ -23,9 +29,15 @@ export type ReceiverPlayoutStartOptions = {
 let activePlayoutCancel: (() => void) | null = null;
 /** Synchronous guard — React isPlayoutBuffering state lags behind this. */
 let playoutBufferActive = false;
+/** True during phase B (video priming) before audio unlock. */
+let avStartPending = false;
 
 export function isReceiverPlayoutBufferActive(): boolean {
 	return playoutBufferActive;
+}
+
+export function isReceiverAvStartPending(): boolean {
+	return avStartPending;
 }
 
 export function cancelActiveReceiverPlayoutBuffer(): void {
@@ -34,6 +46,7 @@ export function cancelActiveReceiverPlayoutBuffer(): void {
 		activePlayoutCancel = null;
 	}
 	playoutBufferActive = false;
+	avStartPending = false;
 }
 
 type BufferingPresentation = {
@@ -105,14 +118,21 @@ function applyBufferingPresentation(video: HTMLVideoElement): BufferingPresentat
 	return presentation;
 }
 
+function restoreVisualPresentation(
+	video: HTMLVideoElement,
+	presentation: BufferingPresentation,
+): void {
+	video.style.display = presentation.previousDisplay;
+	video.style.opacity = presentation.previousOpacity || '1';
+	video.style.visibility = presentation.previousVisibility || 'visible';
+}
+
 function restoreBufferingPresentation(
 	video: HTMLVideoElement,
 	presentation: BufferingPresentation,
 	unmutedAfterBuffer: boolean,
 ): void {
-	video.style.display = presentation.previousDisplay;
-	video.style.opacity = presentation.previousOpacity || '1';
-	video.style.visibility = presentation.previousVisibility || 'visible';
+	restoreVisualPresentation(video, presentation);
 	video.volume = presentation.previousVolume > 0 ? presentation.previousVolume : 1;
 	video.muted = unmutedAfterBuffer ? false : presentation.targetMuted;
 }
@@ -133,9 +153,20 @@ function enforceBufferingPresentation(video: HTMLVideoElement): void {
 	enforceStreamAudioSuspended(video);
 }
 
+/** Phase B: video visible and playing, audio still held. */
+function enforcePrimingPresentation(video: HTMLVideoElement): void {
+	if (!video.muted) {
+		video.muted = true;
+	}
+	if (video.volume !== 0) {
+		video.volume = 0;
+	}
+	enforceStreamAudioSuspended(video);
+}
+
 /**
  * Pre-roll: stay paused/hidden/muted for delayMs while WebRTC receives frames,
- * then reveal + play. Android WebView ignores video mute/pause for stream audio.
+ * then reveal video, wait for first frame, then unlock audio together.
  */
 export function startReceiverPlayoutWithBuffer(
 	video: HTMLVideoElement,
@@ -146,6 +177,7 @@ export function startReceiverPlayoutWithBuffer(
 	const delayMs = getReceiverPlayoutBufferDelayMs();
 	const pc = getActiveReceiverPeerConnection();
 	const unmutedAfterBuffer = options.unmutedAfterBuffer ?? false;
+	const preRollStartedAt = performance.now();
 
 	if (pc && delayMs > 0) {
 		applyReceiverJitterBufferTargets(pc, delayMs);
@@ -154,11 +186,14 @@ export function startReceiverPlayoutWithBuffer(
 	let cancelled = false;
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	let enforceTimer: ReturnType<typeof setInterval> | null = null;
+	let jitterReapplyTimer: ReturnType<typeof setInterval> | null = null;
 	let presentation: BufferingPresentation | null = null;
 	let suspendedAudio: SuspendedAudioTrack[] = [];
+	let primingPhase = false;
 
 	const endBufferingState = () => {
 		playoutBufferActive = false;
+		avStartPending = false;
 		options.onBufferingChange?.(false);
 		if (activePlayoutCancel === cancel) {
 			activePlayoutCancel = null;
@@ -174,6 +209,25 @@ export function startReceiverPlayoutWithBuffer(
 			clearInterval(enforceTimer);
 			enforceTimer = null;
 		}
+		if (jitterReapplyTimer) {
+			clearInterval(jitterReapplyTimer);
+			jitterReapplyTimer = null;
+		}
+	};
+
+	const startJitterReapply = () => {
+		if (!pc || delayMs <= 0) {
+			return;
+		}
+		if (jitterReapplyTimer) {
+			clearInterval(jitterReapplyTimer);
+		}
+		jitterReapplyTimer = setInterval(() => {
+			if (cancelled || !pc) {
+				return;
+			}
+			applyReceiverJitterBufferTargets(pc, delayMs);
+		}, RECEIVER_PREROLL_JITTER_REAPPLY_MS);
 	};
 
 	const cancel = () => {
@@ -187,7 +241,7 @@ export function startReceiverPlayoutWithBuffer(
 		endBufferingState();
 	};
 
-	const finishBuffering = () => {
+	const completeAvStart = (videoReadyWaitMs: number, timedOut: boolean) => {
 		if (cancelled || !presentation) {
 			return;
 		}
@@ -199,13 +253,77 @@ export function startReceiverPlayoutWithBuffer(
 		suspendedAudio = [];
 		restoreBufferingPresentation(video, presentation, unmutedAfterBuffer);
 		endBufferingState();
-		void video.play().catch((error) => {
-			console.error('[PLAYOUT_BUFFER] play() after buffer failed:', error);
+
+		receiverPlaybackDebug('av-start', {
+			reason: options.reason ?? 'stream-start',
+			preRollMs: Math.round(performance.now() - preRollStartedAt - videoReadyWaitMs),
+			videoReadyWaitMs,
+			timedOut,
+			readyState: video.readyState,
+			videoWidth: video.videoWidth,
+			videoHeight: video.videoHeight,
 		});
+	};
+
+	const beginVideoPriming = async () => {
+		if (cancelled || !presentation) {
+			return;
+		}
+		clearTimers();
+		if (pc) {
+			applyReceiverJitterBufferTargets(pc, delayMs);
+		}
+
+		restoreVisualPresentation(video, presentation);
+		video.muted = true;
+		video.volume = 0;
+		enforceStreamAudioSuspended(video);
+
+		avStartPending = true;
+		primingPhase = true;
+		startJitterReapply();
+
+		enforceTimer = setInterval(() => {
+			if (cancelled) {
+				return;
+			}
+			if (primingPhase) {
+				enforcePrimingPresentation(video);
+			} else {
+				enforceBufferingPresentation(video);
+			}
+		}, 200);
+
+		try {
+			await video.play();
+		} catch (error) {
+			console.error('[PLAYOUT_BUFFER] play() during priming failed:', error);
+		}
+
+		const readyResult = await waitForReceiverVideoReady(
+			video,
+			RECEIVER_AV_START_MAX_WAIT_MS,
+		);
+
+		if (cancelled) {
+			return;
+		}
+
+		primingPhase = false;
+		completeAvStart(readyResult.waitMs, readyResult.timedOut);
+
+		if (readyResult.timedOut) {
+			receiverPlaybackDebug('av-start-timeout', {
+				reason: options.reason ?? 'stream-start',
+				waitMs: readyResult.waitMs,
+				readyState: readyResult.readyState,
+			});
+		}
 	};
 
 	if (delayMs <= 0) {
 		playoutBufferActive = false;
+		avStartPending = false;
 		options.onBufferingChange?.(false);
 		void video.play().catch(() => {
 			// autoplay policy
@@ -218,15 +336,22 @@ export function startReceiverPlayoutWithBuffer(
 	options.onBufferingChange?.(true);
 	presentation = applyBufferingPresentation(video);
 	suspendedAudio = suspendStreamAudio(video);
+	startJitterReapply();
 
 	enforceTimer = setInterval(() => {
 		if (cancelled) {
 			return;
 		}
-		enforceBufferingPresentation(video);
+		if (primingPhase) {
+			enforcePrimingPresentation(video);
+		} else {
+			enforceBufferingPresentation(video);
+		}
 	}, 200);
 
-	timer = setTimeout(finishBuffering, delayMs);
+	timer = setTimeout(() => {
+		void beginVideoPriming();
+	}, delayMs);
 
 	activePlayoutCancel = cancel;
 	return cancel;

@@ -21,8 +21,9 @@ echo "=== Step 1: Clean previous build artifacts ==="
 rm -rf dist/mac dist/mac-arm64 dist/mac-unpacked 2>/dev/null || true
 
 echo ""
-echo "=== Step 2: Build client viewer ==="
+echo "=== Step 2: Build client viewer + DJ controller ==="
 cd src/client-viewer && npm run build && cd ../..
+cd src/dj-controller && npm run build && cd ../..
 
 echo ""
 echo "=== Step 3: Build Electron (vite) ==="

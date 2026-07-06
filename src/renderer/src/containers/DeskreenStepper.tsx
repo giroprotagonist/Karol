@@ -200,6 +200,14 @@ const DeskreenStepper = ({
 				return;
 			}
 
+			if (result?.reason === 'youtube-window-not-found') {
+				setActiveStep(0);
+				await showMessageFromNewToaster(
+					t('start-youtube-dj-open-player-window-first'),
+				);
+				return;
+			}
+
 			if (
 				result?.reason === 'no-source' ||
 				result?.reason === 'pick-required'

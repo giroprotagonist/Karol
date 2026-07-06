@@ -9,6 +9,7 @@ import Koa from 'koa';
 import crypto from 'crypto';
 import { Server } from 'socket.io';
 import cors from 'kcors';
+import type { Context } from 'koa';
 import Router from 'koa-router';
 import koaStatic from 'koa-static';
 import koaSend from 'koa-send';
@@ -23,6 +24,7 @@ import getStore from './store';
 import { getDeskreenGlobal } from '../main/helpers/getDeskreenGlobal';
 import getMyLocalIpV4 from '../main/helpers/getMyLocalIpV4';
 import { getClientViewerDistPath } from './getClientViewerDistPath';
+import { getDjControllerDistPath } from './getDjControllerDistPath';
 import getScreenCapturePermissionStatus from '../main/utils/getScreenCapturePermissionStatus';
 import SharingSessionStatusEnum from '../features/SharingSessionService/SharingSessionStatusEnum';
 import { registerYouTubeKaraokeApi } from './youtubeKaraokeApi';
@@ -125,6 +127,7 @@ class DeskreenSignalingServer {
 					?.roomID ?? '';
 			const ip = getMyLocalIpV4() || this.hostname;
 			const shareBase = `http://${ip}:${this.port}/${roomId}`;
+			const serverBase = `http://${ip}:${this.port}`;
 			ctx.set('Access-Control-Allow-Origin', '*');
 			ctx.type = 'application/json';
 			ctx.body = {
@@ -134,6 +137,8 @@ class DeskreenSignalingServer {
 				host: ip,
 				port: this.port,
 				shareUrl: roomId !== '' ? `${shareBase}?receiver=1` : null,
+				djControllerUrl: `${serverBase}/dj-controller/`,
+				youtubeDjHealthUrl: `${serverBase}/api/youtube-dj/health`,
 			};
 		});
 		router.get('/api/health.json', (ctx) => {
@@ -158,7 +163,27 @@ class DeskreenSignalingServer {
 			};
 		});
 		registerYouTubeKaraokeApi(router);
+
 		this.app.use(router.routes());
+
+		const djControllerDistDirectory = getDjControllerDistPath();
+		if (djControllerDistDirectory) {
+			this.app.use(async (ctx, next) => {
+				if (!ctx.path.startsWith('/dj-controller')) {
+					return next();
+				}
+				setStaticFileHeaders(ctx);
+				let relPath = ctx.path.slice('/dj-controller'.length).replace(/^\//, '');
+				if (!relPath) {
+					relPath = 'index.html';
+				}
+				try {
+					await koaSend(ctx, relPath, { root: djControllerDistDirectory });
+				} catch {
+					await koaSend(ctx, 'index.html', { root: djControllerDistDirectory });
+				}
+			});
+		}
 
 		const clientDistDirectory = this.clientDistDirectory;
 
@@ -277,7 +302,20 @@ class DeskreenSignalingServer {
 	}
 
 	stop(): void {
-		this.server.close();
+		try {
+			const io = socketIOServerStore.getServer();
+			if (io && typeof io.disconnectSockets === 'function') {
+				io.disconnectSockets(true);
+			}
+			if (io && typeof io.close === 'function') {
+				io.close();
+			}
+		} catch (error) {
+			this.log.error('Error closing Socket.IO server', error);
+		}
+		if (this.server && typeof this.server.close === 'function') {
+			this.server.close();
+		}
 	}
 }
 

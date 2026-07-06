@@ -3,10 +3,10 @@ import {
 	shell,
 	BrowserWindow,
 	MenuItemConstructorOptions,
-	app,
 } from 'electron';
 
 import i18nType from './configs/i18next.config';
+import { requestDeskreenQuit } from './helpers/appShutdown';
 
 interface DarwinMenuItemConstructorOptions extends MenuItemConstructorOptions {
 	selector?: string;
@@ -80,7 +80,7 @@ export default class MenuBuilder {
 					label: this.i18n.t('quit'),
 					accelerator: 'Command+Q',
 					click: () => {
-						app.quit();
+						requestDeskreenQuit();
 					},
 				},
 			],

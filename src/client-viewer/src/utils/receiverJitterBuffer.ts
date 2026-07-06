@@ -1,9 +1,11 @@
 import type SimplePeer from 'simple-peer';
-import { RECEIVER_QUALITY_BUFFER_DELAY_MS } from '../constants/castReliabilityConstants';
+import {
+	RECEIVER_AUDIO_PLAYOUT_OFFSET_MS,
+	RECEIVER_JITTER_BUFFER_TARGET_MAX_MS,
+	RECEIVER_QUALITY_BUFFER_DELAY_MS,
+} from '../constants/castReliabilityConstants';
 import { getReceiverQualityBufferPreference } from './receiverQualityBufferPreference';
-
-/** Chromium Android WebView caps jitterBufferTarget at 4000 ms (logcat-verified). */
-const JITTER_BUFFER_TARGET_MAX_MS = 4000;
+import { receiverPlaybackDebug } from './receiverPlaybackDebug';
 
 type SimplePeerWithPc = SimplePeer.Instance & { _pc?: RTCPeerConnection };
 
@@ -48,17 +50,30 @@ export function applyReceiverJitterBufferTargets(
 ): void {
 	const receivers = peerConnection.getReceivers();
 	for (const receiver of receivers) {
-		applyJitterBufferTargetToReceiver(receiver, delayMs);
+		const isAudio = receiver.track?.kind === 'audio';
+		const trackDelayMs = isAudio
+			? delayMs + RECEIVER_AUDIO_PLAYOUT_OFFSET_MS
+			: delayMs;
+		applyJitterBufferTargetToReceiver(receiver, trackDelayMs, isAudio ? 'audio' : 'video');
 	}
+	receiverPlaybackDebug('jitter-targets-applied', {
+		baseDelayMs: delayMs,
+		audioOffsetMs: RECEIVER_AUDIO_PLAYOUT_OFFSET_MS,
+		receiverCount: receivers.length,
+	});
 }
 
 function applyJitterBufferTargetToReceiver(
 	receiver: RTCRtpReceiver,
 	delayMs: number,
+	kind: 'audio' | 'video',
 ): void {
 	const rtpReceiver = receiver as RtpReceiverWithBufferHints;
-	const jitterTargetMs = Math.min(Math.max(delayMs, 0), JITTER_BUFFER_TARGET_MAX_MS);
-	const playoutDelaySeconds = delayMs > 0 ? delayMs / 1000 : 0;
+	const jitterTargetMs = Math.min(
+		Math.max(delayMs, 0),
+		RECEIVER_JITTER_BUFFER_TARGET_MAX_MS,
+	);
+	const playoutDelaySeconds = Math.max(delayMs, 0) / 1000;
 	try {
 		if ('jitterBufferTarget' in rtpReceiver) {
 			rtpReceiver.jitterBufferTarget = jitterTargetMs;
@@ -66,10 +81,15 @@ function applyJitterBufferTargetToReceiver(
 		if ('playoutDelayHint' in rtpReceiver) {
 			rtpReceiver.playoutDelayHint = playoutDelaySeconds;
 		}
+		receiverPlaybackDebug('jitter-receiver', {
+			kind,
+			jitterTargetMs,
+			playoutDelaySeconds,
+		});
 	} catch (error) {
 		console.warn(
 			'Unable to set receiver jitter buffer target',
-			{ delayMs, jitterTargetMs, playoutDelaySeconds },
+			{ kind, delayMs, jitterTargetMs, playoutDelaySeconds },
 			error,
 		);
 	}

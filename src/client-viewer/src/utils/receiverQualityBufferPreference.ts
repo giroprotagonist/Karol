@@ -6,6 +6,9 @@ export function getReceiverQualityBufferPreference(): boolean {
 	if (typeof window === 'undefined') {
 		return false;
 	}
+	if (isReceiverMode()) {
+		return true;
+	}
 	try {
 		const stored = localStorage.getItem(STORAGE_KEY);
 		if (stored === '0') {
@@ -14,16 +17,14 @@ export function getReceiverQualityBufferPreference(): boolean {
 		if (stored === '1') {
 			return true;
 		}
-		// Default ON in receiver mode — reduces WebRTC jitter compensation
-		// via playbackRate changes (speed up / slow down).
-		return isReceiverMode();
+		return false;
 	} catch {
 		return false;
 	}
 }
 
 export function setReceiverQualityBufferPreference(enabled: boolean): void {
-	if (typeof window === 'undefined') {
+	if (typeof window === 'undefined' || isReceiverMode()) {
 		return;
 	}
 	try {
