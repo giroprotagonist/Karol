@@ -18,6 +18,7 @@ data class DeskreenDiscovery(
 	val controllerUrl: String,
 	val host: String,
 	val port: Int,
+	val isPlayerHost: Boolean = false,
 )
 
 object DeskreenDiscoveryService {
@@ -28,20 +29,18 @@ object DeskreenDiscoveryService {
 			val subnet = getSubnetPrefix(context) ?: return@coroutineScope null
 			val ports = listOf(3131, 3132)
 
-			val results = (1..254)
-				.map { hostSuffix ->
-					async(Dispatchers.IO) {
-						val host = "$subnet.$hostSuffix"
-						for (port in ports) {
-							probeHost(host, port)?.let { return@async it }
-						}
-						null
+			val results =
+				(1..254)
+					.flatMap { hostSuffix ->
+						ports.map { port -> "$subnet.$hostSuffix" to port }
 					}
-				}
-				.awaitAll()
-				.filterNotNull()
+					.map { (host, port) ->
+						async(Dispatchers.IO) { probeHost(host, port) }
+					}
+					.awaitAll()
+					.filterNotNull()
 
-			results.firstOrNull()
+			results.firstOrNull { it.isPlayerHost } ?: results.firstOrNull()
 		}
 
 	private fun probeHost(host: String, port: Int): DeskreenDiscovery? {
@@ -62,16 +61,18 @@ object DeskreenDiscoveryService {
 			val body = connection.inputStream.bufferedReader().use { it.readText() }
 			connection.disconnect()
 			val json = JSONObject(body)
-			val controllerUrl = json.optString("djControllerUrl", "").ifBlank {
-				"http://$host:$port/dj-controller/"
-			}
+			val isPlayerHost = json.optString("role", "") == "dj-player"
 			if (!isControllerReachable(host, port)) {
 				return null
+			}
+			val controllerUrl = json.optString("djControllerUrl", "").ifBlank {
+				"http://$host:$port/dj-controller/"
 			}
 			DeskreenDiscovery(
 				controllerUrl = controllerUrl,
 				host = json.optString("host", host),
 				port = json.optInt("port", port),
+				isPlayerHost = isPlayerHost,
 			)
 		} catch (error: Exception) {
 			Log.d(TAG, "probe failed for $host:$port", error)

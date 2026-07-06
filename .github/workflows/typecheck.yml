@@ -1,0 +1,36 @@
+name: typecheck
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'feature/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '23'
+
+      - name: Install client-viewer dependencies
+        run: cd ./src/client-viewer && npm ci
+
+      - name: Install dj-controller dependencies
+        run: cd ./src/dj-controller && npm ci
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Typecheck all packages
+        run: npm run typecheck

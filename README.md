@@ -85,6 +85,33 @@ deskreen-ce --ip 192.168.1.100
 
 When using the `--ip` or `--local-ip` flag, the app will use the specified IP for QR codes and connection URLs, while still monitoring the actual network interface status for WiFi connection detection.
 
+## YouTube DJ: Cast vs Direct mode
+
+| Mode | Host | Tablet app | Remote |
+|------|------|------------|--------|
+| **Cast** | Mac (Deskreen CE) | `android-receiver` — WebRTC mirror | `android-controller` or `/dj-controller/` |
+| **Direct** | Tablet (`android-player`) | Fullscreen `watch?v=` YouTube kiosk | Same controller UI — point at tablet IP |
+
+### Build and install Direct Player (tablet host)
+
+```bash
+npm run sync:dj-controller-player   # build dj-controller + copy into APK assets
+cd android-player && ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+On the tablet: open **Deskreen Player** → tap **Start show**. Controller URL is shown on screen (`http://<tablet-ip>:3131/dj-controller/`).
+
+Phone (S24): open **Deskreen Controller** — LAN discovery prefers `dj-player` hosts.
+
+Verify API (tablet on WiFi):
+
+```bash
+DESKREEN_HOST=<tablet-ip> npm run verify:player-direct
+```
+
+Shared YouTube kiosk layout JS lives in [`src/youtube-kiosk/youtubeWatchLayout.js`](src/youtube-kiosk/youtubeWatchLayout.js) (no `/embed/` URLs).
+
 ## Maintainer
 
 - [Pavlo (Paul) Buidenkov](https://www.linkedin.com/in/pavlobu)

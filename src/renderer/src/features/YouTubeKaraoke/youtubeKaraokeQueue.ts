@@ -3,8 +3,11 @@ import {
 	type YouTubeKaraokeState,
 	type YouTubeKaraokeMode,
 	type YouTubeSearchResult,
+	type YouTubeDjQueueSnapshot,
 } from '@common/YouTubeKaraokeTypes';
 import { IpcEvents } from '@common/IpcEvents.enum';
+
+let snapshotUpdatedAt = 0;
 
 let state: YouTubeKaraokeState = {
 	queue: [],
@@ -43,6 +46,18 @@ export function subscribeToKaraokeState(fn: StateChangeListener): () => void {
 
 export function getKaraokeState(): YouTubeKaraokeState {
 	return { ...state, queue: [...state.queue] };
+}
+
+export function getQueueSnapshot(): YouTubeDjQueueSnapshot {
+	return {
+		queue: [...state.queue],
+		currentIndex: state.currentIndex,
+		mode: state.mode,
+		currentTitle: state.currentTitle,
+		currentTime: state.currentTime,
+		duration: state.duration,
+		updatedAt: snapshotUpdatedAt,
+	};
 }
 
 export function setKaraokeMode(mode: YouTubeKaraokeMode): void {
@@ -346,14 +361,15 @@ export function clearQueue(): void {
 
 function saveQueue(): void {
 	try {
-		const data = {
+		snapshotUpdatedAt = Date.now();
+		const data: YouTubeDjQueueSnapshot = {
 			queue: state.queue,
 			currentIndex: state.currentIndex,
 			mode: state.mode,
 			currentTitle: state.currentTitle,
 			currentTime: state.currentTime,
 			duration: state.duration,
-			updatedAt: Date.now(),
+			updatedAt: snapshotUpdatedAt,
 		};
 		localStorage.setItem('deskreen_yt_queue', JSON.stringify(data));
 		window.electron.ipcRenderer.send(IpcEvents.YOUTUBE_DJ_QUEUE_SNAPSHOT, data);
@@ -372,6 +388,7 @@ export function loadQueueFromStorage(): void {
 			queue?: YouTubeQueueItem[];
 			currentIndex?: number;
 			mode?: YouTubeKaraokeMode;
+			updatedAt?: number;
 		};
 		if (Array.isArray(data.queue)) {
 			state.queue = data.queue;
@@ -379,6 +396,9 @@ export function loadQueueFromStorage(): void {
 				typeof data.currentIndex === 'number' ? data.currentIndex : -1;
 			if (data.mode === 'hotswap' || data.mode === 'manual' || data.mode === 'queue') {
 				state.mode = data.mode;
+			}
+			if (typeof data.updatedAt === 'number') {
+				snapshotUpdatedAt = data.updatedAt;
 			}
 		}
 	} catch {

@@ -9,6 +9,7 @@ import {
 	addNewVideosToQueue,
 	clearQueue,
 	getKaraokeState,
+	getQueueSnapshot,
 	markCurrentError,
 	moveQueueItemDown,
 	moveQueueItemUp,
@@ -49,7 +50,7 @@ async function loadVideoById(videoId: string, queueItemId?: string): Promise<voi
 async function handleRemoteCommand(payload: YouTubeDjRemoteCommandPayload): Promise<unknown> {
 	switch (payload.type) {
 		case 'getState':
-			return getKaraokeState();
+			return getQueueSnapshot();
 
 		case 'playNow': {
 			if (!payload.id) {
@@ -145,7 +146,7 @@ async function handleRemoteCommand(payload: YouTubeDjRemoteCommandPayload): Prom
 		case 'applySyncResult': {
 			const result = payload.result as YouTubeDjPlaylistSyncResult | undefined;
 			if (result?.added?.length) {
-				const added = addNewVideosToQueue(result.added, 'playlist');
+				addNewVideosToQueue(result.added, 'playlist');
 				scheduleQueueTitleResolution(result.added.map((video) => video.videoId));
 			}
 			return getKaraokeState();

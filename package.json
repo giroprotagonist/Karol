@@ -39,6 +39,12 @@
     "verify:cast:webview": "CLIENT_MODE=webview bash scripts/verify-cast-e2e.sh",
     "verify:cast:webview:quick": "QUICK=1 CLIENT_MODE=webview bash scripts/verify-cast-e2e.sh",
     "verify:dj-stack": "bash scripts/verify-dj-stack.sh",
+    "verify:quit": "bash scripts/verify-deskreen-quit.sh",
+    "verify:quit:popout": "bash scripts/verify-deskreen-quit-with-popout.sh",
+    "verify:wifi-blip": "bash scripts/verify-wifi-blip.sh",
+    "verify:player-direct": "bash scripts/verify-player-direct.sh",
+    "sync:dj-controller-player": "bash scripts/sync-dj-controller-to-player.sh",
+    "build:android-player": "bash scripts/sync-dj-controller-to-player.sh && cd android-player && ./gradlew assembleDebug",
     "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {

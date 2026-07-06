@@ -23,4 +23,12 @@ check "/api/health.json"
 check "/api/youtube-dj/health"
 check "/dj-controller/"
 
+QUEUE_JSON="$(curl -sf "${BASE}/api/youtube-dj/queue")"
+UPDATED_AT="$(echo "$QUEUE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || echo "")"
+if [[ -z "$UPDATED_AT" ]]; then
+	echo "WARN /api/youtube-dj/queue missing updatedAt (renderer may be idle)"
+else
+	echo "OK   /api/youtube-dj/queue updatedAt=$UPDATED_AT"
+fi
+
 echo "=== DJ stack health check passed ==="

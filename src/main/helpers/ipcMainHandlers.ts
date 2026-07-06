@@ -7,9 +7,6 @@ import {
 	shell,
 } from 'electron';
 import i18n from '../configs/i18next.config';
-import { ConnectedDevicesService } from '../../features/ConnectedDevicesService';
-import SharingSession from '../../features/SharingSessionService/SharingSession';
-import RoomIDService from '../../server/RoomIDService';
 import { signalingServer } from '../../server';
 import { onDeviceConnectedCallback } from '../../server/onDeviceConnectedCallback';
 import SharingSessionStatusEnum from '../../features/SharingSessionService/SharingSessionStatusEnum';

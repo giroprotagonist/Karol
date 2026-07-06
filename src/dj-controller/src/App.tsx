@@ -205,6 +205,8 @@ export default function App() {
 	const currentThumbnail =
 		queueState?.currentThumbnail || currentItem?.thumbnail || '';
 
+	const isDirectHost = status?.hostMode === 'direct';
+
 	return (
 		<div className="app">
 			<header className="header">
@@ -213,7 +215,11 @@ export default function App() {
 					<div>
 						<h1>Deskreen DJ</h1>
 						<p className="header-sub">
-							{connected ? 'Live session' : 'Remote controller'}
+							{connected
+								? isDirectHost
+									? 'Tablet player'
+									: 'Mac cast host'
+								: 'Remote controller'}
 						</p>
 					</div>
 				</div>
@@ -240,8 +246,12 @@ export default function App() {
 
 			{showConnection || !connected ? (
 				<div className="card connection-card">
-					<h2>Mac Host</h2>
-					<p className="card-subtitle">Point your phone at the Deskreen Mac on your network</p>
+					<h2>{isDirectHost ? 'Tablet Player' : 'DJ Host'}</h2>
+					<p className="card-subtitle">
+						{isDirectHost
+							? 'Point your phone at the Deskreen Player tablet on your network'
+							: 'Point your phone at Deskreen CE on your Mac (or enter tablet player IP)'}
+					</p>
 					<input
 						className="field"
 						placeholder="192.168.1.42:3131"
@@ -253,11 +263,14 @@ export default function App() {
 					</button>
 					{status ? (
 						<div className="status-grid">
-							<div className={`status-chip-lg ${status.castConnected ? 'ok' : ''}`}>
-								Cast {status.castConnected ? 'live' : 'waiting'}
-							</div>
+							{!isDirectHost ? (
+								<div className={`status-chip-lg ${status.castConnected ? 'ok' : ''}`}>
+									Cast {status.castConnected ? 'live' : 'waiting'}
+								</div>
+							) : null}
 							<div className={`status-chip-lg ${status.captureReady ? 'ok' : ''}`}>
-								Capture {status.captureReady ? 'ready' : 'pending'}
+								{isDirectHost ? 'Player' : 'Capture'}{' '}
+								{status.captureReady ? 'ready' : 'pending'}
 							</div>
 							<div className={`status-chip-lg ${status.djActive ? 'ok' : ''}`}>
 								DJ {status.djActive ? 'on' : 'off'}

@@ -23,6 +23,8 @@ export type ReceiverPlayoutStartOptions = {
 	onBufferingChange?: (buffering: boolean) => void;
 	/** Unmute after pre-roll when stream has audio (receiver karaoke). */
 	unmutedAfterBuffer?: boolean;
+	/** Fired when video priming times out without a ready frame (A/V stays muted). */
+	onAvStartTimeout?: () => void;
 	reason?: string;
 };
 
@@ -255,6 +257,7 @@ export function startReceiverPlayoutWithBuffer(
 				waitMs: videoReadyWaitMs,
 				readyState: video.readyState,
 			});
+			options.onAvStartTimeout?.();
 			endBufferingState();
 			return;
 		}
@@ -320,14 +323,6 @@ export function startReceiverPlayoutWithBuffer(
 
 		primingPhase = false;
 		completeAvStart(readyResult.waitMs, readyResult.timedOut, readyResult.ready);
-
-		if (readyResult.timedOut && !readyResult.ready) {
-			receiverPlaybackDebug('av-start-timeout', {
-				reason: options.reason ?? 'stream-start',
-				waitMs: readyResult.waitMs,
-				readyState: readyResult.readyState,
-			});
-		}
 	};
 
 	if (delayMs <= 0) {

@@ -9,7 +9,6 @@ import Koa from 'koa';
 import crypto from 'crypto';
 import { Server } from 'socket.io';
 import cors from 'kcors';
-import type { Context } from 'koa';
 import Router from 'koa-router';
 import koaStatic from 'koa-static';
 import koaSend from 'koa-send';

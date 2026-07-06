@@ -123,6 +123,13 @@ class MainActivity : AppCompatActivity() {
 			while (isActive && !isConnected) {
 				val discovery = DeskreenDiscoveryService.findDeskreenOnLan(this@MainActivity)
 				if (discovery != null) {
+					val label =
+						if (discovery.isPlayerHost) {
+							"Tablet player at ${discovery.host}:${discovery.port}"
+						} else {
+							"Mac host at ${discovery.host}:${discovery.port}"
+						}
+					showStatus(label)
 					getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 						.edit()
 						.putString(KEY_URL, discovery.controllerUrl)

@@ -1,7 +1,7 @@
 <resources>
 	<string name="app_name">Deskreen DJ Controller</string>
-	<string name="searching_for_deskreen">Searching for Deskreen on your Wi‑Fi…</string>
-	<string name="manual_connect_hint">Enter your Mac IP and port, or scan a controller QR code.</string>
+	<string name="searching_for_deskreen">Searching for Deskreen Player or Mac on Wi‑Fi…</string>
+	<string name="manual_connect_hint">Enter the tablet or Mac IP (port 3131), or scan a QR code.</string>
 	<string name="url_hint">http://192.168.1.42:3131/dj-controller/</string>
 	<string name="scan_qr_code">Scan QR code</string>
 	<string name="connect">Connect</string>

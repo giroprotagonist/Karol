@@ -24,6 +24,15 @@ android-controller/.gradle/
 android-controller/**/build/
 android-controller/local.properties
 android-controller/.idea/
+android-player/.gradle/
+android-player/**/build/
+android-player/local.properties
+android-player/.idea/
+
+# Packaged Electron bytecode artifact (local build output)
+index.js
+bytecode-loader.cjs
+index.jsc
 
 # Private YouTube API key — never commit the real file
 config/youtube-api-key.local

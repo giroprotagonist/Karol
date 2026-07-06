@@ -28,6 +28,10 @@ import {
 	getRendererQueueState,
 	invokeRendererCommand,
 } from '../main/helpers/youtubeDjApiBridge';
+import {
+	isYouTubeQueueWindowOpen,
+	openYouTubeQueueWindow,
+} from '../main/helpers/youtubeQueueWindow';
 import { signalingServer } from './index';
 import { store } from '../common/deskreen-electron-store';
 import { ElectronStoreKeys } from '../common/ElectronStoreKeys.enum';
@@ -83,12 +87,13 @@ function setCors(ctx: Context): void {
 async function getDjStatus(): Promise<YouTubeDjStatus> {
 	const deskreenGlobal = getDeskreenGlobal();
 	const sourceId = await resolveYouTubeCapturerSourceId();
-	return {
+		return {
 		ok: true,
 		djActive: store.get(ElectronStoreKeys.YouTubeKaraokeActive) === 'true',
 		castConnected: deskreenGlobal.connectedDevicesService.getDevices().length > 0,
 		captureReady: Boolean(sourceId),
 		port: signalingServer.port,
+		hostMode: 'mac',
 	};
 }
 
@@ -207,6 +212,17 @@ export function registerYouTubeKaraokeApi(router: Router): void {
 		setCors(ctx);
 		const state = await getRendererQueueState();
 		ctx.body = { ok: true, ...state };
+	});
+
+	router.get('/api/youtube-dj/queue-window', (ctx: Context) => {
+		setCors(ctx);
+		ctx.body = { ok: true, open: isYouTubeQueueWindowOpen() };
+	});
+
+	router.post('/api/youtube-dj/queue-window/open', (ctx: Context) => {
+		setCors(ctx);
+		openYouTubeQueueWindow();
+		ctx.body = { ok: true, open: isYouTubeQueueWindowOpen() };
 	});
 
 	router.get('/api/youtube-dj/playlist', (ctx: Context) => {

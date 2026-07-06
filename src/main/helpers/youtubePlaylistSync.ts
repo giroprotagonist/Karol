@@ -17,7 +17,6 @@ import {
 	fetchYouTubePlaylistVideos,
 } from './youtubePlaylistFetch';
 import { getInMemoryYouTubeApiKey } from './youtubeApiKeyConfig';
-import { broadcastSyncResult } from './youtubePlaylistBroadcast';
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let syncInFlight = false;

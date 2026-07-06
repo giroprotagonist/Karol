@@ -122,6 +122,16 @@ function PlayerView(props: PlayerViewProps) {
 		setIsPlayoutBuffering(buffering);
 		monoAudioControllerRef.current?.setPlayoutHoldSilence(buffering);
 	}, []);
+	const handleAvStartTimeout = useCallback(() => {
+		if (!toasterRef.current) {
+			return;
+		}
+		toasterRef.current.show({
+			message: t('Video is still loading — audio stays muted until video is ready'),
+			intent: 'warning',
+			timeout: 8000,
+		});
+	}, [t]);
 	const [isControlModeEnabled, setIsControlModeEnabled] = useState(
 		() => getReceiverControlModePreference(),
 	);
@@ -376,6 +386,7 @@ function PlayerView(props: PlayerViewProps) {
 
 			const cancelPlayout = startReceiverPlayoutWithBuffer(videoRef.current, {
 				onBufferingChange: handlePlayoutBufferingChange,
+				onAvStartTimeout: handleAvStartTimeout,
 				unmutedAfterBuffer,
 				reason: 'stream-start',
 			});
@@ -396,7 +407,7 @@ function PlayerView(props: PlayerViewProps) {
 		}
 
 		// video.js mode (default) doesn't need imperative src assignment here
-	}, [streamUrl, isWithControls, mobileLike, isQualityBufferEnabled, handlePlayoutBufferingChange]);
+	}, [streamUrl, isWithControls, mobileLike, isQualityBufferEnabled, handlePlayoutBufferingChange, handleAvStartTimeout]);
 
 	useEffect(() => {
 		if (!receiverMode || !isQualityBufferEnabled || !streamUrl || !isWithControls) {
@@ -423,12 +434,13 @@ function PlayerView(props: PlayerViewProps) {
 				video,
 				{
 					onBufferingChange: handlePlayoutBufferingChange,
+					onAvStartTimeout: handleAvStartTimeout,
 					unmutedAfterBuffer: Boolean(streamUrl?.getAudioTracks().length),
 					reason,
 				},
 			);
 		});
-	}, [receiverMode, isQualityBufferEnabled, streamUrl, isWithControls, handlePlayoutBufferingChange]);
+	}, [receiverMode, isQualityBufferEnabled, streamUrl, isWithControls, handlePlayoutBufferingChange, handleAvStartTimeout]);
 
 	useEffect(() => {
 		if (isWithControls) {

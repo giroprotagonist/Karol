@@ -151,18 +151,31 @@ export async function invokeRendererCommand(
 	});
 }
 
+function pickNewerQueueSnapshot(
+	primary: YouTubeDjQueueSnapshot,
+	fallback: YouTubeDjQueueSnapshot | null,
+): YouTubeDjQueueSnapshot {
+	if (!fallback) {
+		return primary;
+	}
+	const primaryTs = primary.updatedAt ?? 0;
+	const fallbackTs = fallback.updatedAt ?? 0;
+	return fallbackTs > primaryTs ? fallback : primary;
+}
+
 export async function getRendererQueueState(): Promise<YouTubeDjQueueSnapshot> {
+	const cached = readQueueSnapshotFromStore();
 	try {
 		const result = (await invokeRendererCommand('getState')) as YouTubeDjQueueSnapshot;
 		if (result && Array.isArray(result.queue)) {
-			return result;
+			return pickNewerQueueSnapshot(result, cached);
 		}
 	} catch {
 		// fall through to store snapshot
 	}
 
 	return (
-		readQueueSnapshotFromStore() ?? {
+		cached ?? {
 			queue: [],
 			currentIndex: -1,
 			mode: 'queue',

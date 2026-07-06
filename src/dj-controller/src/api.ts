@@ -80,9 +80,9 @@ async function request<T>(
 			throw new Error(data.error || `Request failed (${res.status})`);
 		}
 		return data;
-	} catch (error) {
+		} catch (error) {
 		if (error instanceof Error && error.name === 'AbortError') {
-			throw new Error('Request timed out — is Deskreen running?');
+			throw new Error('Request timed out — is the DJ host running?');
 		}
 		throw error;
 	} finally {
