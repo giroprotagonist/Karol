@@ -43,7 +43,7 @@ import {
 	closeYouTubeQueueWindow,
 	openYouTubeQueueWindow,
 } from './youtubeQueueWindow';
-import type { YouTubeDjRemoteCommandType } from '../../common/YouTubeKaraokeTypes';
+import type { YouTubeDjRemoteCommandType, YouTubeKaraokeMode } from '../../common/YouTubeKaraokeTypes';
 
 export { autoSelectYouTubeWindowSource } from './youtubeCaptureSource';
 
@@ -104,8 +104,13 @@ export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 	});
 
 	ipcMain.handle(IpcEvents.YOUTUBE_KARAOKE_LOAD_VIDEO, async (_, videoId: string) => {
-		await loadYouTubeVideo(videoId, getServerPort());
-		return { ok: true };
+		try {
+			await loadYouTubeVideo(videoId, getServerPort());
+			return { ok: true };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'video load failed';
+			return { ok: false, error: message };
+		}
 	});
 
 	ipcMain.handle(IpcEvents.YOUTUBE_KARAOKE_QUEUE_VIDEO, (_, item: YouTubeQueueItem) => {
@@ -307,7 +312,7 @@ export function initYouTubeKaraokeIpc(mainWindow: BrowserWindow): void {
 				id?: string;
 				fromIndex?: number;
 				toIndex?: number;
-				mode?: string;
+				mode?: YouTubeKaraokeMode;
 			},
 		) => {
 			if (!payload?.type) {

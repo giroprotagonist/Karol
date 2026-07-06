@@ -241,13 +241,22 @@ export function startReceiverPlayoutWithBuffer(
 		endBufferingState();
 	};
 
-	const completeAvStart = (videoReadyWaitMs: number, timedOut: boolean) => {
+	const completeAvStart = (videoReadyWaitMs: number, timedOut: boolean, ready: boolean) => {
 		if (cancelled || !presentation) {
 			return;
 		}
 		clearTimers();
 		if (pc) {
 			applyReceiverJitterBufferTargets(pc, delayMs);
+		}
+		if (timedOut && !ready) {
+			receiverPlaybackDebug('av-start-timeout', {
+				reason: options.reason ?? 'stream-start',
+				waitMs: videoReadyWaitMs,
+				readyState: video.readyState,
+			});
+			endBufferingState();
+			return;
 		}
 		restoreStreamAudio(suspendedAudio);
 		suspendedAudio = [];
@@ -310,9 +319,9 @@ export function startReceiverPlayoutWithBuffer(
 		}
 
 		primingPhase = false;
-		completeAvStart(readyResult.waitMs, readyResult.timedOut);
+		completeAvStart(readyResult.waitMs, readyResult.timedOut, readyResult.ready);
 
-		if (readyResult.timedOut) {
+		if (readyResult.timedOut && !readyResult.ready) {
 			receiverPlaybackDebug('av-start-timeout', {
 				reason: options.reason ?? 'stream-start',
 				waitMs: readyResult.waitMs,

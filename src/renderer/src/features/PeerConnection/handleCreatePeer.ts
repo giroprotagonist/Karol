@@ -11,6 +11,38 @@ import simplePeerHandleSdpTransform from './simplePeerHandleSdpTransform';
 import { applyHostStreamEncodingPreferences } from './applyHostStreamEncoding';
 
 const MAX_CAPTURE_RECOVERY_ATTEMPTS = 8;
+const WARM_RECONNECT_DEBOUNCE_MS = 1500;
+
+let warmReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let warmReconnectInFlight = false;
+
+function scheduleWarmReconnect(peerConnection: PeerConnection): void {
+	if (warmReconnectTimer) {
+		clearTimeout(warmReconnectTimer);
+	}
+	warmReconnectTimer = setTimeout(() => {
+		warmReconnectTimer = null;
+		if (warmReconnectInFlight) {
+			return;
+		}
+		const videoTrack = peerConnection.localStream?.getVideoTracks()[0];
+		if (!videoTrack || videoTrack.readyState === 'ended') {
+			return;
+		}
+		warmReconnectInFlight = true;
+		void warmReconnectPeer(peerConnection)
+			.then(() => {
+				peerConnection.callPeer();
+				console.warn('[RECONNECT] warm reconnect complete — re-offered to viewer');
+			})
+			.catch((error) => {
+				console.error('[RECONNECT] warm reconnect failed:', error);
+			})
+			.finally(() => {
+				warmReconnectInFlight = false;
+			});
+	}, WARM_RECONNECT_DEBOUNCE_MS);
+}
 
 export function attachCaptureTrackEndedHandler(
 	peerConnection: PeerConnection,
@@ -191,6 +223,7 @@ export default function handleCreatePeer(
 			// Track is still live — keep the session alive
 			// The capture track onended handler is the authority on session lifetime
 			console.warn('[SELF_DESTROY] keeping session alive — capture track is still live');
+			scheduleWarmReconnect(peerConnection);
 		});
 
 		peerConnection.peer.on('error', (e: Error) => {
@@ -201,6 +234,7 @@ export default function handleCreatePeer(
 				return;
 			}
 			console.warn('[SELF_DESTROY] keeping session alive despite peer error — capture track is still live');
+			scheduleWarmReconnect(peerConnection);
 		});
 				resolve(undefined);
 			})
@@ -267,6 +301,7 @@ export function warmReconnectPeer(peerConnection: PeerConnection): Promise<void>
 				return;
 			}
 			console.warn('[RECONNECT] keeping session alive — capture track is still live');
+			scheduleWarmReconnect(peerConnection);
 		});
 
 		newPeer.on('error', (e: Error) => {
@@ -277,6 +312,7 @@ export function warmReconnectPeer(peerConnection: PeerConnection): Promise<void>
 				return;
 			}
 			console.warn('[RECONNECT] keeping session alive despite peer error');
+			scheduleWarmReconnect(peerConnection);
 		});
 
 		peerConnection.peer = newPeer;

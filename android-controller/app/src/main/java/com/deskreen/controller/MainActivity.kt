@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -163,6 +164,52 @@ class MainActivity : AppCompatActivity() {
 					isConnected = true
 					showConnected()
 				}
+			}
+
+			@Suppress("DEPRECATION")
+			override fun onReceivedError(
+				view: WebView?,
+				errorCode: Int,
+				description: String?,
+				failingUrl: String?,
+			) {
+				android.util.Log.e(
+					"DeskreenController",
+					"onReceivedError code=$errorCode desc=$description url=$failingUrl",
+				)
+				if (lastLoadedUrl.isNotBlank()) {
+					showStatus(getString(R.string.controller_load_error))
+				}
+			}
+
+			override fun onReceivedHttpError(
+				view: WebView?,
+				request: WebResourceRequest?,
+				errorResponse: android.webkit.WebResourceResponse?,
+			) {
+				android.util.Log.w(
+					"DeskreenController",
+					"onReceivedHttpError status=${errorResponse?.statusCode} url=${request?.url}",
+				)
+			}
+
+			override fun onRenderProcessGone(
+				view: WebView?,
+				detail: RenderProcessGoneDetail?,
+			): Boolean {
+				android.util.Log.e(
+					"DeskreenController",
+					"WebView renderer process gone didCrash=${detail?.didCrash()}",
+				)
+				isConnected = false
+				if (lastLoadedUrl.isNotBlank()) {
+					webView.clearCache(true)
+					webView.loadUrl(lastLoadedUrl)
+					showConnected()
+				} else {
+					showManualConnect()
+				}
+				return true
 			}
 		}
 	}

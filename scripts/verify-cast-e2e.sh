@@ -109,7 +109,7 @@ open_share_on_tablet() {
 	info "Opening share URL on tablet (${mode}): ${url}"
 	if [[ "$mode" == "webview" ]]; then
 		"$ADB" shell am force-stop "$RECEIVER_PKG" >/dev/null 2>&1 || true
-		"$ADB" shell am start -n "${RECEIVER_PKG}/.MainActivity" -e deskreen_url "$url" >/dev/null
+		"$ADB" shell am start -n "${RECEIVER_PKG}/.MainActivity" -d "$url" >/dev/null
 	else
 		"$ADB" shell am force-stop "$CHROME_PKG" >/dev/null 2>&1 || true
 		"$ADB" shell am start -a android.intent.action.VIEW \

@@ -67,6 +67,7 @@ export type YouTubeDjQueueSnapshot = {
 	currentTitle?: string;
 	currentTime?: number;
 	duration?: number;
+	updatedAt?: number;
 };
 
 export type YouTubeDjRemoteCommandType =

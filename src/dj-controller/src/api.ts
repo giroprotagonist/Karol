@@ -56,24 +56,38 @@ function apiBase(host: string): string {
 	return `${normalizeHost(host)}/api/youtube-dj`;
 }
 
+const FETCH_TIMEOUT_MS = 12000;
+
 async function request<T>(
 	host: string,
 	path: string,
 	init?: RequestInit,
 ): Promise<T> {
-	const res = await fetch(`${apiBase(host)}${path}`, {
-		...init,
-		headers: {
-			'Content-Type': 'application/json',
-			'X-Deskreen-Client': 'DeskreenController/1.0',
-			...(init?.headers ?? {}),
-		},
-	});
-	const data = (await res.json()) as T & { error?: string };
-	if (!res.ok) {
-		throw new Error(data.error || `Request failed (${res.status})`);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+	try {
+		const res = await fetch(`${apiBase(host)}${path}`, {
+			...init,
+			signal: controller.signal,
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Deskreen-Client': 'DeskreenController/1.0',
+				...(init?.headers ?? {}),
+			},
+		});
+		const data = (await res.json()) as T & { error?: string };
+		if (!res.ok) {
+			throw new Error(data.error || `Request failed (${res.status})`);
+		}
+		return data;
+	} catch (error) {
+		if (error instanceof Error && error.name === 'AbortError') {
+			throw new Error('Request timed out — is Deskreen running?');
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeout);
 	}
-	return data;
 }
 
 export async function fetchStatus(host: string): Promise<YouTubeDjStatus> {

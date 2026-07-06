@@ -121,6 +121,8 @@ class DesktopCapturerSourcesService {
 				this.log.warn(
 					`[HEARTBEAT] capture session alive for ${uptimeSec}s | sources=${this.sources.size}`,
 				);
+				void this.checkForClosedWindows();
+				void this.checkForScreensDisconnected();
 			}, 30000);
 		}
 	}
@@ -238,17 +240,21 @@ class DesktopCapturerSourcesService {
 	}
 
 	addWindowClosedListener(
-		_sharingSessionID: string,
-		_callback: SourcesDisappearListener,
+		sharingSessionID: string,
+		callback: SourcesDisappearListener,
 	): void {
-		// TODO: implement logic
+		const existing = this.onWindowClosedListeners.get(sharingSessionID) ?? [];
+		existing.push(callback);
+		this.onWindowClosedListeners.set(sharingSessionID, existing);
 	}
 
 	addScreenDisconnectedListener(
-		_sharingSessionID: string,
-		_callback: SourcesDisappearListener,
+		sharingSessionID: string,
+		callback: SourcesDisappearListener,
 	): void {
-		// TODO: implement logic
+		const existing = this.onScreenDisconnectedListeners.get(sharingSessionID) ?? [];
+		existing.push(callback);
+		this.onScreenDisconnectedListeners.set(sharingSessionID, existing);
 	}
 
 	async updateDesktopCapturerSources(): Promise<void> {
@@ -269,6 +275,12 @@ class DesktopCapturerSourcesService {
 
 		const newSources = await this.getDesktopCapturerSources();
 		this.sources = newSources;
+		this.lastAvailableWindowIDs = [...newSources.values()]
+			.filter((entry) => entry.type === DesktopCapturerSourceType.WINDOW)
+			.map((entry) => entry.source.id);
+		this.lastAvailableScreenIDs = [...newSources.values()]
+			.filter((entry) => entry.type === DesktopCapturerSourceType.SCREEN)
+			.map((entry) => entry.source.id);
 		this.lastRefreshError = null;
 	}
 
@@ -443,31 +455,67 @@ class DesktopCapturerSourcesService {
 	}
 
 	checkForClosedWindows(): void {
-		// TODO: implement logic
-		// const isSomeWindowsClosed = false;
-		// const closedWindowsIDs: string[] = [];
-		// if (isSomeWindowsClosed) {
-		//   this.notifyOnWindowsClosedListeners(closedWindowsIDs);
-		// }
+		if (!this.isCaptureSessionActive()) {
+			return;
+		}
+		const previousWindowIds = [...this.lastAvailableWindowIDs];
+		const currentWindowIds = [...this.sources.values()]
+			.filter((entry) => entry.type === DesktopCapturerSourceType.WINDOW)
+			.map((entry) => entry.source.id);
+		this.lastAvailableWindowIDs = currentWindowIds;
+		if (previousWindowIds.length === 0) {
+			return;
+		}
+		const disappeared = previousWindowIds.filter((id) => !currentWindowIds.includes(id));
+		if (disappeared.length > 0) {
+			this.log.warn(`[CAPTURE] window sources disappeared: ${disappeared.join(', ')}`);
+			this.notifyOnWindowsClosedListeners(disappeared);
+		}
 	}
 
-	notifyOnWindowsClosedListeners(_closedWindowsIDs: string[]): void {
-		// TODO: implement logic
+	notifyOnWindowsClosedListeners(closedWindowsIDs: string[]): void {
+		for (const listeners of this.onWindowClosedListeners.values()) {
+			for (const listener of listeners) {
+				try {
+					listener(closedWindowsIDs);
+				} catch (error) {
+					this.log.error('window closed listener failed', error);
+				}
+			}
+		}
 	}
 
 	checkForScreensDisconnected(): void {
-		// TODO: implement logic
-		// const isSomeScreensDisconnected = false;
-		// const disconnectedScreensIDs: string[] = [];
-		// if (isSomeScreensDisconnected) {
-		//   this.notifyOnScreensDisconnectedListeners(disconnectedScreensIDs);
-		// }
+		if (!this.isCaptureSessionActive()) {
+			return;
+		}
+		const previousScreenIds = [...this.lastAvailableScreenIDs];
+		const currentScreenIds = [...this.sources.values()]
+			.filter((entry) => entry.type === DesktopCapturerSourceType.SCREEN)
+			.map((entry) => entry.source.id);
+		this.lastAvailableScreenIDs = currentScreenIds;
+		if (previousScreenIds.length === 0) {
+			return;
+		}
+		const disconnected = previousScreenIds.filter((id) => !currentScreenIds.includes(id));
+		if (disconnected.length > 0) {
+			this.log.warn(`[CAPTURE] screen sources disconnected: ${disconnected.join(', ')}`);
+			this.notifyOnScreensDisconnectedListeners(disconnected);
+		}
 	}
 
 	notifyOnScreensDisconnectedListeners(
-		_disconnectedScreensIDs: string[],
+		disconnectedScreensIDs: string[],
 	): void {
-		// TODO: implement logic
+		for (const listeners of this.onScreenDisconnectedListeners.values()) {
+			for (const listener of listeners) {
+				try {
+					listener(disconnectedScreensIDs);
+				} catch (error) {
+					this.log.error('screen disconnected listener failed', error);
+				}
+			}
+		}
 	}
 }
 

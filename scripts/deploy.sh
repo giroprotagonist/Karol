@@ -102,6 +102,31 @@ echo "=== Step 8: Launch ==="
 open "$APP_PATH"
 
 echo ""
+echo "=== Step 9: Post-deploy health check ==="
+PORT="${DESKREEN_PORT:-3131}"
+for attempt in 1 2 3 4 5 6; do
+	sleep 3
+	all_ok=true
+	for path in "/api/health.json" "/api/youtube-dj/health" "/dj-controller/"; do
+		code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}${path}" 2>/dev/null || echo "000")"
+		if [[ "$code" != "200" ]]; then
+			all_ok=false
+			break
+		fi
+	done
+	if [[ "$all_ok" == "true" ]]; then
+		for path in "/api/health.json" "/api/youtube-dj/health" "/dj-controller/"; do
+			echo "OK ${path}"
+		done
+		break
+	fi
+	if [[ "$attempt" -eq 6 ]]; then
+		echo "ERROR: Health check failed after launch (is port ${PORT} available?)"
+		exit 1
+	fi
+done
+
+echo ""
 echo "=== Done ==="
 echo "Deskreen CE deployed to $APP_PATH"
 echo ""

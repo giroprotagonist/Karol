@@ -21,8 +21,8 @@ export const SOCKET_HEALTH_CHECK_INTERVAL_MS = 5000;
 /** Standard receiver playout buffer — pre-roll + playoutDelayHint target. */
 export const RECEIVER_BUFFER_STANDARD_MS = 7000;
 
-/** Chromium Android WebView caps jitterBufferTarget (ms). */
-export const RECEIVER_JITTER_BUFFER_TARGET_MAX_MS = 4000;
+/** Chromium Android WebView caps jitterBufferTarget (ms) — match 7s pre-roll target. */
+export const RECEIVER_JITTER_BUFFER_TARGET_MAX_MS = RECEIVER_BUFFER_STANDARD_MS;
 
 /** Target playout delay when receiver quality buffer is enabled. */
 export const RECEIVER_QUALITY_BUFFER_DELAY_MS = RECEIVER_BUFFER_STANDARD_MS;

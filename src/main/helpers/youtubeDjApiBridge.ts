@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { BrowserWindow } from 'electron';
-import { BrowserWindow as BrowserWindowClass, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import { IpcEvents } from '../../common/IpcEvents.enum';
 import { ElectronStoreKeys } from '../../common/ElectronStoreKeys.enum';
 import type {
@@ -21,21 +21,23 @@ type PendingRequest = {
 };
 
 let mainWindowRef: BrowserWindow | null = null;
+let mainRendererWebContentsId: number | null = null;
 const pendingRequests = new Map<string, PendingRequest>();
 
 function resolveMainWindow(): BrowserWindow | null {
 	const appWindow = deskreenApp.mainWindow;
 	if (appWindow && !appWindow.isDestroyed()) {
 		mainWindowRef = appWindow;
+		mainRendererWebContentsId = appWindow.webContents.id;
 		return appWindow;
 	}
-	if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+	if (
+		mainWindowRef &&
+		!mainWindowRef.isDestroyed() &&
+		mainRendererWebContentsId !== null &&
+		mainWindowRef.webContents.id === mainRendererWebContentsId
+	) {
 		return mainWindowRef;
-	}
-	const fallback = BrowserWindowClass.getAllWindows().find((win) => !win.isDestroyed());
-	if (fallback) {
-		mainWindowRef = fallback;
-		return fallback;
 	}
 	return null;
 }
@@ -54,6 +56,7 @@ async function waitForMainWindow(maxMs = 15000): Promise<BrowserWindow> {
 
 export function initYoutubeDjApiBridge(mainWindow: BrowserWindow): void {
 	mainWindowRef = mainWindow;
+	mainRendererWebContentsId = mainWindow.webContents.id;
 
 	ipcMain.on(
 		IpcEvents.YOUTUBE_DJ_REMOTE_RESPONSE,
@@ -94,6 +97,14 @@ export function initYoutubeDjApiBridge(mainWindow: BrowserWindow): void {
 		}
 		forwardQueueSnapshotToWindow(snapshot);
 	});
+}
+
+export function clearPendingDjApiRequests(): void {
+	for (const pending of pendingRequests.values()) {
+		clearTimeout(pending.timer);
+		pending.reject(new Error('Deskreen is shutting down'));
+	}
+	pendingRequests.clear();
 }
 
 export function readQueueSnapshotFromStore(): YouTubeDjQueueSnapshot | null {

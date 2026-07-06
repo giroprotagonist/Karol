@@ -213,7 +213,7 @@ function PlayerView(props: PlayerViewProps) {
 		streamHealthMonitorRef.current.attach(videoRef.current, {
 			qualityBufferEnabled: isQualityBufferEnabled,
 			onFrozen: () => {
-				if (isReceiverPlayoutBufferActive() || isQualityBufferEnabled) {
+				if (isReceiverPlayoutBufferActive()) {
 					return;
 				}
 				videoRef.current?.play().catch(() => {

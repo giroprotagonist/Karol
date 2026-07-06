@@ -9,6 +9,7 @@ import {
 	addNewVideosToQueue,
 	clearQueue,
 	getKaraokeState,
+	markCurrentError,
 	moveQueueItemDown,
 	moveQueueItemUp,
 	playNow,
@@ -20,11 +21,29 @@ import {
 } from './youtubeKaraokeQueue';
 import { scheduleQueueTitleResolution } from './youtubeQueueTitles';
 
-async function loadVideoById(videoId: string): Promise<void> {
+const LOAD_VIDEO_TIMEOUT_MS = 20000;
+
+async function loadVideoById(videoId: string, queueItemId?: string): Promise<void> {
 	if (!videoId) {
 		return;
 	}
-	await window.electron.ipcRenderer.invoke(IpcEvents.YOUTUBE_KARAOKE_LOAD_VIDEO, videoId);
+	try {
+		const result = (await Promise.race([
+			window.electron.ipcRenderer.invoke(IpcEvents.YOUTUBE_KARAOKE_LOAD_VIDEO, videoId),
+			new Promise<{ ok: false; error: string }>((_, reject) => {
+				setTimeout(() => reject(new Error('video load timed out')), LOAD_VIDEO_TIMEOUT_MS);
+			}),
+		])) as { ok?: boolean; error?: string };
+		if (result && result.ok === false) {
+			throw new Error(result.error || 'video load failed');
+		}
+	} catch (error) {
+		if (queueItemId) {
+			const message = error instanceof Error ? error.message : 'video load failed';
+			markCurrentError(message);
+		}
+		throw error;
+	}
 }
 
 async function handleRemoteCommand(payload: YouTubeDjRemoteCommandPayload): Promise<unknown> {
@@ -38,7 +57,7 @@ async function handleRemoteCommand(payload: YouTubeDjRemoteCommandPayload): Prom
 			}
 			const videoId = playNow(payload.id);
 			if (videoId) {
-				await loadVideoById(videoId);
+				await loadVideoById(videoId, payload.id);
 			}
 			return getKaraokeState();
 		}
@@ -46,7 +65,9 @@ async function handleRemoteCommand(payload: YouTubeDjRemoteCommandPayload): Prom
 		case 'skipNext': {
 			const nextVideoId = skipNext();
 			if (nextVideoId) {
-				await loadVideoById(nextVideoId);
+				const state = getKaraokeState();
+				const item = state.queue[state.currentIndex];
+				await loadVideoById(nextVideoId, item?.id);
 			}
 			return getKaraokeState();
 		}
@@ -54,7 +75,9 @@ async function handleRemoteCommand(payload: YouTubeDjRemoteCommandPayload): Prom
 		case 'skipPrev': {
 			const prevVideoId = skipPrev();
 			if (prevVideoId) {
-				await loadVideoById(prevVideoId);
+				const state = getKaraokeState();
+				const item = state.queue[state.currentIndex];
+				await loadVideoById(prevVideoId, item?.id);
 			}
 			return getKaraokeState();
 		}

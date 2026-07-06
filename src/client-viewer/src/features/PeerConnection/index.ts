@@ -10,6 +10,7 @@ import {
 	type ProcessedPayload,
 } from '../../utils/message';
 import { registerReceiverPeerConnection } from '../../utils/receiverJitterBuffer';
+import { cancelActiveReceiverPlayoutBuffer } from '../../utils/receiverPlayoutBuffer';
 import applyCastSdpTransform from '../../../../common/webrtc/applyCastSdpTransform';
 import VideoAutoQualityOptimizer from '../VideoAutoQualityOptimizer';
 import {
@@ -134,6 +135,7 @@ export default class PeerConnection {
 	}
 
 	stopStream() {
+		cancelActiveReceiverPlayoutBuffer();
 		// stop the video stream by clearing the stream URL
 		this.setUrlCallback(null);
 		this.isStreamStarted = false;
@@ -230,7 +232,7 @@ export default class PeerConnection {
 		this.peer.on('error', (e) => {
 			console.error('error in simple peer happened!');
 			console.error(e);
-			setAndShowErrorDialogMessage(this, ErrorMessage.WEBRTC_ERROR);
+			// Transient ICE errors are recovered via peer.on('close') → createPeer()
 		});
 		peerConnectionHandlePeer(this);
 	}

@@ -7,9 +7,11 @@ import { stopLogBufferCleanup } from '../utils/LoggerWithFilePrefix';
 import { closeYouTubePlayerWindow } from './youtubeOutputPlayer';
 import { stopPlaylistSyncPolling } from './youtubePlaylistSync';
 import { cleanupDeskreenSessions } from './cleanupDeskreenSessions';
+import { closeYouTubeQueueWindow } from './youtubeQueueWindow';
+import { clearPendingDjApiRequests } from './youtubeDjApiBridge';
 import { getDeskreenGlobal } from './getDeskreenGlobal';
 
-const SHUTDOWN_HARD_TIMEOUT_MS = 4000;
+const SHUTDOWN_HARD_TIMEOUT_MS = 6000;
 
 let shutdownStarted = false;
 let shutdownComplete = false;
@@ -37,6 +39,8 @@ export async function shutdownDeskreen(reason: string): Promise<void> {
 
 	try {
 		store.delete(ElectronStoreKeys.YouTubeKaraokeActive as string);
+		clearPendingDjApiRequests();
+		closeYouTubeQueueWindow();
 		closeYouTubePlayerWindow();
 		stopPlaylistSyncPolling();
 

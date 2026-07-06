@@ -1,16 +1,13 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
-import { BrowserWindow } from 'electron';
-import { IpcEvents } from '../common/IpcEvents.enum';
 import type {
-	YouTubeQueueItem,
+	YouTubeSearchResult,
 	YouTubeDjNowPlaying,
 	YouTubeDjPlaylistModeConfig,
 	YouTubeDjStatus,
 } from '../common/YouTubeKaraokeTypes';
 import {
 	openYouTubePlayerWindow,
-	loadYouTubeVideo,
 	getYouTubePlayerInfo,
 	playYouTubeVideo,
 	pauseYouTubeVideo,
@@ -104,38 +101,39 @@ async function handleQueueAction(
 		return { ok: false, error: 'invalid YouTube URL' };
 	}
 
-	const item: YouTubeQueueItem = {
-		id: `ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-		url,
+	const video: YouTubeSearchResult = {
 		videoId,
 		title: '',
-		thumbnail: '',
-		status: 'queued',
+		channelTitle: '',
+		thumbnailUrl: '',
+		url: url.startsWith('http') ? url : `https://www.youtube.com/watch?v=${videoId}`,
 	};
 
-	if (action === 'play-now') {
-		try {
+	try {
+		if (action === 'play-now') {
 			store.set(ElectronStoreKeys.YouTubeKaraokeActive, 'true');
 			openYouTubePlayerWindow(signalingServer.port);
 			await new Promise((resolve) => setTimeout(resolve, 800));
 			await autoSelectYouTubeWindowSource();
-			await loadYouTubeVideo(videoId, signalingServer.port);
-		} catch (err) {
-			console.error('[YT_DJ_API] failed to setup play-now:', err);
 		}
-	}
 
-	const windows = BrowserWindow.getAllWindows();
-	for (const win of windows) {
-		if (!win.isDestroyed()) {
-			win.webContents.send(IpcEvents.YOUTUBE_KARAOKE_QUEUE_VIDEO, item);
-			if (action === 'play-now') {
-				win.webContents.send('youtube-karaoke-play-now-from-api', videoId);
-			}
+		await invokeRendererCommand('addVideos', { videos: [video], source: 'extension' });
+		const state = await getRendererQueueState();
+		const item = state.queue.find((q) => q.videoId === videoId);
+		if (!item) {
+			return { ok: false, error: 'failed to add video to queue' };
 		}
-	}
 
-	return { ok: true, videoId };
+		if (action === 'play-now') {
+			await invokeRendererCommand('playNow', { id: item.id });
+		}
+
+		return { ok: true, videoId };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : `${action} failed`;
+		console.error(`[YT_DJ_API] ${action} failed:`, err);
+		return { ok: false, error: message };
+	}
 }
 
 export function registerYouTubeKaraokeApi(router: Router): void {
@@ -182,9 +180,9 @@ export function registerYouTubeKaraokeApi(router: Router): void {
 		ctx.body = { ok: true };
 	});
 
-	router.get('/api/youtube-dj/health', (ctx) => {
+	router.get('/api/youtube-dj/health', async (ctx) => {
 		setCors(ctx);
-		ctx.body = { ok: true };
+		ctx.body = await getDjStatus();
 	});
 
 	router.get('/api/youtube-dj/status', async (ctx: Context) => {
@@ -297,15 +295,7 @@ export function registerYouTubeKaraokeApi(router: Router): void {
 			return;
 		}
 		try {
-			if (fromIndex < toIndex) {
-				for (let index = fromIndex; index < toIndex; index += 1) {
-					await invokeRendererCommand('moveQueueItemDown', { id: fromItem.id });
-				}
-			} else {
-				for (let index = fromIndex; index > toIndex; index -= 1) {
-					await invokeRendererCommand('moveQueueItemUp', { id: fromItem.id });
-				}
-			}
+			await invokeRendererCommand('reorderQueue', { fromIndex, toIndex });
 			ctx.body = { ok: true, state: await getRendererQueueState() };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'failed to reorder queue';

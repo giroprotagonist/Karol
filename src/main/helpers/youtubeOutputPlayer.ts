@@ -44,6 +44,7 @@ export type YouTubePlayerDebugInfo = {
 
 const YOUTUBE_PARTITION = 'persist:deskreen-youtube';
 const POLL_MS = 500;
+const PROGRESS_BROADCAST_MIN_MS = 1000;
 const LOAD_DEBOUNCE_MS = 200;
 const VIDEO_READY_TIMEOUT_MS = 20000;
 
@@ -51,6 +52,7 @@ let youtubeWindow: BrowserWindow | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSnapshot: YouTubeOutputPlayerSnapshot | null = null;
 let lastEmittedState = -2;
+let lastProgressBroadcastAt = 0;
 let lastVideoReadyId = '';
 let layoutCssKey = '';
 let loadInFlight: Promise<void> | null = null;
@@ -397,9 +399,24 @@ async function pollPlayerState(): Promise<YouTubeOutputPlayerSnapshot | null> {
 		) {
 			lastEmittedState = snapshot.state;
 			lastSnapshot = snapshot;
+			lastProgressBroadcastAt = Date.now();
 			broadcastState(snapshot);
 		} else {
+			const prevTime = lastSnapshot?.currentTime ?? 0;
+			const prevDuration = lastSnapshot?.duration ?? 0;
 			lastSnapshot = snapshot;
+			const now = Date.now();
+			const timeMoved =
+				Math.abs((snapshot.currentTime ?? 0) - prevTime) >= 0.5 ||
+				(snapshot.duration ?? 0) !== prevDuration;
+			if (
+				snapshot.state === 1 &&
+				timeMoved &&
+				now - lastProgressBroadcastAt >= PROGRESS_BROADCAST_MIN_MS
+			) {
+				lastProgressBroadcastAt = now;
+				broadcastState(snapshot);
+			}
 		}
 		return snapshot;
 	} catch {
@@ -654,7 +671,7 @@ async function loadYouTubeVideoInternal(
 ): Promise<void> {
 	const safeId = videoId.replace(/[^a-zA-Z0-9_-]/g, '');
 	if (!safeId) {
-		return;
+		throw new Error('invalid video id');
 	}
 
 	openYouTubePlayerWindow(_serverPort);
@@ -668,7 +685,10 @@ async function loadYouTubeVideoInternal(
 	await navigateToVideo(safeId);
 	await new Promise((resolve) => setTimeout(resolve, 400));
 	await applyWatchPageLayout();
-	await waitForVideoLayerReady(safeId);
+	const ready = await waitForVideoLayerReady(safeId);
+	if (!ready) {
+		throw new Error(`YouTube video layer not ready: ${safeId}`);
+	}
 }
 
 export async function loadYouTubeVideo(
@@ -677,7 +697,7 @@ export async function loadYouTubeVideo(
 ): Promise<void> {
 	const safeId = videoId.replace(/[^a-zA-Z0-9_-]/g, '');
 	if (!safeId) {
-		return;
+		throw new Error('invalid video id');
 	}
 
 	if (loadInFlight) {

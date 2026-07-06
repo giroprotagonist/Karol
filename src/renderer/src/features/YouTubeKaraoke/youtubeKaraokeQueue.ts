@@ -353,6 +353,7 @@ function saveQueue(): void {
 			currentTitle: state.currentTitle,
 			currentTime: state.currentTime,
 			duration: state.duration,
+			updatedAt: Date.now(),
 		};
 		localStorage.setItem('deskreen_yt_queue', JSON.stringify(data));
 		window.electron.ipcRenderer.send(IpcEvents.YOUTUBE_DJ_QUEUE_SNAPSHOT, data);

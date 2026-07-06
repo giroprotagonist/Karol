@@ -313,31 +313,6 @@ export default function YouTubeKaraokePanel(): React.ReactElement {
 		};
 	}, []);
 
-	useEffect(() => {
-		const handler = async (_event: unknown, videoId: string) => {
-			setIsEnabled(true);
-			setSourceReady(true);
-			const url = `https://www.youtube.com/watch?v=${videoId}`;
-			const item = createQueueItem(url, videoId);
-			const existing = getKaraokeState().queue.find((q) => q.videoId === videoId);
-			const queueId = existing?.id ?? item.id;
-			if (!existing) {
-				tryAddToQueue(item);
-				scheduleQueueTitleResolution([videoId]);
-			}
-			playNow(queueId);
-			setState(getKaraokeState());
-			await loadVideoById(videoId);
-		};
-		window.electron.ipcRenderer.on('youtube-karaoke-play-now-from-api', handler);
-		return () => {
-			window.electron.ipcRenderer.removeListener(
-				'youtube-karaoke-play-now-from-api',
-				handler,
-			);
-		};
-	}, [loadVideoById]);
-
 	const handleToggle = useCallback(async (enabled: boolean) => {
 		if (enabled) {
 			setIsOpening(true);

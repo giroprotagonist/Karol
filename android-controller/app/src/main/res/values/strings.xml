@@ -9,4 +9,5 @@
 	<string name="qr_scan_hint">Point at the Deskreen DJ controller QR code</string>
 	<string name="cancel">Cancel</string>
 	<string name="camera_permission_required">Camera permission is required to scan QR codes</string>
+	<string name="controller_load_error">Could not load DJ controller. Retrying…</string>
 </resources>
