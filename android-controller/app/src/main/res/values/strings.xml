@@ -10,4 +10,27 @@
 	<string name="cancel">Cancel</string>
 	<string name="camera_permission_required">Camera permission is required to scan QR codes</string>
 	<string name="controller_load_error">Could not load DJ controller. Retrying…</string>
+	<string name="reconnecting_host">Reconnecting to host…</string>
+	<string name="notification_channel_name">DJ playback</string>
+	<string name="notification_channel_desc">Lock screen and notification controls for the show queue</string>
+	<string name="notification_idle_title">Deskreen DJ</string>
+	<string name="notification_artist">Deskreen Player</string>
+	<string name="notification_playing">Playing</string>
+	<string name="notification_paused">Paused</string>
+	<string name="notification_ready">Connected</string>
+	<string name="notification_action_play">Play</string>
+	<string name="notification_action_pause">Pause</string>
+	<string name="notification_action_next">Next</string>
+	<string name="notification_action_previous">Previous</string>
+	<string name="notification_unreachable">Can\u2019t reach player</string>
+	<string name="notification_action_disconnect">Disconnect</string>
+	<string name="notification_permission_rationale">Allow notifications for lock-screen playback controls</string>
+	<string name="disconnect">Disconnect</string>
+	<string name="native_connected">Connected to player</string>
+	<string name="native_reconnecting">Reconnecting\u2026</string>
+	<string name="native_offline">Player offline</string>
+	<string name="discovery_tablet_player">Tablet player at %1$s:%2$d</string>
+	<string name="discovery_mac_host">Mac host at %1$s:%2$d</string>
+	<string name="invalid_url">Enter a valid http:// address</string>
+	<string name="connecting">Connecting\u2026</string>
 </resources>

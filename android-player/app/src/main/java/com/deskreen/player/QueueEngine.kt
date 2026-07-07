@@ -2,6 +2,7 @@ package com.deskreen.player
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -13,6 +14,8 @@ class QueueEngine(context: Context) {
 	var currentIndex: Int = -1
 		private set
 	var mode: String = "queue"
+		private set
+	var shuffleEnabled: Boolean = false
 		private set
 	var isPlaying: Boolean = false
 		private set
@@ -26,7 +29,14 @@ class QueueEngine(context: Context) {
 		private set
 	private var snapshotUpdatedAt: Long = 0L
 
+	/** Queue indices visited in shuffle mode (for skip-prev). */
+	private val shufflePlayHistory = mutableListOf<Int>()
+
+	var lastAdvanceReason: String = ""
+		private set
+
 	var onLoadVideo: ((videoId: String) -> Unit)? = null
+	var onSeekVideo: ((seconds: Double) -> Unit)? = null
 
 	init {
 		loadFromStorage()
@@ -57,6 +67,80 @@ class QueueEngine(context: Context) {
 		persist()
 	}
 
+	fun setShuffleEnabled(enabled: Boolean) {
+		shuffleEnabled = enabled
+		if (!enabled) {
+			shufflePlayHistory.clear()
+		}
+		persist()
+	}
+
+	fun shuffleUpcoming(): Boolean {
+		if (queue.isEmpty()) {
+			return false
+		}
+		val start =
+			when {
+				currentIndex < 0 -> 0
+				currentIndex >= queue.lastIndex -> return false
+				else -> currentIndex + 1
+			}
+		val tail = queue.subList(start, queue.size).toMutableList()
+		tail.shuffle()
+		tail.forEachIndexed { offset, item ->
+			queue[start + offset] = item
+		}
+		persist()
+		return true
+	}
+
+	private fun pickNextShuffleIndex(): Int? {
+		val candidates =
+			queue.indices.filter { idx ->
+				idx != currentIndex && queue[idx].status != "ended"
+			}
+		if (candidates.isEmpty()) {
+			return null
+		}
+		return candidates.random()
+	}
+
+	private fun shouldShuffleAdvance(): Boolean = shuffleEnabled && mode == "queue"
+
+	private fun pushShuffleHistory(fromIndex: Int) {
+		if (!shouldShuffleAdvance() || fromIndex < 0) {
+			return
+		}
+		if (shufflePlayHistory.lastOrNull() == fromIndex) {
+			return
+		}
+		shufflePlayHistory.add(fromIndex)
+		while (shufflePlayHistory.size > 50) {
+			shufflePlayHistory.removeAt(0)
+		}
+	}
+
+	private fun advanceToIndex(
+		nextIndex: Int,
+		recordHistory: Boolean = true,
+	): String {
+		if (recordHistory && currentIndex >= 0) {
+			pushShuffleHistory(currentIndex)
+		}
+		resetPlaybackClock()
+		currentIndex = nextIndex
+		queue[nextIndex] = queue[nextIndex].copy(status = "loading")
+		isPlaying = true
+		persist()
+		onLoadVideo?.invoke(queue[nextIndex].videoId)
+		return queue[nextIndex].videoId
+	}
+
+	private fun resetPlaybackClock() {
+		currentTime = 0.0
+		duration = 0.0
+	}
+
 	private fun queuedIds(): MutableSet<String> {
 		val ids = mutableSetOf<String>()
 		for (item in queue) {
@@ -84,6 +168,12 @@ class QueueEngine(context: Context) {
 					title = video.title,
 					thumbnail = video.thumbnailUrl,
 					status = "queued",
+					durationSec = video.durationSec,
+					playlistPosition = video.playlistPosition ?: (index + 1),
+					addedAtMs = video.addedAtMs,
+					publishedAtMs = video.publishedAtMs,
+					viewCount = video.viewCount,
+					channelTitle = video.channelTitle.ifBlank { null },
 				)
 			queue.add(item)
 			added.add(item)
@@ -111,6 +201,95 @@ class QueueEngine(context: Context) {
 		persist()
 	}
 
+	fun enrichFromVideos(videos: List<SearchVideo>) {
+		if (videos.isEmpty() || queue.isEmpty()) {
+			return
+		}
+		val byVideoId = videos.associateBy { it.videoId }
+		var changed = false
+		for (i in queue.indices) {
+			val item = queue[i]
+			val meta = byVideoId[item.videoId] ?: continue
+			val updated = item.enrichFrom(meta)
+			if (updated != item) {
+				queue[i] = updated
+				changed = true
+			}
+		}
+		if (changed) {
+			persist()
+		}
+	}
+
+	fun sortQueue(mode: String): Boolean {
+		if (queue.size < 2 || mode.isBlank() || mode == "custom") {
+			return false
+		}
+		val currentId = queue.getOrNull(currentIndex)?.id
+		val originalOrder = queue.map { it.id }
+		val sorted =
+			when (mode) {
+				"date-added-newest" ->
+					queue.sortedWith(
+						compareByDescending<QueueItem> { it.addedAtMs ?: Long.MIN_VALUE }
+							.thenBy { it.playlistPosition ?: Int.MAX_VALUE },
+					)
+				"date-added-oldest" ->
+					queue.sortedWith(
+						compareBy<QueueItem> { it.addedAtMs ?: Long.MAX_VALUE }
+							.thenByDescending { it.playlistPosition ?: Int.MIN_VALUE },
+					)
+				"published-newest" ->
+					queue.sortedWith(
+						compareByDescending<QueueItem> { it.publishedAtMs ?: Long.MIN_VALUE }
+							.thenBy { it.title.lowercase() },
+					)
+				"published-oldest" ->
+					queue.sortedWith(
+						compareBy<QueueItem> { it.publishedAtMs ?: Long.MAX_VALUE }
+							.thenBy { it.title.lowercase() },
+					)
+				"popular" ->
+					queue.sortedWith(
+						compareByDescending<QueueItem> { it.viewCount ?: Long.MIN_VALUE }
+							.thenBy { it.title.lowercase() },
+					)
+				"duration-longest" ->
+					queue.sortedWith(
+						compareByDescending<QueueItem> { it.durationSec ?: Int.MIN_VALUE }
+							.thenBy { it.title.lowercase() },
+					)
+				"duration-shortest" ->
+					queue.sortedWith(
+						compareBy<QueueItem> { it.durationSec ?: Int.MAX_VALUE }
+							.thenBy { it.title.lowercase() },
+					)
+				"title-asc" ->
+					queue.sortedWith(
+						compareBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+					)
+				"title-desc" ->
+					queue.sortedWith(
+						compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.title },
+					)
+				"playlist-order" ->
+					queue.sortedWith(
+						compareBy<QueueItem> { it.playlistPosition ?: Int.MAX_VALUE },
+					)
+				else -> return false
+			}
+		if (sorted.map { it.id } == originalOrder) {
+			return true
+		}
+		queue.clear()
+		queue.addAll(sorted)
+		if (currentId != null) {
+			currentIndex = queue.indexOfFirst { it.id == currentId }
+		}
+		persist()
+		return true
+	}
+
 	fun reorderQueue(fromIndex: Int, toIndex: Int) {
 		if (
 			fromIndex < 0 ||
@@ -136,6 +315,7 @@ class QueueEngine(context: Context) {
 	fun clearQueue() {
 		queue.clear()
 		currentIndex = -1
+		shufflePlayHistory.clear()
 		isPlaying = false
 		currentTitle = ""
 		currentThumbnail = ""
@@ -144,11 +324,21 @@ class QueueEngine(context: Context) {
 		persist()
 	}
 
-	fun playNow(id: String): String? {
+	fun logAdvance(reason: String) {
+		Log.i("DeskreenAdvance", reason)
+		lastAdvanceReason = reason
+	}
+
+	fun playNow(
+		id: String,
+		reason: String = "play-now",
+	): String? {
 		val index = queue.indexOfFirst { it.id == id }
 		if (index < 0) {
 			return null
 		}
+		logAdvance(reason)
+		resetPlaybackClock()
 		currentIndex = index
 		queue[index] = queue[index].copy(status = "loading")
 		isPlaying = true
@@ -158,25 +348,45 @@ class QueueEngine(context: Context) {
 		return videoId
 	}
 
-	fun skipNext(): String? {
+	fun skipNext(reason: String = "user-skip"): String? {
 		if (queue.isEmpty()) {
 			return null
 		}
+		logAdvance(reason)
 		val nextIndex =
-			if (currentIndex < 0) 0 else minOf(currentIndex + 1, queue.size - 1)
-		currentIndex = nextIndex
-		queue[nextIndex] = queue[nextIndex].copy(status = "loading")
-		isPlaying = true
-		persist()
-		onLoadVideo?.invoke(queue[nextIndex].videoId)
-		return queue[nextIndex].videoId
+			if (shouldShuffleAdvance()) {
+				pickNextShuffleIndex()
+			} else if (currentIndex < 0) {
+				0
+			} else {
+				minOf(currentIndex + 1, queue.size - 1)
+			}
+		if (nextIndex == null) {
+			return null
+		}
+		return advanceToIndex(nextIndex)
 	}
 
-	fun skipPrev(): String? {
+	fun skipPrev(reason: String = "user-skip-prev"): String? {
 		if (queue.isEmpty()) {
 			return null
 		}
+		logAdvance(reason)
+		if (currentIndex in queue.indices && currentTime > 3.0) {
+			resetPlaybackClock()
+			isPlaying = true
+			persist()
+			onSeekVideo?.invoke(0.0)
+			return queue[currentIndex].videoId
+		}
+		if (shouldShuffleAdvance() && shufflePlayHistory.isNotEmpty()) {
+			val prevIndex = shufflePlayHistory.removeLast()
+			if (prevIndex in queue.indices) {
+				return advanceToIndex(prevIndex, recordHistory = false)
+			}
+		}
 		val prevIndex = maxOf(0, if (currentIndex <= 0) 0 else currentIndex - 1)
+		resetPlaybackClock()
 		currentIndex = prevIndex
 		queue[prevIndex] = queue[prevIndex].copy(status = "loading")
 		isPlaying = true
@@ -185,7 +395,8 @@ class QueueEngine(context: Context) {
 		return queue[prevIndex].videoId
 	}
 
-	fun onVideoEnded(): String? {
+	fun onVideoEnded(reason: String = "ended-confirmed"): String? {
+		logAdvance(reason)
 		if (currentIndex in queue.indices) {
 			queue[currentIndex] = queue[currentIndex].copy(status = "ended")
 		}
@@ -195,12 +406,15 @@ class QueueEngine(context: Context) {
 			return null
 		}
 		if (mode == "queue") {
-			val nextIndex = currentIndex + 1
-			if (nextIndex < queue.size) {
-				currentIndex = nextIndex
-				queue[nextIndex] = queue[nextIndex].copy(status = "loading")
-				persist()
-				onLoadVideo?.invoke(queue[nextIndex].videoId)
+			val nextIndex =
+				if (shouldShuffleAdvance()) {
+					pickNextShuffleIndex()
+				} else {
+					val sequential = currentIndex + 1
+					if (sequential < queue.size) sequential else null
+				}
+			if (nextIndex != null) {
+				advanceToIndex(nextIndex)
 				return queue[nextIndex].videoId
 			}
 		}
@@ -219,6 +433,24 @@ class QueueEngine(context: Context) {
 		}
 		isPlaying = false
 		persist()
+	}
+
+	fun clearCurrentError() {
+		if (currentIndex !in queue.indices) {
+			return
+		}
+		val item = queue[currentIndex]
+		if (item.status == "error" || item.errorReason != null) {
+			queue[currentIndex] =
+				item.copy(
+					status = if (item.status == "error") "loading" else item.status,
+					errorReason = null,
+				)
+		}
+		if (!isPlaying) {
+			isPlaying = true
+			persist()
+		}
 	}
 
 	fun setNowPlaying(
@@ -246,6 +478,10 @@ class QueueEngine(context: Context) {
 		duration = dur
 	}
 
+	fun setTransportPlaying(playing: Boolean) {
+		isPlaying = playing
+	}
+
 	fun addFromUrl(url: String, action: String): String? {
 		val videoId = extractVideoId(url) ?: return null
 		val item =
@@ -259,6 +495,7 @@ class QueueEngine(context: Context) {
 			)
 		queue.add(item)
 		if (action == "play-now") {
+			logAdvance("play-now-url")
 			currentIndex = queue.size - 1
 			isPlaying = true
 			persist()
@@ -279,6 +516,7 @@ class QueueEngine(context: Context) {
 				.put("queue", JSONArray(queue.map { it.toJson() }))
 				.put("currentIndex", currentIndex)
 				.put("mode", mode)
+				.put("shuffleEnabled", shuffleEnabled)
 				.put("currentTitle", currentTitle)
 				.put("currentThumbnail", currentThumbnail)
 				.put("currentTime", currentTime)
@@ -298,6 +536,7 @@ class QueueEngine(context: Context) {
 					.toMutableList()
 			currentIndex = data.optInt("currentIndex", -1)
 			mode = data.optString("mode", "queue")
+			shuffleEnabled = data.optBoolean("shuffleEnabled", false)
 			currentTitle = data.optString("currentTitle", "")
 			currentThumbnail = data.optString("currentThumbnail", "")
 			currentTime = data.optDouble("currentTime", 0.0)
@@ -331,3 +570,19 @@ class QueueEngine(context: Context) {
 		}
 	}
 }
+
+private fun QueueItem.enrichFrom(meta: SearchVideo): QueueItem =
+	copy(
+		playlistPosition = meta.playlistPosition ?: playlistPosition,
+		addedAtMs = meta.addedAtMs ?: addedAtMs,
+		publishedAtMs = meta.publishedAtMs ?: publishedAtMs,
+		durationSec = meta.durationSec ?: durationSec,
+		viewCount = meta.viewCount ?: viewCount,
+		channelTitle = meta.channelTitle.ifBlank { null } ?: channelTitle,
+		title =
+			if (title.startsWith("YouTube:") && !meta.title.startsWith("YouTube:")) {
+				meta.title
+			} else {
+				title
+			},
+	)

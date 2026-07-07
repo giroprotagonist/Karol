@@ -1,10 +1,10 @@
 <resources>
 	<style name="Theme.DeskreenController" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-		<item name="colorPrimary">#238636</item>
+		<item name="colorPrimary">@color/deskreen_accent</item>
 		<item name="colorPrimaryVariant">#196127</item>
 		<item name="colorOnPrimary">#FFFFFF</item>
-		<item name="android:statusBarColor">#0d1117</item>
-		<item name="android:navigationBarColor">#0d1117</item>
-		<item name="android:windowBackground">#0d1117</item>
+		<item name="android:statusBarColor">@color/deskreen_bg</item>
+		<item name="android:navigationBarColor">@color/deskreen_bg</item>
+		<item name="android:windowBackground">@color/deskreen_bg</item>
 	</style>
 </resources>

@@ -37,3 +37,7 @@ index.jsc
 # Private YouTube API key — never commit the real file
 config/youtube-api-key.local
 **/youtube-api-key.local
+
+# Saved YouTube WebView session (local testing only)
+.deskreen/youtube-session.json
+.deskreen/.yt-*

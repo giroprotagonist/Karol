@@ -3,4 +3,23 @@
 	<string name="start_show">Start show</string>
 	<string name="player_notification_title">Deskreen Player</string>
 	<string name="player_notification_text">Karaoke player running on this tablet</string>
+	<string name="show_paused_toast">Show paused — tap Start Show to resume</string>
+	<string name="auto_start_boot">Auto-start show on boot</string>
+	<string name="qr_content_desc">QR code for controller URL</string>
+	<string name="status_idle">API ready — waiting for show</string>
+	<string name="status_show_active">Show active</string>
+	<string name="controller_url_label">Controller URL</string>
+	<string name="api_url_label">API URL</string>
+	<string name="copy_url">Copy controller URL</string>
+	<string name="copied_url">Controller URL copied</string>
+	<string name="sign_in_youtube">Sign in to YouTube</string>
+	<string name="sign_in_youtube_retry">Re-check YouTube Premium</string>
+	<string name="youtube_premium_active">YouTube Premium active — ad-free</string>
+	<string name="youtube_signed_in_no_premium">Signed in — Premium not detected (ads may show)</string>
+	<string name="youtube_signed_in">YouTube: signed in (Premium = no ads)</string>
+	<string name="youtube_not_signed_in">YouTube: not signed in — ads may appear</string>
+	<string name="youtube_sign_in_premium_ok">YouTube Premium confirmed on this tablet</string>
+	<string name="youtube_sign_in_no_premium_warn">Signed in, but Premium was not detected. Use the Premium account or tap Re-check.</string>
+	<string name="youtube_sign_in_complete">YouTube sign-in saved on this tablet</string>
+	<string name="sign_in_cancelled">Sign-in cancelled</string>
 </resources>

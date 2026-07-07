@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/components/nowplayingcard.tsx","./src/components/queuelist.tsx","./src/components/searchresults.tsx"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/nativebridge.ts","./src/playbackclock.ts","./src/components/nowplayingcard.tsx","./src/components/playlistlibrary.tsx","./src/components/queuelist.tsx","./src/components/searchresults.tsx","./src/components/tracktitle.tsx","./src/components/transporticons.tsx"],"version":"5.9.3"}

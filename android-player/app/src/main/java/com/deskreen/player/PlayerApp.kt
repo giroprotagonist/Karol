@@ -1,6 +1,7 @@
 package com.deskreen.player
 
 import android.app.Application
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
@@ -17,14 +18,25 @@ class PlayerApp : Application() {
 		private set
 	lateinit var djHttpServer: DjHttpServer
 		private set
+	lateinit var playbackSupervisor: PlaybackSupervisor
+		private set
+
+	private var mdnsAdvertiser: DeskreenMdnsAdvertiser? = null
 
 	var youtubeBridge: YouTubeKioskBridge? = null
 		private set
+
+	@Volatile
+	var showActive: Boolean = false
+
+	var onRequestStartShow: (() -> Unit)? = null
 
 	override fun onCreate() {
 		super.onCreate()
 		instance = this
 		preferences = PlayerPreferences(this)
+		migrateTrustedUserAgentIfNeeded()
+		YouTubeSessionBackup.tryRestoreOnStartup(this)
 		queueEngine = QueueEngine(this)
 		dataClient = YouTubeDataClient(preferences)
 		playlistSync =
@@ -57,52 +69,162 @@ class PlayerApp : Application() {
 
 					override fun getSnapshot(): PlayerSnapshot? = youtubeBridge?.getSnapshot()
 
+					override fun needsVideoLoad(videoId: String): Boolean =
+						youtubeBridge?.needsVideoLoad(videoId) ?: true
+
+					override fun getLastKnownPlaybackTime(): Double =
+						youtubeBridge?.getLastKnownPlaybackTime() ?: 0.0
+
 					override val isReady: Boolean
 						get() = youtubeBridge?.isReady == true
 				},
 				preferences = preferences,
 				playlistSync = playlistSync,
 				dataClient = dataClient,
+				statusProvider = { buildHostStatus() },
 			)
+		playbackSupervisor =
+			PlaybackSupervisor(
+				queueEngine = queueEngine,
+				onNudgePlayback = {
+					youtubeBridge?.setVolume(djHttpServer.volumeLevel)
+					youtubeBridge?.play()
+				},
+				onSoftRecover = {
+					youtubeBridge?.setVolume(djHttpServer.volumeLevel)
+					youtubeBridge?.softRecoverPlayback()
+				},
+				onHardReload = {
+					queueEngine.getCurrentVideoId()?.let { videoId ->
+						youtubeBridge?.loadVideo(videoId)
+					}
+				},
+			)
+		djHttpServer.onTransportAdvance = {
+			playbackSupervisor.clearLoadState()
+			queueEngine.clearCurrentError()
+		}
+		djHttpServer.onPlaybackRequested = {
+			onRequestStartShow?.invoke()
+		}
 		queueEngine.onLoadVideo = { videoId ->
-			youtubeBridge?.loadVideo(videoId)
+			// #region agent log
+			Log.i(
+				"DeskreenDbg",
+				org.json.JSONObject()
+					.put("sessionId", "25b906")
+					.put("hypothesisId", "H5")
+					.put("location", "PlayerApp.onLoadVideo")
+					.put("message", "queue-advance-load")
+					.put(
+						"data",
+						org.json.JSONObject()
+							.put("videoId", videoId)
+							.put("showActive", showActive),
+					)
+					.put("timestamp", System.currentTimeMillis())
+					.toString(),
+			)
+			// #endregion
+			playbackSupervisor.onLoadStarted(videoId)
+			djHttpServer.invalidatePlaybackSnapshot()
+			if (showActive) {
+				youtubeBridge?.setVolume(djHttpServer.volumeLevel)
+				youtubeBridge?.loadVideo(videoId)
+			} else {
+				onRequestStartShow?.invoke()
+			}
+		}
+		queueEngine.onSeekVideo = { seconds ->
+			youtubeBridge?.seek(seconds)
+			queueEngine.setPlaybackProgress(seconds, queueEngine.duration)
 		}
 		playlistSync.startPollingIfEnabled()
+		startHostServices()
 	}
 
 	fun attachBridge(bridge: YouTubeKioskBridge) {
 		youtubeBridge = bridge
+		bridge.syncVolumeLevel(djHttpServer.volumeLevel)
 		bridge.setOnVideoEndedListener {
-			queueEngine.onVideoEnded()
+			queueEngine.onVideoEnded("ended-confirmed")
+		}
+		bridge.setOnInterstitialListener { url ->
+			playbackSupervisor.onInterstitial(url)
 		}
 	}
 
 	fun applySnapshot(snapshot: PlayerSnapshot) {
-		djHttpServer.latestSnapshot = snapshot
-		if (snapshot.hasVideo) {
-			queueEngine.setPlaybackProgress(snapshot.currentTime, snapshot.duration)
-			if (snapshot.title.isNotBlank()) {
+		val resolved = djHttpServer.reconcileSnapshotProgress(snapshot)
+		djHttpServer.latestSnapshot = resolved
+		djHttpServer.notePlaybackSample(resolved)
+		playbackSupervisor.onSnapshot(resolved)
+		if (resolved.hasVideo) {
+			queueEngine.setPlaybackProgress(resolved.currentTime, resolved.duration)
+			if (resolved.state == 1 || resolved.state == 2) {
+				val title =
+					resolved.title.ifBlank {
+						queueEngine.queue.getOrNull(queueEngine.currentIndex)?.title ?: ""
+					}
 				val thumb =
-					if (snapshot.videoId.isNotBlank()) {
-						"https://i.ytimg.com/vi/${snapshot.videoId}/default.jpg"
+					if (resolved.videoId.isNotBlank()) {
+						"https://i.ytimg.com/vi/${resolved.videoId}/default.jpg"
 					} else {
-						""
+						queueEngine.currentThumbnail
 					}
 				queueEngine.setNowPlaying(
-					snapshot.title,
+					title,
 					thumb,
-					snapshot.currentTime,
-					snapshot.duration,
+					resolved.currentTime,
+					resolved.duration,
 				)
 			}
 		}
 	}
 
-	fun startHttpServer() {
+	fun startHostServices() {
 		djHttpServer.start()
+		if (mdnsAdvertiser == null) {
+			mdnsAdvertiser = DeskreenMdnsAdvertiser(this).also { it.start() }
+		}
+	}
+
+	fun startForegroundHost() {
+		PlayerForegroundService.start(this)
+	}
+
+	fun buildHostStatus(): HostStatus =
+		HostStatus(
+			showActive = showActive,
+			queueLength = queueEngine.queue.size,
+			currentTitle = queueEngine.currentTitle,
+			interstitialMessage = playbackSupervisor.interstitialMessage,
+			lastPlaybackError =
+				queueEngine.queue
+					.getOrNull(queueEngine.currentIndex)
+					?.errorReason,
+		)
+
+	private fun migrateTrustedUserAgentIfNeeded() {
+		val version = preferences.getTrustedUserAgentVersion()
+		if (version >= TRUSTED_UA_VERSION) {
+			return
+		}
+		preferences.setTrustedUserAgentVersion(TRUSTED_UA_VERSION)
+		preferences.setYouTubePremiumVerified(false)
+		YouTubeSessionHelper.clearPremiumCache()
 	}
 
 	companion object {
 		var instance: PlayerApp? = null
+		private const val TRUSTED_UA_VERSION = 1
 	}
 }
+
+data class HostStatus(
+	val showActive: Boolean,
+	val queueLength: Int,
+	val currentTitle: String,
+	val interstitialMessage: String?,
+	val lastPlaybackError: String?,
+)

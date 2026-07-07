@@ -1,4 +1,5 @@
 import type { YouTubeSearchResult } from '@common/YouTubeKaraokeTypes';
+import TrackTitle from './TrackTitle';
 
 type SearchResultsProps = {
 	results: YouTubeSearchResult[];
@@ -28,7 +29,7 @@ export default function SearchResults({
 						loading="lazy"
 					/>
 					<div className="search-body">
-						<div className="search-title">{result.title}</div>
+						<TrackTitle text={result.title} className="search-title" clampLines={4} />
 						<div className="search-channel">{result.channelTitle}</div>
 						<div className="search-actions">
 							<button

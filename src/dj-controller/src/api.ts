@@ -1,5 +1,6 @@
 import type {
 	YouTubeDjNowPlaying,
+	YouTubeDjPlaylistEntry,
 	YouTubeDjPlaylistModeConfig,
 	YouTubeDjPlaylistSyncResult,
 	YouTubeDjStatus,
@@ -12,17 +13,26 @@ const HOST_KEY = 'deskreen_dj_host';
 
 /** When loaded from Deskreen's bundled /dj-controller/ page, use the page origin. */
 export function getDefaultHost(): string {
-	const saved = getSavedHost();
-	if (saved) {
-		return saved;
+	if (typeof window !== 'undefined' && window.location.pathname.includes('dj-controller')) {
+		const origin = window.location.origin.replace(/\/+$/, '');
+		const saved = normalizeHost(getSavedHost());
+		if (saved && hostsMatch(saved, origin)) {
+			return saved;
+		}
+		return origin;
 	}
-	if (typeof window === 'undefined') {
-		return '';
+	const saved = normalizeHost(getSavedHost());
+	return saved;
+}
+
+function hostsMatch(a: string, b: string): boolean {
+	try {
+		const urlA = new URL(a.startsWith('http') ? a : `http://${a}`);
+		const urlB = new URL(b.startsWith('http') ? b : `http://${b}`);
+		return urlA.host === urlB.host;
+	} catch {
+		return false;
 	}
-	if (window.location.pathname.includes('dj-controller')) {
-		return window.location.origin.replace(/\/+$/, '');
-	}
-	return '';
 }
 
 export function getSavedHost(): string {
@@ -57,14 +67,16 @@ function apiBase(host: string): string {
 }
 
 const FETCH_TIMEOUT_MS = 12000;
+const PLAYLIST_LOAD_TIMEOUT_MS = 180_000;
 
 async function request<T>(
 	host: string,
 	path: string,
 	init?: RequestInit,
+	timeoutMs: number = FETCH_TIMEOUT_MS,
 ): Promise<T> {
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const res = await fetch(`${apiBase(host)}${path}`, {
 			...init,
@@ -90,6 +102,33 @@ async function request<T>(
 	}
 }
 
+export type QueueSortMode =
+	| 'custom'
+	| 'playlist-order'
+	| 'date-added-newest'
+	| 'date-added-oldest'
+	| 'published-newest'
+	| 'published-oldest'
+	| 'popular'
+	| 'duration-longest'
+	| 'duration-shortest'
+	| 'title-asc'
+	| 'title-desc';
+
+export const QUEUE_SORT_OPTIONS: { value: QueueSortMode; label: string }[] = [
+	{ value: 'custom', label: 'Custom order' },
+	{ value: 'playlist-order', label: 'Playlist order' },
+	{ value: 'date-added-newest', label: 'Date added (newest)' },
+	{ value: 'date-added-oldest', label: 'Date added (oldest)' },
+	{ value: 'published-newest', label: 'Date published (newest)' },
+	{ value: 'published-oldest', label: 'Date published (oldest)' },
+	{ value: 'popular', label: 'Most popular' },
+	{ value: 'duration-longest', label: 'Duration (longest)' },
+	{ value: 'duration-shortest', label: 'Duration (shortest)' },
+	{ value: 'title-asc', label: 'Title (A–Z)' },
+	{ value: 'title-desc', label: 'Title (Z–A)' },
+];
+
 export async function fetchStatus(host: string): Promise<YouTubeDjStatus> {
 	return request<YouTubeDjStatus>(host, '/status');
 }
@@ -104,10 +143,44 @@ export async function fetchQueue(
 	return request(host, '/queue');
 }
 
+export function normalizePlaylistConfig(
+	config: YouTubeDjPlaylistModeConfig,
+): YouTubeDjPlaylistModeConfig {
+	if (config.playlists?.length) {
+		return config;
+	}
+	if (!config.playlistId) {
+		return {
+			...config,
+			activePlaylistId: config.activePlaylistId ?? '',
+			playlists: [],
+		};
+	}
+	return {
+		...config,
+		activePlaylistId: config.activePlaylistId || config.playlistId,
+		playlists: [
+			{
+				playlistId: config.playlistId,
+				playlistUrl: config.playlistUrl,
+				name: 'My Playlist',
+				syncedVideoIds: config.syncedVideoIds ?? [],
+				lastSyncAt: config.lastSyncAt,
+				lastSyncError: config.lastSyncError,
+				videoCount: config.syncedVideoIds?.length ?? 0,
+			},
+		],
+	};
+}
+
 export async function fetchPlaylistConfig(
 	host: string,
 ): Promise<{ ok: boolean; config: YouTubeDjPlaylistModeConfig }> {
-	return request(host, '/playlist');
+	const data = await request<{ ok: boolean; config: YouTubeDjPlaylistModeConfig }>(
+		host,
+		'/playlist',
+	);
+	return { ...data, config: normalizePlaylistConfig(data.config) };
 }
 
 export async function queueUrl(
@@ -124,7 +197,7 @@ export async function queueUrl(
 export async function syncPlaylist(
 	host: string,
 ): Promise<{ ok: boolean; result: YouTubeDjPlaylistSyncResult; config: YouTubeDjPlaylistModeConfig }> {
-	return request(host, '/sync', { method: 'POST', body: '{}' });
+	return request(host, '/sync', { method: 'POST', body: '{}' }, PLAYLIST_LOAD_TIMEOUT_MS);
 }
 
 export async function setPlaylistMode(
@@ -141,6 +214,56 @@ export async function setPlaylistMode(
 	return request(host, '/playlist', {
 		method: 'PATCH',
 		body: JSON.stringify({ enabled }),
+	});
+}
+
+export async function addPlaylist(
+	host: string,
+	playlistUrl: string,
+): Promise<{ ok: boolean; playlist: YouTubeDjPlaylistEntry; config: YouTubeDjPlaylistModeConfig }> {
+	return request(
+		host,
+		'/playlists',
+		{
+			method: 'POST',
+			body: JSON.stringify({ playlistUrl }),
+		},
+		PLAYLIST_LOAD_TIMEOUT_MS,
+	);
+}
+
+export async function removePlaylist(
+	host: string,
+	playlistId: string,
+): Promise<{ ok: boolean; config: YouTubeDjPlaylistModeConfig }> {
+	return request(host, `/playlists/${encodeURIComponent(playlistId)}`, {
+		method: 'DELETE',
+	});
+}
+
+export async function activatePlaylist(
+	host: string,
+	playlistId: string,
+	playFirst = false,
+): Promise<{ ok: boolean; config: YouTubeDjPlaylistModeConfig }> {
+	return request(
+		host,
+		`/playlists/${encodeURIComponent(playlistId)}/activate`,
+		{
+			method: 'POST',
+			body: JSON.stringify({ playFirst }),
+		},
+		PLAYLIST_LOAD_TIMEOUT_MS,
+	);
+}
+
+export async function syncPlaylistById(
+	host: string,
+	playlistId: string,
+): Promise<{ ok: boolean; result: YouTubeDjPlaylistSyncResult; config: YouTubeDjPlaylistModeConfig }> {
+	return request(host, `/playlists/${encodeURIComponent(playlistId)}/sync`, {
+		method: 'POST',
+		body: '{}',
 	});
 }
 
@@ -171,6 +294,25 @@ export async function moveQueueItem(
 	return data.state ?? null;
 }
 
+export async function sortQueue(
+	host: string,
+	mode: QueueSortMode,
+): Promise<YouTubeKaraokeState | null> {
+	if (mode === 'custom') {
+		return null;
+	}
+	const data = await request<{ ok: boolean; state?: YouTubeKaraokeState }>(
+		host,
+		'/queue/sort',
+		{
+			method: 'POST',
+			body: JSON.stringify({ mode }),
+		},
+		PLAYLIST_LOAD_TIMEOUT_MS,
+	);
+	return data.state ?? null;
+}
+
 export async function searchVideos(
 	host: string,
 	query: string,
@@ -190,26 +332,48 @@ export async function transportPause(host: string): Promise<void> {
 	await request(host, '/transport/pause', { method: 'POST', body: '{}' });
 }
 
-export async function transportSeekRelative(host: string, delta: number): Promise<void> {
-	await request(host, '/transport/seek-relative', {
-		method: 'POST',
-		body: JSON.stringify({ delta }),
-	});
+export async function transportSeekRelative(
+	host: string,
+	delta: number,
+): Promise<YouTubeDjNowPlaying | null> {
+	const data = await request<{ ok: boolean; nowPlaying?: YouTubeDjNowPlaying }>(
+		host,
+		'/transport/seek-relative',
+		{
+			method: 'POST',
+			body: JSON.stringify({ delta }),
+		},
+	);
+	return data.nowPlaying ?? null;
 }
 
-export async function transportSeek(host: string, seconds: number): Promise<void> {
-	await request(host, '/transport/seek', {
-		method: 'POST',
-		body: JSON.stringify({ seconds }),
-	});
+export async function transportSeek(
+	host: string,
+	seconds: number,
+): Promise<YouTubeDjNowPlaying | null> {
+	const data = await request<{ ok: boolean; nowPlaying?: YouTubeDjNowPlaying }>(
+		host,
+		'/transport/seek',
+		{
+			method: 'POST',
+			body: JSON.stringify({ seconds }),
+		},
+	);
+	return data.nowPlaying ?? null;
 }
 
-export async function transportSkipNext(host: string): Promise<void> {
-	await request(host, '/transport/skip-next', { method: 'POST', body: '{}' });
+export async function transportSkipNext(host: string): Promise<{
+	state?: YouTubeKaraokeState;
+	nowPlaying?: YouTubeDjNowPlaying;
+}> {
+	return request(host, '/transport/skip-next', { method: 'POST', body: '{}' });
 }
 
-export async function transportSkipPrev(host: string): Promise<void> {
-	await request(host, '/transport/skip-prev', { method: 'POST', body: '{}' });
+export async function transportSkipPrev(host: string): Promise<{
+	state?: YouTubeKaraokeState;
+	nowPlaying?: YouTubeDjNowPlaying;
+}> {
+	return request(host, '/transport/skip-prev', { method: 'POST', body: '{}' });
 }
 
 export async function transportVolume(host: string, level: number): Promise<void> {
@@ -226,15 +390,43 @@ export async function setMode(host: string, mode: YouTubeKaraokeMode): Promise<v
 	});
 }
 
+export async function setShuffleEnabled(
+	host: string,
+	enabled: boolean,
+): Promise<YouTubeKaraokeState> {
+	const data = await request<{ ok: boolean; state: YouTubeKaraokeState }>(host, '/shuffle', {
+		method: 'PATCH',
+		body: JSON.stringify({ enabled }),
+	});
+	return data.state;
+}
+
+export async function shuffleUpcoming(host: string): Promise<YouTubeKaraokeState> {
+	const data = await request<{ ok: boolean; state: YouTubeKaraokeState }>(
+		host,
+		'/queue/shuffle-upcoming',
+		{
+			method: 'POST',
+			body: '{}',
+		},
+	);
+	return data.state;
+}
+
 export async function importPlaylist(
 	host: string,
 	playlistUrl: string,
 	playFirst = false,
 ): Promise<{ ok: boolean; count?: number }> {
-	return request(host, '/import-playlist', {
-		method: 'POST',
-		body: JSON.stringify({ playlistUrl, playFirst }),
-	});
+	return request(
+		host,
+		'/import-playlist',
+		{
+			method: 'POST',
+			body: JSON.stringify({ playlistUrl, playFirst }),
+		},
+		PLAYLIST_LOAD_TIMEOUT_MS,
+	);
 }
 
 export function formatTime(seconds: number): string {

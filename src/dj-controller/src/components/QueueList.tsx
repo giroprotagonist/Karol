@@ -1,4 +1,4 @@
-import { useState, type HTMLAttributes } from 'react';
+import { useEffect, useRef, useState, type HTMLAttributes } from 'react';
 import {
 	DndContext,
 	DragOverlay,
@@ -25,7 +25,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { getQueueItemDisplayTitle } from '@common/youtubeQueueUtils';
 import type { YouTubeQueueItem } from '@common/YouTubeKaraokeTypes';
-import { formatTime } from '../api';
+import { formatTime, QUEUE_SORT_OPTIONS, type QueueSortMode } from '../api';
 
 type QueueListProps = {
 	items: YouTubeQueueItem[];
@@ -36,6 +36,9 @@ type QueueListProps = {
 	onPlay: (id: string) => void;
 	onRemove: (id: string) => void;
 	onClear: () => void;
+	onShuffleUpcoming: () => void;
+	onSort: (mode: QueueSortMode) => void;
+	shuffleEnabled?: boolean;
 	onDragActiveChange?: (active: boolean) => void;
 };
 
@@ -46,12 +49,11 @@ function youtubeThumb(videoId: string, thumbnail?: string): string {
 	return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
 }
 
-function statusLabel(status: YouTubeQueueItem['status']): string {
+function statusLabel(status: YouTubeQueueItem['status'], isActive: boolean): string {
+	if (isActive) {
+		return 'Now';
+	}
 	switch (status) {
-		case 'playing':
-			return 'Now';
-		case 'loading':
-			return 'Loading';
 		case 'error':
 			return 'Error';
 		case 'ended':
@@ -97,53 +99,51 @@ function QueueRowContent({
 			>
 				<span className="drag-grip" aria-hidden />
 			</button>
-			<div className="queue-index">{index + 1}</div>
-			<img
-				className="queue-thumb"
-				src={youtubeThumb(item.videoId, item.thumbnail)}
-				alt=""
-				loading="lazy"
-			/>
-			<div className="queue-body">
-				<div className="queue-title" title={title}>
-					{title}
-				</div>
-				<div className="queue-meta">
-					<span className={`status-chip status-${item.status}`}>
-						{statusLabel(item.status)}
-					</span>
-					{item.durationSec ? (
-						<span className="queue-duration">{formatTime(item.durationSec)}</span>
-					) : null}
-					{item.errorReason ? (
-						<span className="queue-error" title={item.errorReason}>
-							{item.errorReason}
-						</span>
-					) : null}
-				</div>
+			<div className="queue-controls-row">
+				<div className="queue-index">{index + 1}</div>
+				<img
+					className="queue-thumb"
+					src={youtubeThumb(item.videoId, item.thumbnail)}
+					alt=""
+					loading="lazy"
+				/>
+				{!isOverlay ? (
+					<div className="queue-actions">
+						<button
+							className="btn icon"
+							type="button"
+							disabled={!connected}
+							title="Play this track"
+							onClick={() => onPlay(item.id)}
+						>
+							▶
+						</button>
+						<button
+							className="btn icon danger-subtle"
+							type="button"
+							disabled={!connected}
+							title="Remove from queue"
+							onClick={() => onRemove(item.id)}
+						>
+							×
+						</button>
+					</div>
+				) : null}
 			</div>
-			{!isOverlay ? (
-				<div className="queue-actions">
-					<button
-						className="btn icon"
-						type="button"
-						disabled={!connected}
-						title="Play this track"
-						onClick={() => onPlay(item.id)}
-					>
-						▶
-					</button>
-					<button
-						className="btn icon danger-subtle"
-						type="button"
-						disabled={!connected}
-						title="Remove from queue"
-						onClick={() => onRemove(item.id)}
-					>
-						×
-					</button>
-				</div>
-			) : null}
+			<div className="queue-meta-row">
+				<span className={`status-chip status-${isActive ? 'playing' : item.status === 'error' ? 'error' : item.status === 'ended' ? 'ended' : 'queued'}`}>
+					{statusLabel(item.status, isActive)}
+				</span>
+				{item.durationSec ? (
+					<span className="queue-duration">{formatTime(item.durationSec)}</span>
+				) : null}
+				{item.errorReason && !isActive ? (
+					<span className="queue-error" title={item.errorReason}>
+						{item.errorReason}
+					</span>
+				) : null}
+			</div>
+			<p className="queue-title-full">{title}</p>
 		</div>
 	);
 }
@@ -175,7 +175,12 @@ function SortableRow({
 	};
 
 	return (
-		<div ref={setNodeRef} style={style} className={isDragging ? 'sortable-ghost' : undefined}>
+		<div
+			ref={setNodeRef}
+			style={style}
+			className={isDragging ? 'sortable-ghost' : undefined}
+			data-queue-index={index}
+		>
 			<QueueRowContent
 				item={item}
 				index={index}
@@ -198,9 +203,50 @@ export default function QueueList({
 	onPlay,
 	onRemove,
 	onClear,
+	onShuffleUpcoming,
+	onSort,
+	shuffleEnabled = false,
 	onDragActiveChange,
 }: QueueListProps) {
 	const [activeId, setActiveId] = useState<string | null>(null);
+	const [sortMode, setSortMode] = useState<QueueSortMode>('custom');
+	const listRef = useRef<HTMLDivElement | null>(null);
+	const prevIndexRef = useRef(-999);
+
+	useEffect(() => {
+		return () => onDragActiveChange?.(false);
+	}, [onDragActiveChange]);
+
+	useEffect(() => {
+		if (currentIndex < 0 || !listRef.current) {
+			return;
+		}
+		if (prevIndexRef.current === currentIndex) {
+			return;
+		}
+		prevIndexRef.current = currentIndex;
+		const container = listRef.current;
+		const row = container.querySelector<HTMLElement>(
+			`[data-queue-index="${currentIndex}"]`,
+		);
+		if (!row) {
+			return;
+		}
+		// Scroll inside queue panel when scrollable; otherwise scroll page to active row.
+		if (container.scrollHeight <= container.clientHeight) {
+			row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+			return;
+		}
+		const rowTop = row.offsetTop;
+		const rowBottom = rowTop + row.offsetHeight;
+		const viewTop = container.scrollTop;
+		const viewBottom = viewTop + container.clientHeight;
+		if (rowTop < viewTop) {
+			container.scrollTop = rowTop;
+		} else if (rowBottom > viewBottom) {
+			container.scrollTop = rowBottom - container.clientHeight;
+		}
+	}, [currentIndex]);
 
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -231,6 +277,7 @@ export default function QueueList({
 		if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) {
 			return;
 		}
+		setSortMode('custom');
 		void onReorder(oldIndex, newIndex);
 	};
 
@@ -246,9 +293,46 @@ export default function QueueList({
 					<h2>Queue</h2>
 					<p className="card-subtitle">
 						{items.length} track{items.length === 1 ? '' : 's'}
+						{shuffleEnabled ? ' · shuffle on' : ''}
 					</p>
 				</div>
-				<button
+				<div className="queue-header-actions">
+					<label className="queue-sort-label">
+						<span className="sr-only">Sort queue</span>
+						<select
+							className="queue-sort-select"
+							value={sortMode}
+							disabled={!connected || items.length < 2 || busy}
+							onChange={(e) => {
+								const mode = e.target.value as QueueSortMode;
+								setSortMode(mode);
+								if (mode !== 'custom') {
+									onSort(mode);
+								}
+							}}
+						>
+							{QUEUE_SORT_OPTIONS.map((option) => (
+								<option key={option.value} value={option.value}>
+									{option.label}
+								</option>
+							))}
+						</select>
+					</label>
+					<button
+						className="btn small"
+						type="button"
+						disabled={
+							!connected ||
+							items.length < 2 ||
+							busy ||
+							(currentIndex >= 0 && currentIndex >= items.length - 1)
+						}
+						onClick={onShuffleUpcoming}
+						title="Randomize upcoming tracks (keeps current song)"
+					>
+						Shuffle upcoming
+					</button>
+					<button
 					className="btn small danger-subtle"
 					type="button"
 					disabled={!connected || items.length === 0 || busy}
@@ -256,6 +340,7 @@ export default function QueueList({
 				>
 					Clear all
 				</button>
+				</div>
 			</div>
 
 			{items.length === 0 ? (
@@ -274,7 +359,7 @@ export default function QueueList({
 					onDragCancel={handleDragCancel}
 				>
 					<SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-						<div className="queue-list">
+						<div className="queue-list" ref={listRef}>
 							{items.map((item, index) => (
 								<SortableRow
 									key={item.id}

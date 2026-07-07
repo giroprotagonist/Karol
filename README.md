@@ -95,12 +95,32 @@ When using the `--ip` or `--local-ip` flag, the app will use the specified IP fo
 ### Build and install Direct Player (tablet host)
 
 ```bash
-npm run sync:dj-controller-player   # build dj-controller + copy into APK assets
+npm run sync:dj-controller-player   # build dj-controller + copy kiosk JS into APK assets
 cd android-player && ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### Build and install Controller (phone)
+
+```bash
+cd android-controller && ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+**Deploy order:** run `sync:dj-controller-player` first whenever the web UI or YouTube kiosk JS changes, then rebuild the player APK. The controller APK bundles only the native shell (WebView loads the tablet-hosted SPA in Direct mode).
+
+Run unit tests:
+
+```bash
+cd android-player && ./gradlew testDebugUnitTest
+cd android-controller && ./gradlew testDebugUnitTest
+```
+
 On the tablet: open **Deskreen Player** → tap **Start show**. Controller URL is shown on screen (`http://<tablet-ip>:3131/dj-controller/`).
+
+**Navigation:** System back exits HTML5 fullscreen first, then returns to the start screen (playback paused). The DJ API on `:3131` stays up so the phone can keep queuing; tap **Start show** again to resume.
+
+**Audio:** The tablet player downmixes YouTube stereo to mono `(L+R)/2` and sends it to both speakers (ideal for single-speaker karaoke setups).
 
 Phone (S24): open **Deskreen Controller** — LAN discovery prefers `dj-player` hosts.
 

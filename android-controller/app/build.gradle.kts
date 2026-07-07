@@ -11,8 +11,13 @@ android {
 		applicationId = "com.deskreen.controller"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 1
-		versionName = "1.0.0"
+		versionCode = 2
+		versionName = "1.1.0"
+		testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+	}
+
+	testOptions {
+		unitTests.isIncludeAndroidResources = true
 	}
 
 	buildTypes {
@@ -45,4 +50,8 @@ dependencies {
 	implementation("androidx.camera:camera-lifecycle:1.4.1")
 	implementation("androidx.camera:camera-view:1.4.1")
 	implementation("com.google.mlkit:barcode-scanning:17.3.0")
+	implementation("androidx.media:media:1.7.0")
+
+	testImplementation("junit:junit:4.13.2")
+	testImplementation("org.robolectric:robolectric:4.14.1")
 }

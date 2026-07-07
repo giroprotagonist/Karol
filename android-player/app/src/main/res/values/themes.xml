@@ -1,10 +1,11 @@
 <resources>
 	<style name="Theme.DeskreenPlayer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-		<item name="colorPrimary">#137CBD</item>
-		<item name="colorPrimaryVariant">#0E5A8A</item>
+		<item name="colorPrimary">@color/deskreen_accent</item>
+		<item name="colorPrimaryVariant">#196127</item>
 		<item name="colorOnPrimary">#FFFFFF</item>
-		<item name="android:statusBarColor">#000000</item>
-		<item name="android:navigationBarColor">#000000</item>
+		<item name="android:statusBarColor">@color/deskreen_bg</item>
+		<item name="android:navigationBarColor">@color/deskreen_bg</item>
+		<item name="android:windowBackground">@color/black</item>
 	</style>
 
 	<style name="Theme.DeskreenPlayer.Fullscreen" parent="Theme.DeskreenPlayer">

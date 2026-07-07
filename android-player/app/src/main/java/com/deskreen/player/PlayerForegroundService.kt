@@ -10,15 +10,20 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 
 class PlayerForegroundService : Service() {
 	private var wakeLock: PowerManager.WakeLock? = null
+	private val renewHandler = Handler(Looper.getMainLooper())
+	private var renewRunnable: Runnable? = null
 
 	companion object {
 		const val CHANNEL_ID = "deskreen_player"
 		const val NOTIFICATION_ID = 2
+		private const val WAKE_RENEW_MS = 8 * 60 * 60 * 1000L
 
 		fun start(context: Context) {
 			val intent = Intent(context, PlayerForegroundService::class.java)
@@ -38,6 +43,7 @@ class PlayerForegroundService : Service() {
 		super.onCreate()
 		createNotificationChannel()
 		acquireWakeLock()
+		scheduleWakeLockRenewal()
 	}
 
 	override fun onStartCommand(
@@ -65,6 +71,7 @@ class PlayerForegroundService : Service() {
 	override fun onBind(intent: Intent?): IBinder? = null
 
 	override fun onDestroy() {
+		renewRunnable?.let { renewHandler.removeCallbacks(it) }
 		releaseWakeLock()
 		super.onDestroy()
 	}
@@ -93,7 +100,7 @@ class PlayerForegroundService : Service() {
 		return Notification.Builder(this, CHANNEL_ID)
 			.setContentTitle(getString(R.string.player_notification_title))
 			.setContentText(getString(R.string.player_notification_text))
-			.setSmallIcon(android.R.drawable.ic_media_play)
+			.setSmallIcon(R.drawable.ic_stat_media)
 			.setOngoing(true)
 			.setContentIntent(openIntent)
 			.build()
@@ -101,10 +108,27 @@ class PlayerForegroundService : Service() {
 
 	private fun acquireWakeLock() {
 		val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+		releaseWakeLock()
 		wakeLock =
 			powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DeskreenPlayer::Service").apply {
-				acquire(10 * 60 * 60 * 1000L)
+				setReferenceCounted(false)
+				acquire()
 			}
+	}
+
+	private fun scheduleWakeLockRenewal() {
+		renewRunnable?.let { renewHandler.removeCallbacks(it) }
+		val runnable =
+			object : Runnable {
+				override fun run() {
+					if (wakeLock?.isHeld != true) {
+						acquireWakeLock()
+					}
+					renewHandler.postDelayed(this, WAKE_RENEW_MS)
+				}
+			}
+		renewRunnable = runnable
+		renewHandler.postDelayed(runnable, WAKE_RENEW_MS)
 	}
 
 	private fun releaseWakeLock() {
