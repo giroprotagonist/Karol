@@ -121,6 +121,7 @@ data class PlayerSnapshot(
 	val hasVideo: Boolean = false,
 	val layoutOk: Boolean = true,
 	val videoTopPx: Int = 0,
+	val thumbnail: String = "",
 )
 
 data class SavedPlaylist(

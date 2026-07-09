@@ -351,25 +351,6 @@
 		return false;
 	}
 
-	window.__deskreenYtEnableFullscreen = function () {
-		// Already in fullscreen (either YouTube native or Deskreen custom view)?
-		if (document.fullscreenElement || window.__deskreenFullscreenAttempted) {
-			return true;
-		}
-		// Click YouTube's fullscreen button — mobile YouTube has .ytp-fullscreen-button
-		var btn =
-			document.querySelector('.ytp-fullscreen-button') ||
-			document.querySelector('button.ytp-button[aria-label*="Full screen"]') ||
-			document.querySelector('button.ytp-button[aria-label*="fullscreen"]') ||
-			document.querySelector('button.ytp-button[aria-label*="Fullscreen"]');
-		if (btn) {
-			window.__deskreenFullscreenAttempted = true;
-			btn.click();
-			return true;
-		}
-		return false;
-	};
-
 	window.__deskreenYtEnableTheaterOnce = function () {
 		if (window.__deskreenTheaterDone) {
 			return;
@@ -386,11 +367,13 @@
 			document.querySelector('.ytp-size-button') ||
 			document.querySelector('button.ytp-button[aria-label*="Theater"]') ||
 			document.querySelector('button.ytp-button[aria-label*="theater"]');
+		if (!btn && !isPlayerMode()) {
+			btn = document.querySelector('button.ytp-button[aria-label*="Fullscreen"]');
+		}
 		if (btn) {
 			btn.click();
 			window.__deskreenTheaterDone = true;
-		}
-	};
+		}	};
 
 	window.__deskreenYtExitPageFullscreen = function () {
 		if (!document.fullscreenElement) {
@@ -481,26 +464,7 @@
 		hidePanels();
 		window.__deskreenYtEnableTheaterOnce();
 		window.__deskreenYtFixVideoLayer();
-		window.__deskreenYtReapplyVolume();
-		// Make all video ancestors transparent so the hardware video surface
-		// (which composites behind WebView content on Android) shows through.
-		var v = document.querySelector('video');
-		if (v) {
-			var el = v.parentElement;
-			while (el && el !== document.documentElement) {
-				el.style.setProperty('background-color', 'transparent', 'important');
-				el.style.setProperty('background', 'transparent', 'important');
-				el = el.parentElement;
-			}
-		}
-		// Trigger fullscreen after layout settles. Mobile YouTube serves a compact
-		// player — native fullscreen gives us the hardware video surface edge-to-edge.
-		window.__deskreenFullscreenAttempted = false;
-		[800, 2000, 5000].forEach(function (ms) {
-			setTimeout(function () {
-				window.__deskreenYtEnableFullscreen();
-			}, ms);
-		});		(function () {
+		window.__deskreenYtReapplyVolume();		(function () {
 			var flexy = document.querySelector('ytd-watch-flexy');
 			var v = document.querySelector('video');
 			var rect = v ? v.getBoundingClientRect() : null;
@@ -508,7 +472,7 @@
 
 	window.__deskreenYtResetForNavigation = function () {
 		window.__deskreenTheaterDone = false;
-		window.__deskreenFullscreenAttempted = false;
+		window.__karolEndedFired = false;
 		window.__deskreenYtReleaseMonoPipeline();
 	};
 
@@ -551,6 +515,7 @@
 				hasVideo: false,
 				layoutOk: false,
 				videoTopPx: 0,
+				thumbnail: videoId ? 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg' : '',
 			};
 		}
 		var state = 3;
@@ -574,6 +539,7 @@
 			hasVideo: true,
 			layoutOk: layoutOk,
 			videoTopPx: Math.round(rect.top),
+			thumbnail: videoId ? 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg' : '',
 		};
 	};
 
@@ -782,6 +748,7 @@
 			return;
 		}
 		window.__deskreenYtResetForNavigation();
+		window.__karolCurrentVideoId = newId;
 		[400, 1200].forEach(function (ms) {
 			setTimeout(function () {
 				window.__deskreenYtApplyLayout();
@@ -958,24 +925,37 @@
 		if (now - endedState.lastEndedAt < 5000) {
 			return;
 		}
-		updateDurationTracking(v);
 		var expected = window.__deskreenYtExpectedVideoId || getUrlVideoId();
 		var currentTime = Number.isFinite(v.currentTime) ? v.currentTime : 0;
-		var maxDur = endedState.maxDurationSeen;
-		if (maxDur < 30) {
-			return;
-		}
-		if (now - endedState.durationStableSince < 8000) {
-			return;
-		}
-		if (currentTime < maxDur - 4) {
+		var maxDur = Number.isFinite(v.duration) ? v.duration : 0;
+		if (maxDur > 0 && currentTime < maxDur - 10 && !v.ended) {
 			return;
 		}
 		endedState.lastEndedAt = now;
+		window.__karolEndedFired = true;
 		if (window.KarolPlayer && KarolPlayer.onPlaybackEnded && expected) {
 			KarolPlayer.onPlaybackEnded(expected);
 		}
 	}
+	// Backup ended detection: polls the video element directly every 1s.
+	// Catches cases where YouTube's DOM cleanup loses the JS ended event.
+	var __karolEndedBackupInterval = setInterval(function () {
+		if (window.__karolEndedFired) {
+			return;
+		}
+		var v = document.querySelector('video');
+		if (!v) {
+			return;
+		}
+		if (v.ended) {
+			window.__karolEndedFired = true;
+			var vid = window.__karolCurrentVideoId || getUrlVideoId();
+			if (window.KarolPlayer && window.KarolPlayer.onPlaybackEnded && vid) {
+				window.KarolPlayer.onPlaybackEnded(vid);
+			}
+		}
+	}, 1000);
+
 	function bindMonoPipelineEarly() {
 		if (!isPlayerMode()) {
 			return;

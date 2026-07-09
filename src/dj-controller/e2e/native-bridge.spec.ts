@@ -9,7 +9,7 @@ test.describe('Native bridge wiring (S24 WebView path)', () => {
 			const volumes: number[] = [];
 			(window as unknown as { __nativePublishes: unknown[] }).__nativePublishes = publishes;
 			(window as unknown as { __nativeVolumes: number[] }).__nativeVolumes = volumes;
-			window.DeskreenNative = {
+			window.KarolNative = {
 				onConnectionState: () => {},
 				hapticLight: () => {},
 				publishNowPlaying: (json: string) => {
@@ -55,7 +55,7 @@ test.describe('Native bridge wiring (S24 WebView path)', () => {
 	test('native now-playing push updates in-app display', async ({ page }) => {
 		await ensurePlayerTab(page);
 		await page.evaluate(() => {
-			window.__deskreenNativeNowPlaying?.({
+			window.__karolNativeNowPlaying?.({
 				title: 'Relay Test Track',
 				videoId: 'jNQXAC9IVRw',
 				currentTime: 42,

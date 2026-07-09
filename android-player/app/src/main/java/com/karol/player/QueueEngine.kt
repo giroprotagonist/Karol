@@ -22,7 +22,7 @@ class QueueEngine(context: Context) {
 	var currentTitle: String = ""
 		private set
 	var currentThumbnail: String = ""
-		private set
+		set
 	var currentTime: Double = 0.0
 		private set
 	var duration: Double = 0.0
@@ -128,6 +128,11 @@ class QueueEngine(context: Context) {
 			pushShuffleHistory(currentIndex)
 		}
 		resetPlaybackClock()
+		// Immediately populate thumbnail from the queue item's known URL
+		currentTitle = queue[nextIndex].title
+		currentThumbnail = queue[nextIndex].thumbnail.ifBlank {
+			"https://i.ytimg.com/vi/${queue[nextIndex].videoId}/hqdefault.jpg"
+		}
 		currentIndex = nextIndex
 		queue[nextIndex] = queue[nextIndex].copy(status = "loading")
 		isPlaying = true
@@ -139,6 +144,8 @@ class QueueEngine(context: Context) {
 	private fun resetPlaybackClock() {
 		currentTime = 0.0
 		duration = 0.0
+		currentThumbnail = ""
+		currentTitle = ""
 	}
 
 	private fun queuedIds(): MutableSet<String> {

@@ -20,7 +20,7 @@ class KarolNativeBridge(
 		mainHandler.post {
 			val clamped = level.coerceIn(0.0, 1.0)
 			webView.evaluateJavascript(
-				"window.__deskreenNativeVolume && window.__deskreenNativeVolume($clamped)",
+				"window.__karolNativeVolume && window.__karolNativeVolume($clamped)",
 				null,
 			)
 		}
@@ -38,7 +38,7 @@ class KarolNativeBridge(
 					.put("state", nowPlaying.state)
 					.toString()
 			webView.evaluateJavascript(
-				"window.__deskreenNativeNowPlaying && window.__deskreenNativeNowPlaying($json)",
+				"window.__karolNativeNowPlaying && window.__karolNativeNowPlaying($json)",
 				null,
 			)
 		}

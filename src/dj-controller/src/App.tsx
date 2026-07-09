@@ -47,7 +47,7 @@ import { hapticLight, isNativeAndroidController, notifyNativeConnection, publish
 import { syncPlaybackAnchor } from './playbackClock';
 import { IconPause, IconPlay } from './components/TransportIcons';
 
-type AppTab = 'queue' | 'add' | 'playlist';
+type AppTab = 'player' | 'queue' | 'add' | 'playlist';
 
 export default function App() {
 	const initialHost = getDefaultHost();
@@ -75,7 +75,7 @@ export default function App() {
 	const [showConnection, setShowConnection] = useState(false);
 	const [isDraggingQueue, setIsDraggingQueue] = useState(false);
 	const [reconnecting, setReconnecting] = useState(false);
-	const [activeTab, setActiveTab] = useState<AppTab>('queue');
+	const [activeTab, setActiveTab] = useState<AppTab>('player');
 	const [displayTime, setDisplayTime] = useState(0);
 	const playbackAnchor = useRef({
 		time: 0,
@@ -103,7 +103,7 @@ export default function App() {
 				return true;
 			}
 			// #region agent log
-			window.DeskreenNative?.ctrlDbg?.(
+			window.KarolNative?.ctrlDbg?.(
 				'H10',
 				'skip-native-display-time',
 				JSON.stringify({
@@ -292,7 +292,7 @@ export default function App() {
 			playbackAnchor.current = result.anchor;
 			// #region agent log
 			if (result.keptLocalClock && playing) {
-				window.DeskreenNative?.ctrlDbg?.(
+				window.KarolNative?.ctrlDbg?.(
 					'H6',
 					'kept-local-clock',
 					JSON.stringify({
@@ -412,13 +412,17 @@ export default function App() {
 			lastVideoIdRef.current = next.videoId;
 		}
 		if (isNativeAndroidController()) {
-			playbackAnchor.current = {
-				time: next.currentTime,
-				at: Date.now(),
-				playing: next.state === 1,
-				videoId: next.videoId || lastVideoIdRef.current,
-				duration: next.duration,
-			};
+			// Only reset the JS clock anchor for fresh server responses,
+			// not for native-extrapolated position ticks (they disagree with JS)
+			if (!opts?.fromNative) {
+				playbackAnchor.current = {
+					time: next.currentTime,
+					at: Date.now(),
+					playing: next.state === 1,
+					videoId: next.videoId || lastVideoIdRef.current,
+					duration: next.duration,
+				};
+			}
 			setDisplayTimeUnlessScrubbing(next.currentTime, !opts?.fromNative);
 		} else {
 			applyPlaybackSample(
@@ -461,7 +465,7 @@ export default function App() {
 			}
 			// #region agent log
 			if (trackChanged) {
-				window.DeskreenNative?.ctrlDbg?.(
+				window.KarolNative?.ctrlDbg?.(
 					'H9',
 					'native-track-change',
 					JSON.stringify({
@@ -470,7 +474,7 @@ export default function App() {
 					}),
 				);
 			}
-			window.DeskreenNative?.ctrlDbg?.(
+			window.KarolNative?.ctrlDbg?.(
 				'H7',
 				'native-now-playing',
 				JSON.stringify({
@@ -489,7 +493,7 @@ export default function App() {
 	const handleScrubActiveChange = useCallback((active: boolean) => {
 		scrubbingRef.current = active;
 		// #region agent log
-		window.DeskreenNative?.ctrlDbg?.(
+		window.KarolNative?.ctrlDbg?.(
 			'H10',
 			'scrub-active',
 			JSON.stringify({ active }),
@@ -591,19 +595,20 @@ export default function App() {
 
 	const currentItem = queueState?.queue[queueState.currentIndex];
 	const currentTitle = useMemo(() => {
-		if (nowPlaying?.title) {
-			return nowPlaying.title;
+		// Prefer queue item at currentIndex — it's authoritative on what SHOULD be playing
+		// nowPlaying.title is derived from a WebView snapshot that lags during transitions
+		const fromQueue = currentItem?.title;
+		const fromNowPlaying = nowPlaying?.title;
+		if (fromQueue && fromNowPlaying && fromQueue !== fromNowPlaying) {
+			return fromQueue;
 		}
-		if (currentItem?.title) {
-			return currentItem.title;
-		}
-		return queueState?.currentTitle || 'Nothing playing';
+		return fromNowPlaying || fromQueue || queueState?.currentTitle || 'Nothing playing';
 	}, [nowPlaying?.title, currentItem?.title, queueState?.currentTitle]);
 
 	const currentVideoId =
 		nowPlaying?.videoId || currentItem?.videoId || '';
 	const currentThumbnail =
-		queueState?.currentThumbnail || currentItem?.thumbnail || '';
+		currentItem?.thumbnail || queueState?.currentThumbnail || '';
 
 	const isDirectHost = status?.hostMode === 'direct';
 
@@ -613,7 +618,7 @@ export default function App() {
 				<div className="header-brand">
 					<div className="logo-mark">♪</div>
 					<div>
-						<h1>Deskreen DJ</h1>
+						<h1>Karol</h1>
 						<p className="header-sub">
 							{connected
 								? isDirectHost
@@ -656,7 +661,7 @@ export default function App() {
 
 			{status?.youtubeSignedIn && status.youtubePremiumActive === false ? (
 				<div className="banner tablet-alert-banner" role="alert">
-					YouTube Premium not detected on tablet — ads may appear. Open Deskreen Player
+					YouTube Premium not detected on tablet — ads may appear. Open Karol Player
 					on the tablet and tap Re-check YouTube Premium.
 				</div>
 			) : null}
@@ -675,8 +680,8 @@ export default function App() {
 					<h2>{isDirectHost ? 'Tablet Player' : 'DJ Host'}</h2>
 					<p className="card-subtitle">
 						{isDirectHost
-							? 'Point your phone at the Deskreen Player tablet on your network'
-							: 'Point your phone at Deskreen CE on your Mac (or enter tablet player IP)'}
+							? 'Point your phone at the Karol Player tablet on your network'
+							: 'Point your phone at Karol on your Mac (or enter tablet player IP)'}
 					</p>
 					<input
 						className="field"
@@ -717,6 +722,8 @@ export default function App() {
 			) : null}
 
 			<div ref={nowPlayingRef}>
+			{activeTab === 'player' && (
+			<div className="tab-panel">
 			<NowPlayingCard
 				title={currentTitle}
 				videoId={currentVideoId}
@@ -786,25 +793,8 @@ export default function App() {
 				onSeek={(seconds) => {
 					lastSeekAnchorRef.current = { at: Date.now(), time: seconds };
 					bumpPlaybackTime(seconds);
-					// #region agent log
-					window.DeskreenNative?.ctrlDbg?.(
-						'H11',
-						'seek-request',
-						JSON.stringify({ seconds }),
-					);
-					// #endregion
 					void runAction('seek', async () => {
 						const result = await transportSeek(host, seconds);
-						// #region agent log
-						window.DeskreenNative?.ctrlDbg?.(
-							'H11',
-							'seek-response',
-							JSON.stringify({
-								requested: seconds,
-								reported: result?.currentTime ?? null,
-							}),
-						);
-						// #endregion
 						if (result) {
 							applyNowPlaying(result);
 							lastSeekAnchorRef.current = {
@@ -819,8 +809,8 @@ export default function App() {
 					if (!host || volumeFromNativeRef.current) {
 						return;
 					}
-					if (window.DeskreenNative?.setRemoteVolume) {
-						window.DeskreenNative.setRemoteVolume(level);
+					if (window.KarolNative?.setRemoteVolume) {
+						window.KarolNative.setRemoteVolume(level);
 						return;
 					}
 					void transportVolume(host, level).catch((err) => {
@@ -844,8 +834,17 @@ export default function App() {
 				}}
 			/>
 			</div>
+			)}
+			</div>
 
 			<nav className="tab-nav" aria-label="Sections">
+				<button
+					type="button"
+					className={`tab-btn ${activeTab === 'player' ? 'active' : ''}`}
+					onClick={() => changeTab('player')}
+				>
+					Player
+				</button>
 				<button
 					type="button"
 					className={`tab-btn ${activeTab === 'queue' ? 'active' : ''}`}
@@ -873,6 +872,7 @@ export default function App() {
 			</nav>
 
 			{activeTab === 'queue' ? (
+			<div className="tab-panel">
 			<QueueList
 				items={queueState?.queue ?? []}
 				currentIndex={queueState?.currentIndex ?? -1}
@@ -899,9 +899,11 @@ export default function App() {
 				}
 				onDragActiveChange={setIsDraggingQueue}
 			/>
+			</div>
 			) : null}
 
 			{activeTab === 'add' ? (
+			<div className="tab-panel">
 			<div className="card">
 				<h2>Add Music</h2>
 				<div className="input-group">
@@ -1018,9 +1020,11 @@ export default function App() {
 					</button>
 				</div>
 			</div>
+			</div>
 			) : null}
 
 			{activeTab === 'playlist' ? (
+			<div className="tab-panel">
 			<PlaylistLibrary
 				config={playlistConfig}
 				connected={connected}
@@ -1060,6 +1064,7 @@ export default function App() {
 					})
 				}
 			/>
+			</div>
 			) : null}
 
 			{showMiniPlayer && connected && currentTitle ? (

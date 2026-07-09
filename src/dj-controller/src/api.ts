@@ -83,7 +83,7 @@ async function request<T>(
 			signal: controller.signal,
 			headers: {
 				'Content-Type': 'application/json',
-				'X-Deskreen-Client': 'DeskreenController/1.0',
+				'X-Karol-Client': 'KarolController/1.0',
 				...(init?.headers ?? {}),
 			},
 		});

@@ -402,6 +402,23 @@ class MainActivity : AppCompatActivity() {
 			}
 	}
 
+	override fun onNewIntent(intent: Intent?) {
+		super.onNewIntent(intent)
+		intent?.let {
+			setIntent(it)
+			handleDeepLink(it)
+		}
+	}
+
+	private fun handleDeepLink(intent: Intent?) {
+		val url = KarolUrl.normalize(intent?.data?.toString().orEmpty()) ?: return
+		getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+			.edit().putString(KEY_URL, url).apply()
+		urlInput.setText(url)
+		webView.clearCache(true)
+		loadControllerUrl(url)
+	}
+
 	private fun loadControllerUrl(url: String) {
 		discoveryJob?.cancel()
 		consecutiveHealthFailures = 0
@@ -412,6 +429,8 @@ class MainActivity : AppCompatActivity() {
 			}
 		}
 		if (url == lastLoadedUrl && webView.url?.contains("dj-controller") == true) {
+			webView.clearCache(true)
+			webView.reload()
 			showConnected()
 			startHealthMonitor()
 			startHeadlessPlayback(url)

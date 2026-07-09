@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
 	private lateinit var webView: WebView
 	private lateinit var rootLayout: FrameLayout
 	private lateinit var startPanel: View
+	private lateinit var loadingOverlay: FrameLayout
 	private lateinit var hostInfoText: TextView
 	private lateinit var controllerUrlText: TextView
 	private lateinit var statusText: TextView
@@ -85,6 +86,7 @@ class MainActivity : AppCompatActivity() {
 		rootLayout = findViewById(R.id.rootLayout)
 		webView = findViewById(R.id.webView)
 		startPanel = findViewById(R.id.startPanel)
+		loadingOverlay = findViewById(R.id.loadingOverlay)
 		hostInfoText = findViewById(R.id.hostInfoText)
 		controllerUrlText = findViewById(R.id.controllerUrlText)
 		statusText = findViewById(R.id.statusText)
@@ -386,6 +388,18 @@ class MainActivity : AppCompatActivity() {
 			bridge?.setOnYouTubeSignedInListener {
 				runOnUiThread { completeYouTubeSignIn() }
 			}
+			bridge?.onLoadingStateChanged = { loading ->
+				runOnUiThread {
+					if (loading) {
+						loadingOverlay.visibility = View.VISIBLE
+						loadingOverlay.animate().alpha(1f).setDuration(300).start()
+					} else {
+						loadingOverlay.animate().alpha(0f).setDuration(300).withEndAction {
+							loadingOverlay.visibility = View.GONE
+						}.start()
+					}
+				}
+			}
 			app.attachBridge(bridge!!)
 		}
 
@@ -412,7 +426,6 @@ class MainActivity : AppCompatActivity() {
 		(application as PlayerApp).showActive = false
 		bridge?.prepareForStop()
 		webView.stopLoading()
-		webView.loadUrl("about:blank")
 		webView.visibility = View.GONE
 		startPanel.visibility = View.VISIBLE
 		enterImmersiveMode()

@@ -121,7 +121,7 @@ export default function NowPlayingCard({
 
 	const logScrub = (message: string, data: Record<string, unknown>) => {
 		// #region agent log
-		window.DeskreenNative?.ctrlDbg?.('H10', message, JSON.stringify(data));
+		window.KarolNative?.ctrlDbg?.('H10', message, JSON.stringify(data));
 		fetch('http://127.0.0.1:7592/ingest/808d4931-5ef3-48a2-9797-d856a57d6e0a', {
 			method: 'POST',
 			headers: {
@@ -199,7 +199,8 @@ export default function NowPlayingCard({
 	const handleScrubChange = (event: ChangeEvent<HTMLInputElement>) => {
 		const value = Number(event.currentTarget.value);
 		updateScrub(value);
-		// Android WebView range inputs commit on change, not pointerup.
+		// Also commit on onChange — Android WebView may not fire onTouchEnd/onPointerUp
+		// reliably for range inputs. commitGuard prevents duplicate commits.
 		commitScrub(value);
 	};
 
@@ -240,10 +241,14 @@ export default function NowPlayingCard({
 						value={scrubValue}
 						disabled={!connected || !hasTrack || duration <= 0 || busy}
 						onPointerDown={beginScrub}
-						onTouchStart={beginScrub}
+						onTouchStart={(_e) => {
+							beginScrub();
+						}}
 						onPointerUp={cancelScrub}
 						onPointerCancel={cancelScrub}
-						onTouchEnd={(e) => commitScrub(Number(e.currentTarget.value))}
+						onTouchEnd={(e) => {
+							commitScrub(Number(e.currentTarget.value));
+						}}
 						onInput={(e) => updateScrub(Number(e.currentTarget.value))}
 						onChange={handleScrubChange}
 						aria-label="Seek"

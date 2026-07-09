@@ -168,20 +168,31 @@ class PlayerApp : Application() {
 					resolved.title.ifBlank {
 						queueEngine.queue.getOrNull(queueEngine.currentIndex)?.title ?: ""
 					}
-				val thumb =
-					if (resolved.videoId.isNotBlank()) {
-						"https://i.ytimg.com/vi/${resolved.videoId}/default.jpg"
-					} else {
-						queueEngine.currentThumbnail
-					}
 				queueEngine.setNowPlaying(
 					title,
-					thumb,
+					resolveThumbnail(resolved),
 					resolved.currentTime,
 					resolved.duration,
 				)
 			}
+			// Update thumbnail any time a new videoId is seen, regardless of state
+			if (resolved.videoId.isNotBlank()) {
+				val thumb = resolveThumbnail(resolved)
+				if (thumb.isNotBlank() && thumb != queueEngine.currentThumbnail) {
+					queueEngine.currentThumbnail = thumb
+				}
+			}
 		}
+	}
+
+	private fun resolveThumbnail(snapshot: PlayerSnapshot): String {
+		if (snapshot.thumbnail.isNotBlank()) {
+			return snapshot.thumbnail
+		}
+		if (snapshot.videoId.isNotBlank()) {
+			return "https://i.ytimg.com/vi/${snapshot.videoId}/default.jpg"
+		}
+		return queueEngine.currentThumbnail
 	}
 
 	fun startHostServices() {

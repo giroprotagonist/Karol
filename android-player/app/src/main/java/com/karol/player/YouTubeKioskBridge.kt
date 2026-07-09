@@ -38,6 +38,7 @@ class YouTubeKioskBridge(
 	private val mainHandler = Handler(Looper.getMainLooper())
 	private var layoutScript: String = ""
 	private var lastVideoId: String = ""
+	private var lastEndedFireVideoId: String = ""
 	private var pendingVideoId: String = ""
 	private var isNavigating = false
 	private var customView: android.view.View? = null
@@ -46,6 +47,7 @@ class YouTubeKioskBridge(
 	private var onInterstitialListener: ((String) -> Unit)? = null
 	private var onUnexpectedVideoIdListener: ((String) -> Unit)? = null
 	private var onYouTubeSignedInListener: (() -> Unit)? = null
+	var onLoadingStateChanged: ((Boolean) -> Unit)? = null
 	private var pollRunnable: Runnable? = null
 	private var layoutRefreshGeneration = 0
 	private var programmaticNavGeneration = 0
@@ -60,6 +62,9 @@ class YouTubeKioskBridge(
 	private var premiumCheckDone = false
 	private var lastKnownPlaybackTime: Double = 0.0
 	private var errorRetryCount = 0
+	private var lastCustomViewToggle: Long = 0
+	private var lastKnownDuration: Double = 0.0
+	private var lastKnownCurrentTime: Double = 0.0
 	var allowHomeLanding = false
 		private set
 
@@ -169,7 +174,7 @@ class YouTubeKioskBridge(
 
 	@SuppressLint("SetJavaScriptEnabled")
 	private fun configureWebView() {
-		webView.setBackgroundColor(Color.TRANSPARENT)
+		webView.setBackgroundColor(Color.BLACK)
 		webView.settings.apply {
 			javaScriptEnabled = true
 			domStorageEnabled = true
@@ -225,6 +230,7 @@ class YouTubeKioskBridge(
 					if (lastVideoId.isBlank()) {
 						return
 					}
+					onLoadingStateChanged?.invoke(false)
 					Log.w(TAG, "video page error, retrying: $url")
 					mainHandler.postDelayed({
 						if (lastVideoId.isBlank()) {
@@ -340,6 +346,7 @@ class YouTubeKioskBridge(
 						injectExpectedVideoId()
 						scheduleLayoutRefresh()
 						applyVolumeAndPlay()
+						onLoadingStateChanged?.invoke(false)
 					}
 				}
 
@@ -366,6 +373,13 @@ class YouTubeKioskBridge(
 						callback?.onCustomViewHidden()
 						return
 					}
+					// Debounce: ignore toggles within 1000ms to prevent SurfaceView flicker between songs
+					val now = System.currentTimeMillis()
+					if (now - lastCustomViewToggle < 1000) {
+						callback?.onCustomViewHidden()
+						return
+					}
+					lastCustomViewToggle = now
 					customView = view
 					customViewCallback = callback
 					webView.visibility = android.view.View.GONE
@@ -379,6 +393,11 @@ class YouTubeKioskBridge(
 				}
 
 				override fun onHideCustomView() {
+					val now = System.currentTimeMillis()
+					if (now - lastCustomViewToggle < 1000) {
+						return
+					}
+					lastCustomViewToggle = now
 					hideCustomView()
 				}
 			}
@@ -437,8 +456,10 @@ class YouTubeKioskBridge(
 			lastKnownPlaybackTime = 0.0
 		}
 		lastVideoId = videoId
+		lastEndedFireVideoId = ""
 		errorRetryCount = 0
 		isNavigating = true
+		onLoadingStateChanged?.invoke(true)
 		layoutScriptInjectedForUrl = ""
 		allowHomeLanding = false
 		userNavigatedAway = false
@@ -447,6 +468,11 @@ class YouTubeKioskBridge(
 		mainHandler.post {
 			hideCustomView()
 			evalJs("window.__deskreenYtPause && window.__deskreenYtPause()")
+			// Exit fullscreen before navigating to prevent SurfaceView linger from previous video
+			evalJs("(function(){" +
+				"if(document.exitFullscreen)document.exitFullscreen().catch(function(){});" +
+				"if(document.webkitExitFullscreen)document.webkitExitFullscreen();" +
+				"})()", null)
 			val url = "https://www.youtube.com/watch?v=${videoId}"
 			noteCurrentUrl(url)
 			navigationRetryUrl = url
@@ -467,6 +493,7 @@ class YouTubeKioskBridge(
 					isNavigating = false
 					clearNavigationWatchdog()
 					navigationWatchdogRetries = 0
+					onLoadingStateChanged?.invoke(false)
 					return@Runnable
 				}
 				if (!isNavigating) {
@@ -624,9 +651,16 @@ class YouTubeKioskBridge(
 						hasVideo = json.optBoolean("hasVideo"),
 						layoutOk = json.optBoolean("layoutOk", true),
 						videoTopPx = json.optInt("videoTopPx", 0),
+						thumbnail = json.optString("thumbnail", ""),
 					)
 				if (snap.hasVideo && snap.currentTime >= 0) {
 					lastKnownPlaybackTime = snap.currentTime
+				}
+				if (snap.duration > 0) {
+					lastKnownDuration = snap.duration
+				}
+				if (snap.currentTime >= 0) {
+					lastKnownCurrentTime = snap.currentTime
 				}
 				callback(snap)
 			} catch (_: Exception) {
@@ -784,9 +818,25 @@ class YouTubeKioskBridge(
 					readSnapshot { snap ->
 						if (snap != null) {
 							PlayerApp.instance?.applySnapshot(snap)
+							// Poll-based ended watchdog — YouTube autoplay races with
+							// the JS ended event; detect ended from the readback snapshot.
+							val endedDetected = snap.ended
+							val stateEndedOrStopped = snap.state == 0
+							val timeIsNull = snap.currentTime <= 0.0 && snap.state == 0
+							val videoMatches = snap.videoId.isNotBlank() &&
+								snap.videoId == lastVideoId &&
+								snap.videoId != lastEndedFireVideoId
+							if ((endedDetected || stateEndedOrStopped || timeIsNull) && videoMatches) {
+								lastEndedFireVideoId = snap.videoId
+								Log.i(TAG, "poll watchdog: ended detected for ${snap.videoId} (ended=${endedDetected} state=${snap.state} time=${snap.currentTime})")
+								onEndedListener?.invoke()
+							}
 						}
 					}
-					mainHandler.postDelayed(this, POLL_MS)
+					// Speed up polling near end of video to catch brief ended window
+					val pollDelay = if (lastKnownDuration > 0 && lastKnownCurrentTime > 0 &&
+						(lastKnownDuration - lastKnownCurrentTime) < 15000) 250L else 500L
+					mainHandler.postDelayed(this, pollDelay)
 				}
 			}
 		pollRunnable = runnable

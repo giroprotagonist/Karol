@@ -472,6 +472,7 @@
 
 	window.__deskreenYtResetForNavigation = function () {
 		window.__deskreenTheaterDone = false;
+		window.__karolEndedFired = false;
 		window.__deskreenYtReleaseMonoPipeline();
 	};
 
@@ -514,6 +515,7 @@
 				hasVideo: false,
 				layoutOk: false,
 				videoTopPx: 0,
+				thumbnail: videoId ? 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg' : '',
 			};
 		}
 		var state = 3;
@@ -537,6 +539,7 @@
 			hasVideo: true,
 			layoutOk: layoutOk,
 			videoTopPx: Math.round(rect.top),
+			thumbnail: videoId ? 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg' : '',
 		};
 	};
 
@@ -745,6 +748,7 @@
 			return;
 		}
 		window.__deskreenYtResetForNavigation();
+		window.__karolCurrentVideoId = newId;
 		[400, 1200].forEach(function (ms) {
 			setTimeout(function () {
 				window.__deskreenYtApplyLayout();
@@ -921,24 +925,37 @@
 		if (now - endedState.lastEndedAt < 5000) {
 			return;
 		}
-		updateDurationTracking(v);
 		var expected = window.__deskreenYtExpectedVideoId || getUrlVideoId();
 		var currentTime = Number.isFinite(v.currentTime) ? v.currentTime : 0;
-		var maxDur = endedState.maxDurationSeen;
-		if (maxDur < 30) {
-			return;
-		}
-		if (now - endedState.durationStableSince < 8000) {
-			return;
-		}
-		if (currentTime < maxDur - 4) {
+		var maxDur = Number.isFinite(v.duration) ? v.duration : 0;
+		if (maxDur > 0 && currentTime < maxDur - 10 && !v.ended) {
 			return;
 		}
 		endedState.lastEndedAt = now;
+		window.__karolEndedFired = true;
 		if (window.KarolPlayer && KarolPlayer.onPlaybackEnded && expected) {
 			KarolPlayer.onPlaybackEnded(expected);
 		}
 	}
+	// Backup ended detection: polls the video element directly every 1s.
+	// Catches cases where YouTube's DOM cleanup loses the JS ended event.
+	var __karolEndedBackupInterval = setInterval(function () {
+		if (window.__karolEndedFired) {
+			return;
+		}
+		var v = document.querySelector('video');
+		if (!v) {
+			return;
+		}
+		if (v.ended) {
+			window.__karolEndedFired = true;
+			var vid = window.__karolCurrentVideoId || getUrlVideoId();
+			if (window.KarolPlayer && window.KarolPlayer.onPlaybackEnded && vid) {
+				window.KarolPlayer.onPlaybackEnded(vid);
+			}
+		}
+	}, 1000);
+
 	function bindMonoPipelineEarly() {
 		if (!isPlayerMode()) {
 			return;

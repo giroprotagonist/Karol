@@ -46,7 +46,7 @@ function youtubeThumb(videoId: string, thumbnail?: string): string {
 	if (thumbnail) {
 		return thumbnail;
 	}
-	return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+	return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
 }
 
 function statusLabel(status: YouTubeQueueItem['status'], isActive: boolean): string {
@@ -90,27 +90,12 @@ function QueueRowContent({
 		<div
 			className={`queue-item ${isActive ? 'active' : ''} ${isOverlay ? 'drag-overlay' : ''}`}
 		>
-			<button
-				type="button"
-				className="drag-handle"
-				aria-label={`Reorder ${title}`}
-				disabled={!connected || isOverlay}
-				{...dragHandleProps}
-			>
-				<span className="drag-grip" aria-hidden />
-			</button>
-			<div className="queue-controls-row">
-				<div className="queue-index">{index + 1}</div>
-				<img
-					className="queue-thumb"
-					src={youtubeThumb(item.videoId, item.thumbnail)}
-					alt=""
-					loading="lazy"
-				/>
-				{!isOverlay ? (
-					<div className="queue-actions">
+			<div className="queue-leading-col">
+				<span className="queue-index">{index + 1}</span>
+				{!isOverlay && (
+					<div className="queue-leading-actions">
 						<button
-							className="btn icon"
+							className="queue-row-btn play"
 							type="button"
 							disabled={!connected}
 							title="Play this track"
@@ -119,7 +104,7 @@ function QueueRowContent({
 							▶
 						</button>
 						<button
-							className="btn icon danger-subtle"
+							className="queue-row-btn remove"
 							type="button"
 							disabled={!connected}
 							title="Remove from queue"
@@ -128,22 +113,38 @@ function QueueRowContent({
 							×
 						</button>
 					</div>
-				) : null}
+				)}
 			</div>
-			<div className="queue-meta-row">
-				<span className={`status-chip status-${isActive ? 'playing' : item.status === 'error' ? 'error' : item.status === 'ended' ? 'ended' : 'queued'}`}>
-					{statusLabel(item.status, isActive)}
-				</span>
-				{item.durationSec ? (
-					<span className="queue-duration">{formatTime(item.durationSec)}</span>
-				) : null}
-				{item.errorReason && !isActive ? (
-					<span className="queue-error" title={item.errorReason}>
-						{item.errorReason}
+			<button
+				type="button"
+				className="queue-art-drag"
+				aria-label={`Drag to reorder ${title}`}
+				disabled={!connected || isOverlay}
+				{...dragHandleProps}
+			>
+				<img
+					className="queue-thumb"
+					src={youtubeThumb(item.videoId, item.thumbnail)}
+					alt=""
+					loading="lazy"
+				/>
+			</button>
+			<div className="queue-item-body">
+				<p className="queue-title-full">{title}</p>
+				<div className="queue-meta-row">
+					<span className={`status-chip status-${isActive ? 'playing' : item.status === 'error' ? 'error' : item.status === 'ended' ? 'ended' : 'queued'}`}>
+						{statusLabel(item.status, isActive)}
 					</span>
-				) : null}
+					{item.durationSec ? (
+						<span className="queue-duration">{formatTime(item.durationSec)}</span>
+					) : null}
+					{item.errorReason && !isActive ? (
+						<span className="queue-error" title={item.errorReason}>
+							{item.errorReason}
+						</span>
+					) : null}
+				</div>
 			</div>
-			<p className="queue-title-full">{title}</p>
 		</div>
 	);
 }
@@ -390,7 +391,7 @@ export default function QueueList({
 			)}
 
 			{items.length > 0 ? (
-				<p className="queue-hint muted">Hold the handle, then drag to reorder</p>
+				<p className="queue-hint muted">Hold artwork, then drag to reorder</p>
 			) : null}
 		</div>
 	);

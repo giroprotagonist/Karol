@@ -7,15 +7,15 @@ import {
 } from './nativeBridge';
 
 type DeskreenWindow = typeof globalThis & {
-	DeskreenNative?: {
+	KarolNative?: {
 		onConnectionState: (healthy: boolean) => void;
 		hapticLight: () => void;
 		publishNowPlaying: (json: string) => void;
 		setRemoteVolume: (level: number) => void;
 		ctrlDbg: (hypothesisId: string, message: string, dataJson: string) => void;
 	};
-	__deskreenNativeVolume?: (level: number) => void;
-	__deskreenNativeNowPlaying?: (nowPlaying: {
+	__karolNativeVolume?: (level: number) => void;
+	__karolNativeNowPlaying?: (nowPlaying: {
 		title: string;
 		videoId: string;
 		currentTime: number;
@@ -30,20 +30,20 @@ function deskreenWindow(): DeskreenWindow {
 
 describe('nativeBridge', () => {
 	beforeEach(() => {
-		delete deskreenWindow().DeskreenNative;
-		delete deskreenWindow().__deskreenNativeVolume;
-		delete deskreenWindow().__deskreenNativeNowPlaying;
+		delete deskreenWindow().KarolNative;
+		delete deskreenWindow().__karolNativeVolume;
+		delete deskreenWindow().__karolNativeNowPlaying;
 	});
 
 	afterEach(() => {
-		delete deskreenWindow().DeskreenNative;
-		delete deskreenWindow().__deskreenNativeVolume;
-		delete deskreenWindow().__deskreenNativeNowPlaying;
+		delete deskreenWindow().KarolNative;
+		delete deskreenWindow().__karolNativeVolume;
+		delete deskreenWindow().__karolNativeNowPlaying;
 	});
 
 	it('detects native Android controller', () => {
 		expect(isNativeAndroidController()).toBe(false);
-		deskreenWindow().DeskreenNative = {
+		deskreenWindow().KarolNative = {
 			onConnectionState: vi.fn(),
 			hapticLight: vi.fn(),
 			publishNowPlaying: vi.fn(),
@@ -53,9 +53,9 @@ describe('nativeBridge', () => {
 		expect(isNativeAndroidController()).toBe(true);
 	});
 
-	it('publishNowPlayingToNative forwards JSON to DeskreenNative', () => {
+	it('publishNowPlayingToNative forwards JSON to KarolNative', () => {
 		const publish = vi.fn();
-		deskreenWindow().DeskreenNative = {
+		deskreenWindow().KarolNative = {
 			onConnectionState: vi.fn(),
 			hapticLight: vi.fn(),
 			publishNowPlaying: publish,
@@ -77,18 +77,18 @@ describe('nativeBridge', () => {
 	it('registerNativeVolumeListener clamps and forwards levels', () => {
 		const listener = vi.fn();
 		const cleanup = registerNativeVolumeListener(listener);
-		deskreenWindow().__deskreenNativeVolume?.(1.5);
+		deskreenWindow().__karolNativeVolume?.(1.5);
 		expect(listener).toHaveBeenCalledWith(1);
-		deskreenWindow().__deskreenNativeVolume?.(-0.2);
+		deskreenWindow().__karolNativeVolume?.(-0.2);
 		expect(listener).toHaveBeenLastCalledWith(0);
 		cleanup();
-		expect(deskreenWindow().__deskreenNativeVolume).toBeUndefined();
+		expect(deskreenWindow().__karolNativeVolume).toBeUndefined();
 	});
 
 	it('registerNativeNowPlayingListener receives notification pushes', () => {
 		const listener = vi.fn();
 		const cleanup = registerNativeNowPlayingListener(listener);
-		deskreenWindow().__deskreenNativeNowPlaying?.({
+		deskreenWindow().__karolNativeNowPlaying?.({
 			title: 'B',
 			videoId: 'bbbbbbbbbbb',
 			currentTime: 1,

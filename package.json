@@ -53,7 +53,10 @@
 		"player:refresh-youtube-session": "bash scripts/refresh-youtube-session.sh",
     "sync:dj-controller-player": "bash scripts/sync-dj-controller-to-player.sh",
     "build:android-player": "bash scripts/sync-dj-controller-to-player.sh && cd android-player && ./gradlew assembleDebug",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh",
+    "test:karol": "bash scripts/verify-karol-e2e.sh",
+    "test:karol:controller": "bash scripts/verify-karol-controller.sh",
+    "test:karol:all": "bash scripts/verify-karol-e2e.sh && bash scripts/verify-karol-controller.sh"
   },
   "dependencies": {
     "@blueprintjs/core": "^6.3.4",

@@ -209,7 +209,7 @@ class DjMediaPlaybackService : Service() {
 				while (isActive && apiBase.isNotBlank()) {
 					val np = lastNowPlaying
 					if (np != null && np.isPlaying && np.durationSec > 0) {
-						publishNowPlaying(np, extrapolate = true)
+						publishNowPlaying(np, extrapolate = false)
 					}
 					delay(POSITION_TICK_MS)
 				}
@@ -315,6 +315,7 @@ class DjMediaPlaybackService : Service() {
 
 		val resolvedSec = resolvedPositionMs(nowPlaying, extrapolate) / 1000.0
 		val resolved = nowPlaying.copy(currentTimeSec = resolvedSec)
+		val resolvedPosMs = resolvedPositionMs(nowPlaying, extrapolate)
 		updateSession(nowPlaying, extrapolate)
 
 		if (extrapolate || !unchanged) {
@@ -354,7 +355,7 @@ class DjMediaPlaybackService : Service() {
 		}
 
 		val manager = getSystemService(NotificationManager::class.java)
-		manager.notify(NOTIFICATION_ID, buildNotification(nowPlaying))
+		manager.notify(NOTIFICATION_ID, buildNotification(nowPlaying, resolvedPosMs))
 	}
 
 	private fun resolvedPositionMs(
@@ -456,7 +457,7 @@ class DjMediaPlaybackService : Service() {
 		lastIsPlaying = nowPlaying.isPlaying
 	}
 
-	private fun buildNotification(nowPlaying: DjNowPlaying?): Notification {
+	private fun buildNotification(nowPlaying: DjNowPlaying?, positionMs: Long = 0L): Notification {
 		val title =
 			nowPlaying?.title?.takeIf { it.isNotBlank() }
 				?: lastTitle.takeIf { it.isNotBlank() }
@@ -509,6 +510,15 @@ class DjMediaPlaybackService : Service() {
 				.setContentTitle(title)
 				.setContentText(subtitle)
 				.setSubText(getString(R.string.app_name))
+				.apply {
+					val durationSec = nowPlaying?.durationSec ?: 0.0
+					val durationMs = (durationSec * 1000).toInt()
+					if (durationMs > 0 && nowPlaying != null) {
+						setProgress(durationMs, positionMs.toInt().coerceIn(0, durationMs), false)
+					} else {
+						setProgress(0, 0, true)
+					}
+				}
 				.setContentIntent(contentIntent)
 				.setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
 				.setCategory(NotificationCompat.CATEGORY_TRANSPORT)

@@ -778,6 +778,8 @@ class DjHttpServer(
 		val snap = latestSnapshot
 		val queueItem =
 			queueEngine.queue.getOrNull(queueEngine.currentIndex)
+		val prevItem = queueEngine.queue.getOrNull(queueEngine.currentIndex - 1)
+		val nextItem = queueEngine.queue.getOrNull(queueEngine.currentIndex + 1)
 		val videoId =
 			snap?.videoId?.takeIf { it.isNotBlank() }
 				?: queueEngine.getCurrentVideoId().orEmpty()
@@ -787,6 +789,7 @@ class DjHttpServer(
 				?: queueItem?.title.orEmpty()
 		val thumbnail =
 			queueEngine.currentThumbnail.takeIf { it.isNotBlank() }
+				?: snap?.thumbnail?.takeIf { it.isNotBlank() }
 				?: queueItem?.thumbnail.orEmpty()
 				.ifBlank {
 					if (videoId.isNotBlank()) {
@@ -807,10 +810,14 @@ class DjHttpServer(
 				snap?.state?.takeIf { it == 1 || it == 2 } ?: 1
 			}
 		val currentTime = resolveCurrentTimeForApi(state, duration)
+		val previousThumbnail = prevItem?.thumbnail.orEmpty()
+		val nextThumbnail = nextItem?.thumbnail.orEmpty()
 		return JSONObject()
 			.put("title", title)
 			.put("videoId", videoId)
 			.put("thumbnail", thumbnail)
+			.put("previousThumbnail", previousThumbnail)
+			.put("nextThumbnail", nextThumbnail)
 			.put("currentTime", currentTime)
 			.put("duration", duration)
 			.put("volumeLevel", volumeLevel)
