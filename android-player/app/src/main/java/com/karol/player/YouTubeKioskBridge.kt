@@ -4,11 +4,13 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -68,6 +70,22 @@ class YouTubeKioskBridge(
 	var allowHomeLanding = false
 		private set
 
+	private var signInMode = false
+	private var signInPollRunnable: Runnable? = null
+	private var signInPollStartMs: Long = 0
+	private var signInOnComplete: ((Boolean?) -> Unit)? = null
+	private var onSignInProgressListener: ((SignInStep) -> Unit)? = null
+
+	enum class SignInStep {
+		OPENING_GOOGLE,
+		SIGNING_IN,
+		COOKIES_DETECTED,
+		CHECKING_PREMIUM,
+		PREMIUM_CONFIRMED,
+		NO_PREMIUM,
+		TIMEOUT,
+	}
+
 	override var isReady: Boolean = false
 		private set
 
@@ -89,6 +107,119 @@ class YouTubeKioskBridge(
 			webView.loadUrl(YouTubeSessionHelper.signInUrl())
 			onFinished?.invoke()
 		}
+	}
+
+	fun setOnSignInProgressListener(listener: (SignInStep) -> Unit) {
+		onSignInProgressListener = listener
+	}
+
+	/**
+	 * Enter self-contained WebView sign-in mode with cookie polling.
+	 * Clears all cookies and cache for a fresh start, then loads the
+	 * Google sign-in page in the WebView.  Polls every 500 ms for
+	 * auth cookies, up to 120 s.  Handles Multi-Account UI, 2FA, and
+	 * any redirect chain Google throws at it.
+	 */
+	fun enterSignInMode(onComplete: (premium: Boolean?) -> Unit) {
+		signInMode = true
+		signInOnComplete = onComplete
+		premiumCheckDone = false
+		allowHomeLanding = true
+		userNavigatedAway = false
+
+		// Fresh start — no stale cookies from previous attempts
+		webView.clearCache(true)
+		try {
+			val cm = CookieManager.getInstance()
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+				cm.removeAllCookies(null)
+			} else {
+				@Suppress("DEPRECATION")
+				cm.removeAllCookie()
+			}
+			// Pre-inject consent cookie to avoid YouTube/Google consent dialogs
+			cm.setCookie("https://www.youtube.com", "CONSENT=YES+; Domain=.youtube.com; Path=/")
+			cm.setCookie("https://youtube.com", "CONSENT=YES+; Domain=.youtube.com; Path=/")
+			cm.setCookie("https://m.youtube.com", "CONSENT=YES+; Domain=.youtube.com; Path=/")
+			cm.flush()
+		} catch (e: Exception) {
+			Log.w(TAG, "cookie clear during sign-in", e)
+		}
+
+		onSignInProgressListener?.invoke(SignInStep.OPENING_GOOGLE)
+		mainHandler.post {
+			hideCustomView()
+			webView.visibility = android.view.View.VISIBLE
+			webView.loadUrl(YouTubeSessionHelper.signInUrl())
+		}
+
+		// Start cookie poll loop
+		signInPollStartMs = System.currentTimeMillis()
+		startSignInPoll(onComplete)
+	}
+
+	/** Stop the sign-in poll and release sign-in-mode state. */
+	fun exitSignInMode(ok: Boolean, onComplete: (premium: Boolean?) -> Unit) {
+		signInPollRunnable?.let { mainHandler.removeCallbacks(it) }
+		signInPollRunnable = null
+		signInMode = false
+		signInOnComplete = null
+		allowHomeLanding = false
+		if (ok) {
+			onSignInProgressListener?.invoke(SignInStep.CHECKING_PREMIUM)
+			verifyYouTubePremium { premium ->
+				onSignInProgressListener?.invoke(
+					if (premium) SignInStep.PREMIUM_CONFIRMED else SignInStep.NO_PREMIUM,
+				)
+				onComplete(premium)
+			}
+		} else {
+			onComplete(null)
+		}
+	}
+
+	private fun startSignInPoll(onComplete: (premium: Boolean?) -> Unit) {
+		signInPollRunnable?.let { mainHandler.removeCallbacks(it) }
+		val runnable =
+			object : Runnable {
+				override fun run() {
+					if (!signInMode) return
+					// Flush cookies to ensure Set-Cookie headers are persisted
+					YouTubeSessionHelper.flush()
+					val elapsed = System.currentTimeMillis() - signInPollStartMs
+					if (elapsed > SIGN_IN_TIMEOUT_MS) {
+						Log.w(TAG, "sign-in poll: timed out after ${elapsed}ms")
+						signInPollRunnable = null
+						onSignInProgressListener?.invoke(SignInStep.TIMEOUT)
+						// Defer mode exit to let caller handle UI
+						mainHandler.post { exitSignInMode(false, onComplete) }
+						return
+					}
+					if (YouTubeSessionHelper.isSignedIn()) {
+						Log.i(TAG, "sign-in poll: cookies detected after ${elapsed}ms")
+						onSignInProgressListener?.invoke(SignInStep.COOKIES_DETECTED)
+						signInPollRunnable = null
+						mainHandler.post { exitSignInMode(true, onComplete) }
+						return
+					}
+					// URL-based progress: if we're on accounts.google.com, try to nudge
+					// the consent/challenge dialog every few poll cycles
+					val currentUrl = webView.url ?: ""
+					if (currentUrl.contains("accounts.google.com")) {
+						if (elapsed > 3_000L && elapsed % 5_000L < SIGN_IN_POLL_INTERVAL_MS) {
+							dismissGoogleSignInPrompts()
+						}
+						if (elapsed > 8000L) {
+							// Periodic scan for Google "blocked" error page
+							scanForGoogleBlockedPage()
+						}
+					}
+					signInPollRunnable = this
+					mainHandler.postDelayed(this, SIGN_IN_POLL_INTERVAL_MS)
+				}
+			}
+		signInPollRunnable = runnable
+		mainHandler.postDelayed(runnable, SIGN_IN_POLL_INTERVAL_MS)
 	}
 
 	fun isYouTubeSignedIn(): Boolean = YouTubeSessionHelper.isSignedIn()
@@ -197,6 +328,12 @@ class YouTubeKioskBridge(
 					if (isAllowedUrl(url)) {
 						return false
 					}
+					// During sign-in mode, never fire recovery — doing so
+					// destroys Google's auth redirect chain mid-sign-in.
+					if (signInMode) {
+						Log.d(TAG, "signInMode: allowing blocked URL to proceed: $url")
+						return false
+					}
 					// YouTube's player JS fires programmatic navigations during normal
 					// playback (autoplay suggestions, end-screen links, internal state
 					// transitions).  Blocking every non-watch URL and force-reloading
@@ -224,6 +361,15 @@ class YouTubeKioskBridge(
 				) {
 					super.onReceivedError(view, request, error)
 					val url = request?.url?.toString() ?: return
+					// During sign-in mode, any main-frame error is fatal
+					if (signInMode && request.isForMainFrame) {
+						Log.w(TAG, "signInMode: page error for $url, aborting sign-in")
+						val cb = signInOnComplete
+						if (cb != null) {
+							mainHandler.post { exitSignInMode(false, cb) }
+						}
+						return
+					}
 				if (!url.contains("/watch") || !request.isForMainFrame) {
 						return
 					}
@@ -323,8 +469,30 @@ class YouTubeKioskBridge(
 								)
 							}, 1000)
 						}
+						// --- Sign-in mode page detection ---
+						if (signInMode) {
+							// Success: youtube.com loaded with auth cookies present
+							if (it.contains("youtube.com") &&
+								!it.contains("accounts.google") &&
+								YouTubeSessionHelper.isSignedIn()
+							) {
+								Log.i(TAG, "signInMode: youtube.com landed with cookies, completing sign-in")
+								val cb = signInOnComplete
+								if (cb != null) {
+									onSignInProgressListener?.invoke(SignInStep.COOKIES_DETECTED)
+									mainHandler.post { exitSignInMode(true, cb) }
+								}
+							}
+							// Google sign-in page consent/challenge auto-dismiss
+							if (it.contains("accounts.google.com")) {
+								dismissGoogleSignInPrompts()
+							}
+							// Scan for Google "blocked" error page
+							scanForGoogleBlockedPage()
+						}
 					}
 					if (
+						!signInMode &&
 						!premiumCheckDone &&
 						url?.contains("youtube.com") == true &&
 						!url.contains("accounts.google") &&
@@ -728,6 +896,10 @@ class YouTubeKioskBridge(
 
 	fun destroy() {
 		pollRunnable?.let { mainHandler.removeCallbacks(it) }
+		signInPollRunnable?.let { mainHandler.removeCallbacks(it) }
+		signInPollRunnable = null
+		signInMode = false
+		signInOnComplete = null
 		cancelPendingLayoutRefresh()
 	}
 
@@ -882,6 +1054,82 @@ class YouTubeKioskBridge(
 		}
 	}
 
+	// --- Sign-in mode helpers ---
+
+	/**
+	 * Auto-dismiss Google sign-in consent/challenge prompts on accounts.google.com.
+	 * Only targets consent-style buttons, NOT credential-entry forms (email/password).
+	 */
+	private fun dismissGoogleSignInPrompts() {
+		// Attempt to click common consent/approval buttons
+		webView.evaluateJavascript(
+			"(function(){" +
+			"var btns=document.querySelectorAll('button, input[type=submit], [role=button]');" +
+			"for(var i=0;i<btns.length;i++){" +
+			"var el=btns[i];" +
+			"var t=(el.textContent||el.value||'').trim().toLowerCase();" +
+			"var a=(el.getAttribute('aria-label')||'').toLowerCase();" +
+			"// Only target consent/approval, never credential fields" +
+			"var isConsent=t.includes('i agree')||t.includes('allow')||" +
+			"t.includes('accept all')||t.includes('continue')||" +
+			"t.includes('confirm')||t.includes('yes')||" +
+			"a.includes('i agree')||a.includes('allow')||a.includes('accept');" +
+			"var isNext=t==='next'||a==='next';" +
+			"if(isConsent||isNext){" +
+			"try{el.click();return;}catch(e){}" +
+			"}}" +
+			"// Fallback: form-based consent" +
+			"var f=document.querySelector('form');" +
+			"if(f&&!document.querySelector('input[type=email],input[type=password]')){" +
+			"try{f.submit();}catch(e){}" +
+			"}})()",
+			null,
+		)
+		// Retry after delay for dynamic content
+		mainHandler.postDelayed({
+			webView.evaluateJavascript(
+				"(function(){" +
+				"var btns=document.querySelectorAll('button, input[type=submit], [role=button]');" +
+				"for(var i=0;i<btns.length;i++){" +
+				"var t=(btns[i].textContent||btns[i].value||'').trim().toLowerCase();" +
+				"if(t.includes('accept')||t.includes('agree')||t.includes('allow')||" +
+				"t.includes('continue')||t.includes('confirm')){" +
+				"btns[i].click();return;}}})()",
+				null,
+			)
+		}, 1500)
+	}
+
+	/**
+	 * Scan the current page for Google "disallowed_useragent" or
+	 * "insecure browser" blocking messages.  If detected, abort sign-in
+	 * so the caller can fall back to device account sign-in.
+	 */
+	private fun scanForGoogleBlockedPage() {
+		webView.evaluateJavascript(
+			"(function(){" +
+			"var b=document.body;if(!b)return'ok';" +
+			"var t=(b.innerText||b.textContent||'').toLowerCase();" +
+			"if(t.includes('disallowed_useragent')||" +
+			"t.includes('browser or app may not be secure')||" +
+			"t.includes('not a supported browser')||" +
+			"t.includes('couldn\\'t sign you in')||" +
+			"t.includes('this browser is not supported'))" +
+			"return'blocked';" +
+			"return'ok';" +
+			"})()",
+		) { raw ->
+			if (raw == "\"blocked\"") {
+				Log.w(TAG, "signInMode: Google blocked sign-in page")
+				val cb = signInOnComplete
+				if (cb != null) {
+					onSignInProgressListener?.invoke(SignInStep.TIMEOUT)
+					mainHandler.post { exitSignInMode(false, cb) }
+				}
+			}
+		}
+	}
+
 	companion object {
 		private const val TAG = "YouTubeKioskBridge"
 		private const val POLL_MS = 500L
@@ -889,5 +1137,7 @@ class YouTubeKioskBridge(
 		private const val MAX_PREMIUM_CHECK_ATTEMPTS = 4
 		private const val PREMIUM_CHECK_RETRY_MS = 1500L
 		private const val MAX_NAVIGATION_WATCHDOG_RETRIES = 3
+		private const val SIGN_IN_POLL_INTERVAL_MS = 500L
+		private const val SIGN_IN_TIMEOUT_MS = 120_000L
 	}
 }

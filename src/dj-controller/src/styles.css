@@ -1551,6 +1551,50 @@ textarea {
 	min-width: 0;
 }
 
+/* VLC sub-tab nav */
+.vlc-tab-wrapper {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+.vlc-subtab-nav {
+	display: flex;
+	gap: 4px;
+	padding: 0 0 12px;
+	border-bottom: 1px solid var(--border);
+	margin-bottom: 14px;
+}
+
+.vlc-subtab-btn {
+	flex: 1;
+	padding: 8px 12px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--bg);
+	color: var(--text-muted);
+	font-size: 0.85rem;
+	font-weight: 500;
+	cursor: pointer;
+	text-align: center;
+	transition: background 0.15s, color 0.15s, border-color 0.15s;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+}
+
+.vlc-subtab-btn:hover {
+	color: var(--text);
+	border-color: var(--text-muted);
+}
+
+.vlc-subtab-btn.active {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #fff;
+}
+
 @media (max-width: 768px) {
 	.vlc-tab-layout {
 		flex-direction: column;

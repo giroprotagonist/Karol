@@ -45,4 +45,13 @@
 	<string name="show_gate_message">Sign in on this tablet for Premium ad-free playback, or start with ads.</string>
 	<string name="show_gate_sign_in">Sign in on tablet</string>
 	<string name="show_gate_start_anyway">Start anyway (ads)</string>
+	<string name="sign_in_overlay_opening">Opening Google sign-in…</string>
+	<string name="sign_in_overlay_sign_in">Sign in with your Google account</string>
+	<string name="sign_in_overlay_2fa_hint">You may need to verify on another device</string>
+	<string name="sign_in_overlay_cookies">Sign-in detected — checking Premium…</string>
+	<string name="sign_in_overlay_premium">YouTube Premium confirmed!</string>
+	<string name="sign_in_overlay_no_premium">Signed in (no Premium detected)</string>
+	<string name="sign_in_overlay_timeout">Sign-in timed out — tap to retry</string>
+	<string name="sign_in_overlay_cancel">Cancel</string>
+	<string name="sign_in_device_account">Try device Google account</string>
 </resources>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type HTMLAttributes } from 'react';
+import React, { useEffect, useRef, useState, type HTMLAttributes } from 'react';
 import {
 	DndContext,
 	DragOverlay,
@@ -158,7 +158,9 @@ type SortableRowProps = {
 	onRemove: (id: string) => void;
 };
 
-function SortableRow({
+const RowPlaceholderHeight = 108;
+
+function SortableRowInner({
 	item,
 	index,
 	isActive,
@@ -168,6 +170,25 @@ function SortableRow({
 }: SortableRowProps) {
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
 		useSortable({ id: item.id, disabled: !connected });
+	const [hydrated, setHydrated] = useState(isActive || index < 25 || index >= 99999);
+	const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+	useEffect(() => {
+		if (hydrated) return;
+		const el = sentinelRef.current;
+		if (!el) return;
+		const observer = new IntersectionObserver(
+			([entry]) => {
+				if (entry.isIntersecting) {
+					setHydrated(true);
+					observer.disconnect();
+				}
+			},
+			{ rootMargin: '800px', threshold: 0 },
+		);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [hydrated]);
 
 	const style = {
 		transform: CSS.Transform.toString(transform),
@@ -182,18 +203,36 @@ function SortableRow({
 			className={isDragging ? 'sortable-ghost' : undefined}
 			data-queue-index={index}
 		>
-			<QueueRowContent
-				item={item}
-				index={index}
-				isActive={isActive}
-				connected={connected}
-				onPlay={onPlay}
-				onRemove={onRemove}
-				dragHandleProps={{ ...attributes, ...listeners }}
-			/>
+			<div ref={sentinelRef}>
+				{hydrated ? (
+					<QueueRowContent
+						item={item}
+						index={index}
+						isActive={isActive}
+						connected={connected}
+						onPlay={onPlay}
+						onRemove={onRemove}
+						dragHandleProps={{ ...attributes, ...listeners }}
+					/>
+				) : (
+					<div
+						className="queue-item queue-item-placeholder"
+						style={{ height: RowPlaceholderHeight }}
+					>
+						<span className="queue-index">{index + 1}</span>
+						<div className="queue-item-body" style={{ flex: 1 }}>
+							<span className="queue-title-full" style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+								{item.title ? item.title.slice(0, 50) : '...'}
+							</span>
+						</div>
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }
+
+const SortableRow = React.memo(SortableRowInner);
 
 export default function QueueList({
 	items,

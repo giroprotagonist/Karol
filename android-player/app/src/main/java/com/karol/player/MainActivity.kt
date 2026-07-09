@@ -46,8 +46,16 @@ class MainActivity : AppCompatActivity() {
 	private var showStarted = false
 	private var pendingShowAfterSession = false
 	private lateinit var reauthOverlay: View
+	private lateinit var signInProgressOverlay: View
+	private lateinit var signInProgressTitle: TextView
+	private lateinit var signInProgressSubtitle: TextView
+	private lateinit var signInSpinner: android.widget.ProgressBar
+	private lateinit var signInRetryButton: MaterialButton
+	private lateinit var signInCancelButton: MaterialButton
+	private var signInInProgress = false
 	private lateinit var backCallback: OnBackPressedCallback
 	private val statusHandler = Handler(Looper.getMainLooper())
+	private val mainHandler = Handler(Looper.getMainLooper())
 	private var statusRunnable: Runnable? = null
 
 	private val notificationPermissionLauncher =
@@ -96,12 +104,25 @@ class MainActivity : AppCompatActivity() {
 		qrCodeImage = findViewById(R.id.qrCodeImage)
 		autoBootSwitch = findViewById(R.id.autoBootSwitch)
 		reauthOverlay = findViewById(R.id.reauthOverlay)
+		signInProgressOverlay = findViewById(R.id.signInProgressOverlay)
+		signInProgressTitle = findViewById(R.id.signInProgressTitle)
+		signInProgressSubtitle = findViewById(R.id.signInProgressSubtitle)
+		signInSpinner = findViewById(R.id.signInSpinner)
+		signInRetryButton = findViewById(R.id.signInRetryButton)
+		signInCancelButton = findViewById(R.id.signInCancelButton)
 		findViewById<MaterialButton>(R.id.reauthButton).setOnClickListener {
 			beginYouTubeSignIn()
 		}
 		findViewById<MaterialButton>(R.id.reauthStopShowButton).setOnClickListener {
 			reauthOverlay.visibility = View.GONE
 			stopShow()
+		}
+		signInRetryButton.setOnClickListener {
+			hideSignInProgressOverlay()
+			beginYouTubeSignIn()
+		}
+		signInCancelButton.setOnClickListener {
+			cancelSignIn()
 		}
 
 		app.onRequestStartShow = { runOnUiThread { ensureShowStarted() } }
@@ -137,7 +158,7 @@ class MainActivity : AppCompatActivity() {
 		}
 
 		findViewById<TextView>(R.id.signInTroubleLink)?.setOnClickListener {
-			importYouTubeSession()
+			tryDeviceAccountSignIn()
 		}
 
 		updateYouTubeAccountUi()
@@ -220,16 +241,31 @@ class MainActivity : AppCompatActivity() {
 
 	private fun beginYouTubeSignIn() {
 		reauthOverlay.visibility = View.GONE
+		// Fast path: already signed in or session restore succeeds
 		if (tryRestoreYouTubeSessionIfNeeded()) return
-		// Try device Google account sign-in before file import
-		YouTubeAccountSignIn.signIn(this) { ok ->
+		// Show progress overlay and sign in directly in the WebView
+		showSignInProgressOverlay()
+		signInInProgress = true
+		val bridge = ensureBridge()
+
+		// Wire progress listener to update overlay text
+		bridge.setOnSignInProgressListener { step ->
+			runOnUiThread { updateSignInProgressOverlay(step) }
+		}
+
+		bridge.enterSignInMode { premium ->
 			runOnUiThread {
-				if (ok) {
+				signInInProgress = false
+				if (premium != null) {
+					hideSignInProgressOverlay()
 					completeYouTubeSignIn()
-					Toast.makeText(this, R.string.youtube_sign_in_premium_ok, Toast.LENGTH_SHORT).show()
 				} else {
-					// Fall back to file import
-					importYouTubeSession()
+					// Timeout — show retry UI
+					signInSpinner.visibility = View.GONE
+					signInProgressTitle.text = getString(R.string.sign_in_overlay_timeout)
+					signInProgressSubtitle.text = getString(R.string.sign_in_trouble_import)
+					signInRetryButton.visibility = View.VISIBLE
+					signInCancelButton.text = getString(R.string.stop_show)
 				}
 			}
 		}
@@ -253,6 +289,83 @@ class MainActivity : AppCompatActivity() {
 			importSessionLauncher.launch(arrayOf("application/json", "*/*"))
 		} catch (_: Exception) {
 			Toast.makeText(this, R.string.youtube_session_import_fail, Toast.LENGTH_LONG).show()
+		}
+	}
+
+	private fun showSignInProgressOverlay() {
+		signInProgressOverlay.visibility = View.VISIBLE
+		signInProgressTitle.text = getString(R.string.sign_in_overlay_opening)
+		signInProgressSubtitle.text = getString(R.string.sign_in_overlay_2fa_hint)
+		signInSpinner.visibility = View.VISIBLE
+		signInRetryButton.visibility = View.GONE
+		signInCancelButton.text = getString(R.string.sign_in_overlay_cancel)
+	}
+
+	private fun hideSignInProgressOverlay() {
+		signInProgressOverlay.visibility = View.GONE
+	}
+
+	private fun updateSignInProgressOverlay(step: YouTubeKioskBridge.SignInStep) {
+		when (step) {
+			YouTubeKioskBridge.SignInStep.OPENING_GOOGLE -> {
+				signInProgressTitle.text = getString(R.string.sign_in_overlay_opening)
+				signInProgressSubtitle.text = getString(R.string.sign_in_overlay_2fa_hint)
+				signInSpinner.visibility = View.VISIBLE
+				signInRetryButton.visibility = View.GONE
+			}
+			YouTubeKioskBridge.SignInStep.SIGNING_IN -> {
+				signInProgressTitle.text = getString(R.string.sign_in_overlay_sign_in)
+				signInSpinner.visibility = View.VISIBLE
+				signInRetryButton.visibility = View.GONE
+			}
+			YouTubeKioskBridge.SignInStep.COOKIES_DETECTED -> {
+				signInProgressTitle.text = getString(R.string.sign_in_overlay_cookies)
+				signInProgressSubtitle.text = ""
+				signInSpinner.visibility = View.VISIBLE
+			}
+			YouTubeKioskBridge.SignInStep.CHECKING_PREMIUM -> {
+				signInProgressTitle.text = getString(R.string.sign_in_overlay_cookies)
+				signInSpinner.visibility = View.VISIBLE
+			}
+			YouTubeKioskBridge.SignInStep.PREMIUM_CONFIRMED -> {
+				signInProgressTitle.text = getString(R.string.sign_in_overlay_premium)
+				signInProgressSubtitle.text = ""
+				signInSpinner.visibility = View.GONE
+				signInRetryButton.visibility = View.GONE
+				mainHandler.postDelayed({ hideSignInProgressOverlay() }, 1_500L)
+			}
+			YouTubeKioskBridge.SignInStep.NO_PREMIUM -> {
+				signInProgressTitle.text = getString(R.string.sign_in_overlay_no_premium)
+				signInProgressSubtitle.text = ""
+				signInSpinner.visibility = View.GONE
+				signInRetryButton.visibility = View.GONE
+				mainHandler.postDelayed({ hideSignInProgressOverlay() }, 1_500L)
+			}
+			YouTubeKioskBridge.SignInStep.TIMEOUT -> {
+				signInProgressTitle.text = getString(R.string.sign_in_overlay_timeout)
+				signInProgressSubtitle.text = getString(R.string.sign_in_trouble_import)
+				signInSpinner.visibility = View.GONE
+				signInRetryButton.visibility = View.VISIBLE
+			}
+		}
+	}
+
+	private fun cancelSignIn() {
+		signInInProgress = false
+		hideSignInProgressOverlay()
+		bridge?.exitSignInMode(false) { }
+	}
+
+	private fun tryDeviceAccountSignIn() {
+		YouTubeAccountSignIn.signIn(this) { ok ->
+			runOnUiThread {
+				if (ok) {
+					completeYouTubeSignIn()
+					Toast.makeText(this, R.string.youtube_sign_in_premium_ok, Toast.LENGTH_SHORT).show()
+				} else {
+					importYouTubeSession()
+				}
+			}
 		}
 	}
 

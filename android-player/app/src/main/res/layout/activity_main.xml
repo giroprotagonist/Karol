@@ -218,4 +218,90 @@
 			android:layout_marginTop="8dp"
 			android:text="@string/stop_show" />
 	</LinearLayout>
+
+	<!--
+		Sign-in progress banner — non-blocking so the user can interact with
+		the Google sign-in page in the WebView underneath.  The banner rides
+		at the top of the screen and touches pass through to the WebView.
+	-->
+	<FrameLayout
+		android:id="@+id/signInProgressOverlay"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:layout_gravity="top"
+		android:visibility="gone">
+
+		<LinearLayout
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:background="#CC000000"
+			android:gravity="center"
+			android:orientation="vertical"
+			android:paddingTop="24dp"
+			android:paddingBottom="16dp"
+			android:paddingStart="24dp"
+			android:paddingEnd="24dp">
+
+			<LinearLayout
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:gravity="center_vertical"
+				android:orientation="horizontal">
+
+				<ProgressBar
+					android:id="@+id/signInSpinner"
+					android:layout_width="24dp"
+					android:layout_height="24dp"
+					android:layout_marginEnd="12dp"
+					android:indeterminate="true"
+					android:indeterminateTint="@color/karol_accent" />
+
+				<TextView
+					android:id="@+id/signInProgressTitle"
+					android:layout_width="wrap_content"
+					android:layout_height="wrap_content"
+					android:gravity="center_vertical"
+					android:text="@string/sign_in_overlay_opening"
+					android:textColor="@color/karol_text_primary"
+					android:textSize="16sp"
+					android:textStyle="bold" />
+			</LinearLayout>
+
+			<TextView
+				android:id="@+id/signInProgressSubtitle"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="6dp"
+				android:gravity="center"
+				android:text="@string/sign_in_overlay_2fa_hint"
+				android:textColor="@color/karol_text_secondary"
+				android:textSize="13sp" />
+
+			<LinearLayout
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="12dp"
+				android:gravity="center"
+				android:orientation="horizontal">
+
+				<com.google.android.material.button.MaterialButton
+					android:id="@+id/signInRetryButton"
+					style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+					android:layout_width="wrap_content"
+					android:layout_height="36dp"
+					android:layout_marginEnd="12dp"
+					android:text="@string/sign_in_overlay_timeout"
+					android:textSize="13sp"
+					android:visibility="gone" />
+
+				<com.google.android.material.button.MaterialButton
+					android:id="@+id/signInCancelButton"
+					style="@style/Widget.MaterialComponents.Button.TextButton"
+					android:layout_width="wrap_content"
+					android:layout_height="36dp"
+					android:text="@string/sign_in_overlay_cancel"
+					android:textSize="13sp" />
+			</LinearLayout>
+		</LinearLayout>
+	</FrameLayout>
 </FrameLayout>
