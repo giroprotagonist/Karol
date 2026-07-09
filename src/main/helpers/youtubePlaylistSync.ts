@@ -79,6 +79,8 @@ export function getPlaylistModeConfig(): YouTubeDjPlaylistModeConfig {
 
 	return {
 		enabled,
+		activePlaylistId: playlistId,
+		playlists: [],
 		playlistId,
 		playlistUrl,
 		syncedVideoIds: getSyncedVideoIds(),

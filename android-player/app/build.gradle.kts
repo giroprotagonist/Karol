@@ -11,8 +11,8 @@ android {
 		applicationId = "com.deskreen.player"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 2
-		versionName = "1.1.0"
+		versionCode = 4
+		versionName = "2.0.0"
 		testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 	}
 
@@ -27,6 +27,7 @@ android {
 				getDefaultProguardFile("proguard-android-optimize.txt"),
 				"proguard-rules.pro",
 			)
+			signingConfig = signingConfigs.getByName("debug")
 		}
 	}
 
@@ -56,6 +57,7 @@ dependencies {
 	implementation("io.ktor:ktor-server-cio:2.3.12")
 	implementation("io.ktor:ktor-server-status-pages:2.3.12")
 	implementation("com.google.zxing:core:3.5.3")
+	implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
 	testImplementation("junit:junit:4.13.2")
 	testImplementation("org.robolectric:robolectric:4.14.1")

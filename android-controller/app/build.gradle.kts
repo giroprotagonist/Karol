@@ -11,8 +11,8 @@ android {
 		applicationId = "com.deskreen.controller"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 2
-		versionName = "1.1.0"
+		versionCode = 4
+		versionName = "2.0.0"
 		testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 	}
 
@@ -27,7 +27,12 @@ android {
 				getDefaultProguardFile("proguard-android-optimize.txt"),
 				"proguard-rules.pro",
 			)
+			signingConfig = signingConfigs.getByName("debug")
 		}
+	}
+
+	buildFeatures {
+		buildConfig = true
 	}
 
 	compileOptions {

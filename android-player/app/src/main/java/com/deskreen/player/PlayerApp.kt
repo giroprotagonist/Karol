@@ -109,6 +109,7 @@ class PlayerApp : Application() {
 		}
 		queueEngine.onLoadVideo = { videoId ->
 			// #region agent log
+			if (BuildConfig.DEBUG) {
 			Log.i(
 				"DeskreenDbg",
 				org.json.JSONObject()
@@ -125,6 +126,7 @@ class PlayerApp : Application() {
 					.put("timestamp", System.currentTimeMillis())
 					.toString(),
 			)
+			}
 			// #endregion
 			playbackSupervisor.onLoadStarted(videoId)
 			djHttpServer.invalidatePlaybackSnapshot()

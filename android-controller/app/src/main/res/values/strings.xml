@@ -1,20 +1,20 @@
 <resources>
-	<string name="app_name">Deskreen DJ Controller</string>
-	<string name="searching_for_deskreen">Searching for Deskreen Player or Mac on Wi‑Fi…</string>
-	<string name="manual_connect_hint">Enter the tablet or Mac IP (port 3131), or scan a QR code.</string>
+	<string name="app_name">Karol Controller</string>
+	<string name="searching_for_deskreen">Searching for Karol Player on Wi‑Fi…</string>
+	<string name="manual_connect_hint">Enter the tablet IP (port 3131), or scan a QR code.</string>
 	<string name="url_hint">http://192.168.1.42:3131/dj-controller/</string>
 	<string name="scan_qr_code">Scan QR code</string>
 	<string name="connect">Connect</string>
 	<string name="open_in_chrome">Open in Chrome</string>
-	<string name="qr_scan_hint">Point at the Deskreen DJ controller QR code</string>
+	<string name="qr_scan_hint">Point at the Karol controller QR code</string>
 	<string name="cancel">Cancel</string>
 	<string name="camera_permission_required">Camera permission is required to scan QR codes</string>
-	<string name="controller_load_error">Could not load DJ controller. Retrying…</string>
+	<string name="controller_load_error">Could not load Karol controller. Retrying…</string>
 	<string name="reconnecting_host">Reconnecting to host…</string>
-	<string name="notification_channel_name">DJ playback</string>
+	<string name="notification_channel_name">Karol playback</string>
 	<string name="notification_channel_desc">Lock screen and notification controls for the show queue</string>
-	<string name="notification_idle_title">Deskreen DJ</string>
-	<string name="notification_artist">Deskreen Player</string>
+	<string name="notification_idle_title">Karol</string>
+	<string name="notification_artist">Karol Player</string>
 	<string name="notification_playing">Playing</string>
 	<string name="notification_paused">Paused</string>
 	<string name="notification_ready">Connected</string>
@@ -29,7 +29,7 @@
 	<string name="native_connected">Connected to player</string>
 	<string name="native_reconnecting">Reconnecting\u2026</string>
 	<string name="native_offline">Player offline</string>
-	<string name="discovery_tablet_player">Tablet player at %1$s:%2$d</string>
+	<string name="discovery_tablet_player">Karol Player at %1$s:%2$d</string>
 	<string name="discovery_mac_host">Mac host at %1$s:%2$d</string>
 	<string name="invalid_url">Enter a valid http:// address</string>
 	<string name="connecting">Connecting\u2026</string>

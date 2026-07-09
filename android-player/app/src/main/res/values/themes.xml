@@ -5,7 +5,8 @@
 		<item name="colorOnPrimary">#FFFFFF</item>
 		<item name="android:statusBarColor">@color/deskreen_bg</item>
 		<item name="android:navigationBarColor">@color/deskreen_bg</item>
-		<item name="android:windowBackground">@color/black</item>
+		<item name="android:windowBackground">@android:color/transparent</item>
+		<item name="android:windowIsTranslucent">true</item>
 	</style>
 
 	<style name="Theme.DeskreenPlayer.Fullscreen" parent="Theme.DeskreenPlayer">

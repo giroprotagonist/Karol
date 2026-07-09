@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.webkit.WebView
@@ -20,6 +21,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -41,13 +43,37 @@ class MainActivity : AppCompatActivity() {
 	private lateinit var autoBootSwitch: android.widget.Switch
 	private var bridge: YouTubeKioskBridge? = null
 	private var showStarted = false
-	private var signInMode = false
+	private var pendingShowAfterSession = false
+	private lateinit var reauthOverlay: View
 	private lateinit var backCallback: OnBackPressedCallback
 	private val statusHandler = Handler(Looper.getMainLooper())
 	private var statusRunnable: Runnable? = null
 
 	private val notificationPermissionLauncher =
 		registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+	private val importSessionLauncher =
+		registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+			if (uri == null) return@registerForActivityResult
+			try {
+				val raw =
+					contentResolver.openInputStream(uri)?.use { stream ->
+						stream.bufferedReader().readText()
+					} ?: return@registerForActivityResult
+				if (YouTubeSessionBackup.importJson(raw)) {
+					completeYouTubeSignIn()
+					if (pendingShowAfterSession) {
+						pendingShowAfterSession = false
+						startShow()
+					}
+					Toast.makeText(this, R.string.youtube_session_import_ok, Toast.LENGTH_LONG).show()
+				} else {
+					Toast.makeText(this, R.string.youtube_session_import_fail, Toast.LENGTH_LONG).show()
+				}
+			} catch (_: Exception) {
+				Toast.makeText(this, R.string.youtube_session_import_fail, Toast.LENGTH_LONG).show()
+			}
+		}
 
 	@SuppressLint("SetJavaScriptEnabled")
 	override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,6 +93,14 @@ class MainActivity : AppCompatActivity() {
 		signInYouTubeButton = findViewById(R.id.signInYouTubeButton)
 		qrCodeImage = findViewById(R.id.qrCodeImage)
 		autoBootSwitch = findViewById(R.id.autoBootSwitch)
+		reauthOverlay = findViewById(R.id.reauthOverlay)
+		findViewById<MaterialButton>(R.id.reauthButton).setOnClickListener {
+			beginYouTubeSignIn()
+		}
+		findViewById<MaterialButton>(R.id.reauthStopShowButton).setOnClickListener {
+			reauthOverlay.visibility = View.GONE
+			stopShow()
+		}
 
 		app.onRequestStartShow = { runOnUiThread { ensureShowStarted() } }
 
@@ -95,6 +129,14 @@ class MainActivity : AppCompatActivity() {
 		signInYouTubeButton.setOnClickListener {
 			beginYouTubeSignIn()
 		}
+		signInYouTubeButton.setOnLongClickListener {
+			importYouTubeSession()
+			true
+		}
+
+		findViewById<TextView>(R.id.signInTroubleLink)?.setOnClickListener {
+			importYouTubeSession()
+		}
 
 		updateYouTubeAccountUi()
 
@@ -121,6 +163,7 @@ class MainActivity : AppCompatActivity() {
 
 	private fun updateYouTubeAccountUi() {
 		val app = application as PlayerApp
+		YouTubeSessionHelper.syncVerifiedPreference(app.preferences)
 		val signedIn = YouTubeSessionHelper.isSignedIn()
 		val premium = YouTubeSessionHelper.isPremiumActive(app.preferences)
 		if (signedIn) {
@@ -134,7 +177,7 @@ class MainActivity : AppCompatActivity() {
 				)
 				signInYouTubeButton.visibility = View.GONE
 			}
-			signedIn || app.preferences.isYouTubeSessionVerified() -> {
+			signedIn -> {
 				youtubeAccountText.text = getString(R.string.youtube_signed_in_no_premium)
 				youtubeAccountText.setTextColor(
 					ContextCompat.getColor(this, R.color.deskreen_warning),
@@ -143,7 +186,12 @@ class MainActivity : AppCompatActivity() {
 				signInYouTubeButton.visibility = View.VISIBLE
 			}
 			else -> {
-				youtubeAccountText.text = getString(R.string.youtube_not_signed_in)
+				youtubeAccountText.text =
+					if (YouTubeSessionHelper.hasGoogleAuthCookies()) {
+						getString(R.string.youtube_google_only)
+					} else {
+						getString(R.string.youtube_not_signed_in)
+					}
 				youtubeAccountText.setTextColor(
 					ContextCompat.getColor(this, R.color.deskreen_warning),
 				)
@@ -169,10 +217,41 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	private fun beginYouTubeSignIn() {
-		signInMode = true
-		startPanel.visibility = View.GONE
-		webView.visibility = View.VISIBLE
-		ensureBridge().openYouTubeSignIn()
+		reauthOverlay.visibility = View.GONE
+		if (tryRestoreYouTubeSessionIfNeeded()) return
+		// Try device Google account sign-in before file import
+		YouTubeAccountSignIn.signIn(this) { ok ->
+			runOnUiThread {
+				if (ok) {
+					completeYouTubeSignIn()
+					Toast.makeText(this, R.string.youtube_sign_in_premium_ok, Toast.LENGTH_SHORT).show()
+				} else {
+					// Fall back to file import
+					importYouTubeSession()
+				}
+			}
+		}
+	}
+
+	private fun tryRestoreYouTubeSessionIfNeeded(): Boolean {
+		if (YouTubeSessionHelper.isSignedIn()) {
+			updateYouTubeAccountUi()
+			return true
+		}
+		YouTubeSessionBackup.tryRestoreOnStartup(this)
+		if (YouTubeSessionHelper.isSignedIn()) {
+			completeYouTubeSignIn()
+			return true
+		}
+		return false
+	}
+
+	private fun importYouTubeSession() {
+		try {
+			importSessionLauncher.launch(arrayOf("application/json", "*/*"))
+		} catch (_: Exception) {
+			Toast.makeText(this, R.string.youtube_session_import_fail, Toast.LENGTH_LONG).show()
+		}
 	}
 
 	private fun completeYouTubeSignIn() {
@@ -183,14 +262,22 @@ class MainActivity : AppCompatActivity() {
 		val bridge = bridge ?: return
 		YouTubeSessionHelper.markSignedIn(app.preferences)
 		YouTubeSessionHelper.flush()
-		YouTubeSessionBackup.saveToDevice(this)
+		try {
+			YouTubeSessionBackup.saveToDevice(this)
+		} catch (_: Exception) {
+			// MediaStore write may fail on some devices — non-fatal.
+		}
+		Log.i("MainActivity", "completeYouTubeSignIn: running premium verification")
 		bridge.verifyYouTubePremium { premium ->
 			runOnUiThread {
 				YouTubeSessionHelper.markPremiumVerified(app.preferences, premium)
-				signInMode = false
+				// Trigger playback — on mobile YouTube, autoplay is blocked
+				// and the video won't start without an explicit play command.
+				Handler(Looper.getMainLooper()).postDelayed({
+					bridge.softRecoverPlayback()
+					Log.i("MainActivity", "autoPlayTrigger: premium=$premium showStarted=$showStarted")
+				}, 500)
 				if (!showStarted) {
-					webView.visibility = View.GONE
-					startPanel.visibility = View.VISIBLE
 					updateYouTubeAccountUi()
 					val msg =
 						if (premium) {
@@ -202,15 +289,6 @@ class MainActivity : AppCompatActivity() {
 				}
 			}
 		}
-	}
-
-	private fun cancelYouTubeSignIn() {
-		signInMode = false
-		webView.stopLoading()
-		webView.visibility = View.GONE
-		startPanel.visibility = View.VISIBLE
-		updateYouTubeAccountUi()
-		Toast.makeText(this, R.string.sign_in_cancelled, Toast.LENGTH_SHORT).show()
 	}
 
 	private fun requestRuntimePermissionsIfNeeded() {
@@ -343,10 +421,6 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	private fun handleBack() {
-		if (signInMode) {
-			cancelYouTubeSignIn()
-			return
-		}
 		val activeBridge = bridge
 		if (activeBridge?.isInCustomView() == true) {
 			activeBridge.exitFullscreen()
@@ -378,6 +452,9 @@ class MainActivity : AppCompatActivity() {
 
 	override fun onPause() {
 		if (this::webView.isInitialized && showStarted) {
+			// Keep WebView media session alive so audio continues when the activity
+			// is backgrounded (e.g. user switches apps).  Without this the YouTube
+			// player in the WebView pauses audio.
 			webView.onResume()
 		} else if (this::webView.isInitialized) {
 			webView.onPause()

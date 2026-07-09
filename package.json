@@ -49,7 +49,8 @@
     "verify:s24-volume": "bash scripts/verify-s24-volume-proxy.sh",
     "install:android": "bash scripts/install-android-devices.sh",
     "player:save-youtube-session": "bash scripts/player-youtube-session-save.sh",
-    "player:restore-youtube-session": "bash scripts/player-youtube-session-restore.sh",
+		"player:restore-youtube-session": "bash scripts/player-youtube-session-restore.sh",
+		"player:refresh-youtube-session": "bash scripts/refresh-youtube-session.sh",
     "sync:dj-controller-player": "bash scripts/sync-dj-controller-to-player.sh",
     "build:android-player": "bash scripts/sync-dj-controller-to-player.sh && cd android-player && ./gradlew assembleDebug",
     "deploy": "bash scripts/deploy.sh"

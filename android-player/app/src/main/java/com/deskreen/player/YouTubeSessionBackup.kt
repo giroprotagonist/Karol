@@ -63,6 +63,10 @@ object YouTubeSessionBackup {
 			val cookies = root.optJSONArray("cookies") ?: return false
 			val manager = CookieManager.getInstance()
 			manager.setAcceptCookie(true)
+			// Pre-inject consent cookie so YouTube doesn't block with the dialog
+			manager.setCookie("https://www.youtube.com", "CONSENT=YES+; Domain=.youtube.com; Path=/")
+			manager.setCookie("https://youtube.com", "CONSENT=YES+; Domain=.youtube.com; Path=/")
+			manager.setCookie("https://m.youtube.com", "CONSENT=YES+; Domain=.youtube.com; Path=/")
 			var imported = 0
 			for (i in 0 until cookies.length()) {
 				val entry = cookies.getJSONObject(i)
@@ -70,10 +74,24 @@ object YouTubeSessionBackup {
 				val value = entry.optString("value")
 				if (url.isNotBlank() && value.isNotBlank()) {
 					manager.setCookie(url, value)
+					// Also set on m.youtube.com for mobile redirect
+					if (url.contains("www.youtube.com") || url.contains("youtube.com")) {
+						val mobileUrl = url.replace("www.youtube.com", "m.youtube.com")
+							.replace("https://youtube.com", "https://m.youtube.com")
+						if (mobileUrl != url) {
+							manager.setCookie(mobileUrl, value)
+						}
+					}
 					imported++
 				}
 			}
 			YouTubeSessionHelper.flush()
+			// #region agent log H4: cookie state after restore
+			val ytCookies = manager.getCookie("https://www.youtube.com").orEmpty()
+			val hasLoginInfo = ytCookies.contains("LOGIN_INFO=")
+			val hasSid = ytCookies.contains("SID=") || ytCookies.contains("SAPISID=")
+			Log.i(TAG, "cookiesAfterRestore: imported=$imported loginInfo=$hasLoginInfo sid=$hasSid")
+			// #endregion
 			imported > 0
 		} catch (e: Exception) {
 			Log.w(TAG, "import failed", e)
@@ -109,21 +127,14 @@ object YouTubeSessionBackup {
 		}
 	}
 
-	/** Restore from public backup if cookies are missing. */
+	/** Restore from public backup if cookies are missing.
+	 * Tries device backup (app-private copy pushed by install script),
+	 * then MediaStore, then raw filesystem path. */
 	fun tryRestoreOnStartup(context: Context): Boolean {
 		if (YouTubeSessionHelper.isSignedIn()) {
 			return true
 		}
-		val encoded =
-			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-				readMediaStoreBackup(context)
-			} else {
-				val file = legacyBackupFile()
-				if (!file.exists() || file.length() == 0L) {
-					return false
-				}
-				file.readText()
-			} ?: return false
+		val encoded = readAnyBackup(context) ?: return false
 
 		return try {
 			val ok = importJson(decode(encoded))
@@ -131,7 +142,7 @@ object YouTubeSessionBackup {
 				YouTubeSessionHelper.markSignedIn(
 					(context.applicationContext as PlayerApp).preferences,
 				)
-				Log.i(TAG, "restored YouTube session from $DOWNLOADS_SUBDIR/$BACKUP_NAME")
+				Log.i(TAG, "restored YouTube session from backup")
 				true
 			} else {
 				ok
@@ -140,6 +151,43 @@ object YouTubeSessionBackup {
 			Log.w(TAG, "restore failed", e)
 			false
 		}
+	}
+
+	/** Probe all backup locations. */
+	private fun readAnyBackup(context: Context): String? {
+		// 1. App-private backup file (pushed by scripts/adb)
+		val privateFile = File(context.filesDir, BACKUP_NAME)
+		if (privateFile.exists() && privateFile.length() > 0) {
+			Log.i(TAG, "found backup in app-private storage")
+			return privateFile.readText()
+		}
+		// 2. App external files dir (adb-push friendly, always readable)
+		val extDir = context.getExternalFilesDir(null)
+		if (extDir != null) {
+			val extFile = File(extDir, BACKUP_NAME)
+			if (extFile.exists() && extFile.length() > 0) {
+				Log.i(TAG, "found backup in app external files")
+				return extFile.readText()
+			}
+		}
+		// 3. MediaStore
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+			readMediaStoreBackup(context)?.let {
+				Log.i(TAG, "found backup via MediaStore")
+				return it
+			}
+		}
+		// 4. Raw filesystem path (legacy, pre-Android 10 only)
+		val legacyFile = legacyBackupFile()
+		if (legacyFile.exists() && legacyFile.length() > 0) {
+			try {
+				Log.i(TAG, "found backup at legacy path")
+				return legacyFile.readText()
+			} catch (_: Exception) {
+				// Scoped storage may block raw reads on Android 10+
+			}
+		}
+		return null
 	}
 
 	fun legacyBackupFile(): File {
@@ -158,14 +206,29 @@ object YouTubeSessionBackup {
 				put(MediaStore.Downloads.RELATIVE_PATH, DOWNLOADS_SUBDIR)
 				put(MediaStore.Downloads.IS_PENDING, 1)
 			}
-		val uri =
-			resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-				?: throw IOException("MediaStore insert failed")
-		resolver.openOutputStream(uri)?.use { it.write(encoded.toByteArray(Charsets.UTF_8)) }
-			?: throw IOException("MediaStore openOutputStream failed")
-		values.clear()
-		values.put(MediaStore.Downloads.IS_PENDING, 0)
-		resolver.update(uri, values, null, null)
+		var uri: Uri? = null
+		try {
+			uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+		} catch (_: Exception) {
+			// Insert may fail if an adb-pushed file occupies the same name
+			// and MediaStore delete didn't clean it up. Fall through to raw write.
+		}
+		try {
+			if (uri != null) {
+				resolver.openOutputStream(uri)?.use { it.write(encoded.toByteArray(Charsets.UTF_8)) }
+				values.clear()
+				values.put(MediaStore.Downloads.IS_PENDING, 0)
+				resolver.update(uri, values, null, null)
+			}
+		} catch (_: Exception) {
+			// MediaStore write failed — write raw so restore can still work.
+		}
+		if (uri == null) {
+			// Fallback: write to raw filesystem path (adb-pushed restore reads this).
+			val file = legacyBackupFile()
+			file.parentFile?.mkdirs()
+			file.writeText(encoded)
+		}
 	}
 
 	private fun readMediaStoreBackup(context: Context): String? {

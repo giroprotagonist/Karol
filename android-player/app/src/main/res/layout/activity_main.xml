@@ -2,13 +2,13 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
 	android:id="@+id/rootLayout"
 	android:layout_width="match_parent"
-	android:layout_height="match_parent"
-	android:background="@color/black">
+	android:layout_height="match_parent">
 
 	<WebView
 		android:id="@+id/webView"
 		android:layout_width="match_parent"
 		android:layout_height="match_parent"
+		android:background="@null"
 		android:visibility="gone" />
 
 	<ScrollView
@@ -117,8 +117,18 @@
 				style="@style/Widget.MaterialComponents.Button.OutlinedButton"
 				android:layout_width="wrap_content"
 				android:layout_height="wrap_content"
-				android:layout_marginBottom="12dp"
+				android:layout_marginBottom="4dp"
 				android:text="@string/sign_in_youtube" />
+
+			<TextView
+				android:id="@+id/signInTroubleLink"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_marginBottom="12dp"
+				android:padding="8dp"
+				android:text="@string/sign_in_trouble_import"
+				android:textColor="@color/deskreen_text_secondary"
+				android:textSize="12sp" />
 
 			<com.google.android.material.button.MaterialButton
 				android:id="@+id/copyUrlButton"
@@ -157,4 +167,38 @@
 			</LinearLayout>
 		</LinearLayout>
 	</ScrollView>
+
+	<LinearLayout
+		android:id="@+id/reauthOverlay"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"
+		android:background="#CC000000"
+		android:gravity="center"
+		android:orientation="vertical"
+		android:padding="32dp"
+		android:visibility="gone">
+
+		<TextView
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:gravity="center"
+			android:text="@string/reauth_overlay_message"
+			android:textColor="@color/deskreen_text_primary"
+			android:textSize="18sp" />
+
+		<com.google.android.material.button.MaterialButton
+			android:id="@+id/reauthButton"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="24dp"
+			android:text="@string/reauth_button" />
+
+		<com.google.android.material.button.MaterialButton
+			android:id="@+id/reauthStopShowButton"
+			style="@style/Widget.MaterialComponents.Button.TextButton"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="8dp"
+			android:text="@string/stop_show" />
+	</LinearLayout>
 </FrameLayout>

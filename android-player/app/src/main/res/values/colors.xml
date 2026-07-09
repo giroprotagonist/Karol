@@ -1,5 +1,6 @@
 <resources>
 	<color name="black">#000000</color>
+	<color name="karol_icon_bg">#1A0B2E</color>
 	<color name="deskreen_bg">#07070D</color>
 	<color name="deskreen_accent">#238636</color>
 	<color name="deskreen_text_primary">#F0F3F6</color>

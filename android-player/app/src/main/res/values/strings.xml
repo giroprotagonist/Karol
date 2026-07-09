@@ -1,7 +1,7 @@
 <resources>
-	<string name="app_name">Deskreen Player</string>
+	<string name="app_name">Karol Player</string>
 	<string name="start_show">Start show</string>
-	<string name="player_notification_title">Deskreen Player</string>
+	<string name="player_notification_title">Karol Player</string>
 	<string name="player_notification_text">Karaoke player running on this tablet</string>
 	<string name="show_paused_toast">Show paused — tap Start Show to resume</string>
 	<string name="auto_start_boot">Auto-start show on boot</string>
@@ -14,12 +14,35 @@
 	<string name="copied_url">Controller URL copied</string>
 	<string name="sign_in_youtube">Sign in to YouTube</string>
 	<string name="sign_in_youtube_retry">Re-check YouTube Premium</string>
+	<string name="sign_in_trouble_import">Having trouble? Import session file</string>
+	<string name="sign_in_webview_hint">Sign in with your Google account in the browser on this tablet.</string>
+	<string name="sign_in_chrome_hint">Sign in with Google in Chrome, then close the browser tab to return here.</string>
+	<string name="sign_in_opening_browser">Opening %1$s for Google sign-in…</string>
+	<string name="sign_in_no_browser">Could not open a browser for sign-in. Install or enable Chrome, then try again.</string>
+	<string name="sign_in_linking_player">Linking YouTube session to the player…</string>
+	<string name="sign_in_blocked_title">Google blocked in-app sign-in</string>
+	<string name="sign_in_blocked_message">Google blocked sign-in inside the player browser. Tap below to use your tablet Google account instead.</string>
+	<string name="sign_in_open_chrome">Use Google account</string>
+	<string name="sign_in_binding_youtube">Linking YouTube account…</string>
 	<string name="youtube_premium_active">YouTube Premium active — ad-free</string>
 	<string name="youtube_signed_in_no_premium">Signed in — Premium not detected (ads may show)</string>
 	<string name="youtube_signed_in">YouTube: signed in (Premium = no ads)</string>
 	<string name="youtube_not_signed_in">YouTube: not signed in — ads may appear</string>
+	<string name="youtube_google_only">Google signed in — tap Sign in to finish YouTube link</string>
 	<string name="youtube_sign_in_premium_ok">YouTube Premium confirmed on this tablet</string>
 	<string name="youtube_sign_in_no_premium_warn">Signed in, but Premium was not detected. Use the Premium account or tap Re-check.</string>
 	<string name="youtube_sign_in_complete">YouTube sign-in saved on this tablet</string>
 	<string name="sign_in_cancelled">Sign-in cancelled</string>
+	<string name="sign_in_failed_title">Could not sign in</string>
+	<string name="sign_in_failed_webview">Complete sign-in in the browser on this tablet. If Google blocks sign-in, try again or import a session file.</string>
+	<string name="import_youtube_session">Import YouTube session file</string>
+	<string name="youtube_session_import_ok">YouTube session imported</string>
+	<string name="youtube_session_import_fail">Could not import session — use a Karol session backup JSON</string>
+	<string name="stop_show">Stop show</string>
+	<string name="reauth_overlay_message">YouTube session expired. Re-authenticate to continue ad-free playback.</string>
+	<string name="reauth_button">Re-authenticate YouTube</string>
+	<string name="show_gate_title">YouTube not signed in</string>
+	<string name="show_gate_message">Sign in on this tablet for Premium ad-free playback, or start with ads.</string>
+	<string name="show_gate_sign_in">Sign in on tablet</string>
+	<string name="show_gate_start_anyway">Start anyway (ads)</string>
 </resources>

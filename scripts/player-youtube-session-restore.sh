@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Restore YouTube WebView session to the tablet player (debug builds only).
+# Restore YouTube WebView session to the tablet player (release builds use adb path).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,9 +43,9 @@ if [[ -z "$S8_SERIAL" ]]; then
 	S8_SERIAL=$("$ADB" devices -l | grep 'gts8wifi' | grep -v '(2)' | head -1 | awk '{print $1}')
 fi
 if [[ -n "$S8_SERIAL" ]]; then
-	"$ADB" -s "$S8_SERIAL" shell mkdir -p /sdcard/Download/Deskreen
-	"$ADB" -s "$S8_SERIAL" push "$DEVICE_BACKUP" /sdcard/Download/Deskreen/deskreen-youtube-session.json
-	echo "Pushed device backup — restart Deskreen Player to auto-restore."
+	"$ADB" -s "$S8_SERIAL" push "$DEVICE_BACKUP" /data/local/tmp/deskreen-youtube-session.json
+	"$ADB" -s "$S8_SERIAL" shell run-as com.deskreen.player cp /data/local/tmp/deskreen-youtube-session.json /data/data/com.deskreen.player/files/deskreen-youtube-session.json
+	echo "Pushed device backup — restart Karol Player to auto-restore."
 	exit 0
 fi
 

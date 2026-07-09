@@ -2,6 +2,7 @@ package com.deskreen.player
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -54,7 +55,9 @@ class YouTubeKioskBridge(
 	private var lastKnownUrl: String = ""
 	private var lastVolumeLevel: Double = 1.0
 	private var navigationWatchdog: Runnable? = null
+	private var navigationWatchdogRetries = 0
 	private var navigationRetryUrl: String = ""
+	private var premiumCheckDone = false
 	private var lastKnownPlaybackTime: Double = 0.0
 	private var errorRetryCount = 0
 	var allowHomeLanding = false
@@ -151,7 +154,7 @@ class YouTubeKioskBridge(
 		userNavigatedAway = false
 		mainHandler.post {
 			hideCustomView()
-			webView.loadUrl("https://www.youtube.com")
+			webView.loadUrl("https://www.youtube.com/")
 		}
 	}
 
@@ -160,14 +163,13 @@ class YouTubeKioskBridge(
 		userNavigatedAway = false
 		allowHomeLanding = false
 		activeProgrammaticGeneration = 0
-		evalJs("window.__deskreenYtReleaseMonoPipeline && window.__deskreenYtReleaseMonoPipeline()")
 		pause()
 		exitFullscreen()
 	}
 
 	@SuppressLint("SetJavaScriptEnabled")
 	private fun configureWebView() {
-		webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+		webView.setBackgroundColor(Color.TRANSPARENT)
 		webView.settings.apply {
 			javaScriptEnabled = true
 			domStorageEnabled = true
@@ -177,22 +179,8 @@ class YouTubeKioskBridge(
 			useWideViewPort = true
 			cacheMode = WebSettings.LOAD_DEFAULT
 			mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-			// Desktop Chrome UA (no custom app token): theater layout + Premium cookies still apply.
 			userAgentString = buildTrustedUserAgent()
 		}
-		// #region agent log
-		Log.i(
-			"DeskreenDbg",
-			org.json.JSONObject()
-				.put("sessionId", "25b906")
-				.put("hypothesisId", "H1")
-				.put("location", "YouTubeKioskBridge.configureWebView")
-				.put("message", "user-agent")
-				.put("data", org.json.JSONObject().put("ua", webView.settings.userAgentString.take(120)))
-				.put("timestamp", System.currentTimeMillis())
-				.toString(),
-		)
-		// #endregion
 		webView.addJavascriptInterface(JsBridge(), "DeskreenPlayer")
 		webView.webViewClient =
 			object : WebViewClient() {
@@ -204,9 +192,22 @@ class YouTubeKioskBridge(
 					if (isAllowedUrl(url)) {
 						return false
 					}
-					Log.w(TAG, "blocked navigation: $url")
-					if (lastVideoId.isNotBlank()) {
-						loadVideo(lastVideoId)
+					// YouTube's player JS fires programmatic navigations during normal
+					// playback (autoplay suggestions, end-screen links, internal state
+					// transitions).  Blocking every non-watch URL and force-reloading
+					// the current video causes random restarts.
+					// Only recover if the current page is actually lost — i.e. a main-
+					// frame navigation away from /watch has already completed.
+					val isMainFrame = request?.isForMainFrame ?: false
+					val currentUrl = webView.url ?: ""
+				if (!currentUrl.contains("/watch") || isMainFrame) {
+						Log.w(TAG, "recovering from blocked navigation: $url (mainFrame=$isMainFrame)")
+						if (lastVideoId.isNotBlank() && currentUrl != "about:blank") {
+							userNavigatedAway = false
+							mainHandler.post { loadVideo(lastVideoId) }
+						}
+					} else {
+						Log.d(TAG, "ignoring blocked sub-navigation on video page: $url")
 					}
 					return true
 				}
@@ -218,13 +219,13 @@ class YouTubeKioskBridge(
 				) {
 					super.onReceivedError(view, request, error)
 					val url = request?.url?.toString() ?: return
-					if (!url.contains("/watch") || !request.isForMainFrame) {
+				if (!url.contains("/watch") || !request.isForMainFrame) {
 						return
 					}
 					if (lastVideoId.isBlank()) {
 						return
 					}
-					Log.w(TAG, "watch page error, retrying: $url")
+					Log.w(TAG, "video page error, retrying: $url")
 					mainHandler.postDelayed({
 						if (lastVideoId.isBlank()) {
 							return@postDelayed
@@ -255,7 +256,12 @@ class YouTubeKioskBridge(
 						mainHandler.postDelayed({ activeProgrammaticGeneration = 0 }, 800)
 						return
 					}
-					if (!isAllowedUrl(normalized)) {
+					// YouTube is a SPA — pushState fires for internal routing that may
+					// land on non-allowed URLs (channels, home, etc.) without the user
+					// actually navigating away from the watch page.  Only mark
+					// userNavigatedAway when the current URL genuinely leaves /watch.
+					if (!normalized.contains("/watch") && !normalized.contains("/embed/") &&
+						webView.url?.contains("/watch") != true) {
 						userNavigatedAway = true
 					}
 				}
@@ -265,7 +271,7 @@ class YouTubeKioskBridge(
 					url: String?,
 				) {
 					super.onPageCommitVisible(view, url)
-					if (url?.contains("/watch") == true) {
+					if (url?.contains("/watch") == true || url?.contains("/embed/") == true) {
 						injectLayoutScriptIfWatch()
 					}
 				}
@@ -279,12 +285,46 @@ class YouTubeKioskBridge(
 					url?.let {
 						noteCurrentUrl(it)
 						notifyInterstitialIfNeeded(it)
+						// Auto-dismiss YouTube consent dialog
+						if (it.contains("consent.youtube")) {
+							webView.evaluateJavascript(
+								"(function(){" +
+								"var btns=document.querySelectorAll('button');" +
+								"for(var i=0;i<btns.length;i++){" +
+								"var t=(btns[i].textContent||'').trim().toLowerCase();" +
+								"var a=(btns[i].getAttribute('aria-label')||'').toLowerCase();" +
+								"if(t.includes('accept')||t.includes('agree')||t.includes('allow')||" +
+								"a.includes('accept')||a.includes('agree')){" +
+								"btns[i].click();break;" +
+								"}}" +
+								// Fallback: submit form
+								"if(!document.querySelector('button[clicked]')){" +
+								"var f=document.querySelector('form');if(f)f.submit();" +
+								"}})()",
+								null,
+							)
+							// Also try again after a short delay
+							mainHandler.postDelayed({
+								webView.evaluateJavascript(
+									"(function(){" +
+									"var btns=document.querySelectorAll('button');" +
+									"for(var i=0;i<btns.length;i++){" +
+									"var t=(btns[i].textContent||'').trim().toLowerCase();" +
+									"if(t.includes('accept')||t.includes('agree')){" +
+									"btns[i].click();return;" +
+									"}}})()",
+									null,
+								)
+							}, 1000)
+						}
 					}
 					if (
+						!premiumCheckDone &&
 						url?.contains("youtube.com") == true &&
 						!url.contains("accounts.google") &&
 						YouTubeSessionHelper.isSignedIn()
 					) {
+						premiumCheckDone = true
 						onYouTubeSignedInListener?.invoke()
 						verifyYouTubePremium { premium ->
 							val app = context.applicationContext as? PlayerApp
@@ -293,19 +333,11 @@ class YouTubeKioskBridge(
 							}
 						}
 					}
-					if (url?.contains("/watch") == true) {
+					if (url?.contains("/watch") == true || url?.contains("/embed/") == true) {
 						isNavigating = false
 						clearNavigationWatchdog()
 						allowHomeLanding = false
 						injectExpectedVideoId()
-						// #region agent log
-						dbgLog(
-							"H2",
-							"YouTubeKioskBridge.onPageFinished",
-							"watch-page-finished",
-							mapOf("url" to (url ?: ""), "lastVideoId" to lastVideoId),
-						)
-						// #endregion
 						scheduleLayoutRefresh()
 						applyVolumeAndPlay()
 					}
@@ -357,7 +389,7 @@ class YouTubeKioskBridge(
 			return true
 		}
 		if (url.contains("/embed/")) {
-			return false
+			return true
 		}
 		val uri =
 			try {
@@ -371,6 +403,7 @@ class YouTubeKioskBridge(
 			host.contains("accounts.google.com") ||
 			host.contains("google.com")
 		) {
+			// Allow consent/sign-in pages to load so the JS dismisser can click accept
 			return true
 		}
 		if (!host.contains("youtube.com") && !host.contains("youtu.be")) {
@@ -399,18 +432,6 @@ class YouTubeKioskBridge(
 		if (videoId.isBlank()) {
 			return
 		}
-		// #region agent log
-		dbgLog(
-			"H4",
-			"YouTubeKioskBridge.loadVideo",
-			"full-navigation",
-			mapOf(
-				"videoId" to videoId,
-				"lastVideoId" to lastVideoId,
-				"isNavigating" to isNavigating,
-			),
-		)
-		// #endregion
 		pendingVideoId = videoId
 		if (videoId != lastVideoId) {
 			lastKnownPlaybackTime = 0.0
@@ -426,11 +447,11 @@ class YouTubeKioskBridge(
 		mainHandler.post {
 			hideCustomView()
 			evalJs("window.__deskreenYtPause && window.__deskreenYtPause()")
-			val url = "https://www.youtube.com/watch?v=$videoId"
+			val url = "https://www.youtube.com/watch?v=${videoId}"
 			noteCurrentUrl(url)
 			navigationRetryUrl = url
 			scheduleNavigationWatchdog(url)
-			Log.i(TAG, "loadVideo full navigation (no autoplay): $videoId")
+			Log.i(TAG, "loadVideo full navigation: $videoId")
 			webView.loadUrl(url)
 			injectExpectedVideoId()
 		}
@@ -440,6 +461,14 @@ class YouTubeKioskBridge(
 		navigationWatchdog?.let { mainHandler.removeCallbacks(it) }
 		val watchdog =
 			Runnable {
+				navigationWatchdogRetries++
+				if (navigationWatchdogRetries > MAX_NAVIGATION_WATCHDOG_RETRIES) {
+					Log.e(TAG, "navigation watchdog: exceeded ${MAX_NAVIGATION_WATCHDOG_RETRIES} retries, giving up")
+					isNavigating = false
+					clearNavigationWatchdog()
+					navigationWatchdogRetries = 0
+					return@Runnable
+				}
 				if (!isNavigating) {
 					return@Runnable
 				}
@@ -459,7 +488,7 @@ class YouTubeKioskBridge(
 							clearNavigationWatchdog()
 							return@post
 						}
-						Log.w(TAG, "navigation watchdog: forcing reload $url")
+						Log.w(TAG, "navigation watchdog: forcing reload $url (retry ${navigationWatchdogRetries}/${MAX_NAVIGATION_WATCHDOG_RETRIES})")
 						isNavigating = false
 						webView.stopLoading()
 						webView.loadUrl(url)
@@ -479,12 +508,41 @@ class YouTubeKioskBridge(
 
 	private fun applyVolumeAndPlay() {
 		setVolume(lastVolumeLevel)
+		// Dispatch a simulated touch to satisfy WebView's user-gesture requirement,
+		// then trigger play and request fullscreen in close succession.
 		mainHandler.postDelayed({
+			val wv = webView
+			if (wv.width > 0 && wv.height > 0) {
+				val centerX = (wv.width / 2).toFloat()
+				val centerY = (wv.height / 2).toFloat()
+				val downTime = System.currentTimeMillis()
+				val down = android.view.MotionEvent.obtain(
+					downTime, downTime, android.view.MotionEvent.ACTION_DOWN, centerX, centerY, 0,
+				)
+				val up = android.view.MotionEvent.obtain(
+					downTime, downTime + 100, android.view.MotionEvent.ACTION_UP, centerX, centerY, 0,
+				)
+				wv.dispatchTouchEvent(down)
+				wv.dispatchTouchEvent(up)
+				down.recycle()
+				up.recycle()
+			}
 			evalJs(
 				"window.__deskreenYtReapplyVolume && window.__deskreenYtReapplyVolume();" +
 					"window.__deskreenYtEnsurePlaying && window.__deskreenYtEnsurePlaying()",
 			)
 		}, 200)
+		// Request fullscreen shortly after user gesture. YouTube native fullscreen
+		// triggers onShowCustomView → video renders on a native SurfaceView,
+		// bypassing WebView compositing entirely for edge-to-edge video.
+		mainHandler.postDelayed({
+			evalJs(
+				"(function(){" +
+				"var v=document.querySelector('video');" +
+				"if(v&&v.requestFullscreen){v.requestFullscreen().catch(function(){});}" +
+				"})()",
+			)
+		}, 500)
 	}
 
 	private fun noteCurrentUrl(url: String) {
@@ -537,15 +595,16 @@ class YouTubeKioskBridge(
 	}
 
 	override fun setVolume(level: Double) {
-		lastVolumeLevel = level.coerceIn(0.0, 1.0)
-		evalJs("window.__deskreenVolumeLevel=$lastVolumeLevel;window.__deskreenYtSetVolume && window.__deskreenYtSetVolume($lastVolumeLevel)")
+		val clamped = level.coerceIn(0.0, 1.0)
+		lastVolumeLevel = clamped
+		evalJs("window.__deskreenVolumeLevel = $clamped; window.__deskreenYtReapplyVolume && window.__deskreenYtReapplyVolume()")
 	}
 
 	override fun getSnapshot(): PlayerSnapshot? = null
 
 	fun readSnapshot(callback: (PlayerSnapshot?) -> Unit) {
 		evalJs(
-			"(function(){ var s = window.__deskreenYtReadSnapshot && window.__deskreenYtReadSnapshot(); return s ? JSON.stringify(s) : ''; })()",
+			"window.__deskreenYtReadSnapshot && window.__deskreenYtReadSnapshot()",
 		) { raw ->
 			if (raw.isNullOrBlank()) {
 				callback(null)
@@ -588,32 +647,47 @@ class YouTubeKioskBridge(
 
 	/** Resume playback without reloading the YouTube page (preserves position). */
 	fun softRecoverPlayback(seekTo: Double? = null) {
-		val target = seekTo?.takeIf { it > 0.25 } ?: lastKnownPlaybackTime
-		mainHandler.post {
-			hideCustomView()
-			if (target > 0.25) {
-				evalJs(
-					"window.__deskreenYtSoftRecover && window.__deskreenYtSoftRecover($target)",
-				)
-			} else {
-				evalJs("window.__deskreenYtSoftRecover && window.__deskreenYtSoftRecover()")
-			}
-			applyVolumeAndPlay()
+		val target = if (seekTo != null && seekTo > 0.25) {
+			"Math.min($seekTo, v.duration ? 0 - 0.5)"
+		} else "0"
+		if (seekTo != null && seekTo > 0) {
+			evalJs(
+				"window.__deskreenYtSoftRecover && window.__deskreenYtSoftRecover($target)",
+			)
+		} else {
+			evalJs("window.__deskreenYtSoftRecover && window.__deskreenYtSoftRecover()")
 		}
+		applyVolumeAndPlay()
 	}
 
 	fun verifyYouTubePremium(callback: (Boolean) -> Unit) {
+		Log.i(TAG, "verifyYouTubePremium: starting premium check (attempts up to $MAX_PREMIUM_CHECK_ATTEMPTS)")
+		tryCheckPremium(0, callback)
+	}
+
+	private fun tryCheckPremium(
+		attempt: Int,
+		callback: (Boolean) -> Unit,
+	) {
 		evalJs(YouTubeSessionHelper.PREMIUM_CHECK_JS) { raw ->
 			val result = raw?.trim()?.trim('"')?.lowercase()
-			callback(result == "true")
+			Log.i(TAG, "tryCheckPremium attempt=$attempt raw=$raw result=$result")
+			if (result == "true" || attempt >= MAX_PREMIUM_CHECK_ATTEMPTS) {
+				callback(result == "true")
+			} else {
+				mainHandler.postDelayed(
+					{ tryCheckPremium(attempt + 1, callback) },
+					PREMIUM_CHECK_RETRY_MS,
+				)
+			}
 		}
 	}
 
 	private fun buildTrustedUserAgent(): String {
-		// Desktop Chrome (no DeskreenPlayer suffix): YouTube serves ytd-watch-flexy + theater mode.
-		// Default Android WebView UA gets the mobile watch page (no flexy, playlist visible).
-		return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-			"(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+		// Android Chrome — YouTube trusts it (no bot detection), Premium detected.
+		// Transparent WebView + CSS fixes hardware video surface visibility.
+		return "Mozilla/5.0 (Linux; Android 14; SM-X700) AppleWebKit/537.36 " +
+			"(KHTML, like Gecko) Chrome/131.0.6778.135 Mobile Safari/537.36"
 	}
 
 	override fun getLastKnownPlaybackTime(): Double = lastKnownPlaybackTime
@@ -672,9 +746,6 @@ class YouTubeKioskBridge(
 	}
 
 	private fun refreshLayoutOnly() {
-		// #region agent log
-		dbgLog("H2", "YouTubeKioskBridge.refreshLayoutOnly", "apply-layout-only", emptyMap())
-		// #endregion
 		webView.evaluateJavascript("window.__deskreenVolumeLevel = $lastVolumeLevel;", null)
 		webView.evaluateJavascript(
 			"window.__deskreenYtReapplyVolume && window.__deskreenYtReapplyVolume();" +
@@ -685,9 +756,6 @@ class YouTubeKioskBridge(
 	}
 
 	private fun injectLayoutScript() {
-		// #region agent log
-		dbgLog("H2", "YouTubeKioskBridge.injectLayoutScript", "reinject-layout-script", emptyMap())
-		// #endregion
 		webView.evaluateJavascript("window.__deskreenYtPlayerMode = true;", null)
 		webView.evaluateJavascript("window.__deskreenVolumeLevel = $lastVolumeLevel;", null)
 		webView.evaluateJavascript(layoutScript, null)
@@ -768,24 +836,8 @@ class YouTubeKioskBridge(
 		private const val TAG = "YouTubeKioskBridge"
 		private const val POLL_MS = 500L
 		private const val NAVIGATION_TIMEOUT_MS = 32_000L
-
-		// #region agent log
-		private fun dbgLog(
-			hypothesisId: String,
-			location: String,
-			message: String,
-			data: Map<String, Any?>,
-		) {
-			val payload =
-				JSONObject()
-					.put("sessionId", "25b906")
-					.put("hypothesisId", hypothesisId)
-					.put("location", location)
-					.put("message", message)
-					.put("data", JSONObject(data))
-					.put("timestamp", System.currentTimeMillis())
-			Log.i("DeskreenDbg", payload.toString())
-		}
-		// #endregion
+		private const val MAX_PREMIUM_CHECK_ATTEMPTS = 4
+		private const val PREMIUM_CHECK_RETRY_MS = 1500L
+		private const val MAX_NAVIGATION_WATCHDOG_RETRIES = 3
 	}
 }

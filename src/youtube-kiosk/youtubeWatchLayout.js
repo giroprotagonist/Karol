@@ -9,6 +9,38 @@
 	}
 	window.__deskreenYtLayout = true;
 
+	// Auto-dismiss YouTube consent dialog (blocks playback until accepted)
+	(function autoDismissConsent() {
+		if (!location.hostname.includes('consent.youtube')) return;
+		function acceptConsent() {
+			// Try various accept button selectors
+			var btns = document.querySelectorAll(
+				'button, input[type="submit"], form input[type="submit"]'
+			);
+			for (var i = 0; i < btns.length; i++) {
+				var b = btns[i];
+				var label = (b.textContent || '').trim().toLowerCase();
+				var aria = (b.getAttribute('aria-label') || '').toLowerCase();
+				if (label.includes('accept') || label.includes('agree') ||
+					label.includes('i agree') || label.includes('allow') ||
+					aria.includes('accept') || aria.includes('agree')) {
+					b.click();
+					return true;
+				}
+			}
+			// Fallback: submit the form
+			var form = document.querySelector('form');
+			if (form) { form.submit(); return true; }
+			return false;
+		}
+		// Try immediately, then retry
+		setTimeout(function() {
+			if (!acceptConsent()) {
+				setTimeout(acceptConsent, 1000);
+			}
+		}, 500);
+	})();
+
 	function isPlayerMode() {
 		return (
 			window.__deskreenYtPlayerMode === true ||
@@ -106,7 +138,8 @@
 			: '';
 		var css =
 			':root{--deskreen-vh:100vh}' +
-			'html,body,ytd-app{margin:0!important;padding:0!important;background:#000!important;overflow:hidden!important}' +
+			'html,body,ytd-app{margin:0!important;padding:0!important;overflow:hidden!important;background:transparent!important}' +
+			'#movie_player,.html5-video-player{background:transparent!important}' +
 			'#movie_player,.html5-video-player{width:100%!important;height:' +
 			vh +
 			'!important;max-height:' +
@@ -612,40 +645,38 @@
 		if (!v) {
 			return false;
 		}
-		// #region agent log
-		dbgLog('H3', 'ensurePlaying', 'enter', {
-			paused: v.paused,
-			ended: v.ended,
-			currentTime: v.currentTime,
-			videoId: getUrlVideoId(),
-		});
-		// #endregion
-		v.muted = false;
+		if (!v.paused && !v.ended) {
+			return true;
+		}
+		// Muted autoplay is always allowed by WebView autoplay policy.
+		// Play muted first, then unmute after the promise resolves.
+		var wasMuted = v.muted;
+		v.muted = true;
 		if (isPlayerMode()) {
 			if (!(monoPipeline && monoPipeline.video === v)) {
 				attachMonoPipeline(v);
 			}
-			window.__deskreenYtReapplyVolume();
-			resumeMonoAudioContext();
 		}
-		if (!v.paused && !v.ended) {
-			// #region agent log
-			dbgLog('H3', 'ensurePlaying', 'skip-play-already-playing', {
-				currentTime: v.currentTime,
-			});
-			// #endregion
-			return true;
-		}
-		// #region agent log
-		dbgLog('H3', 'ensurePlaying', 'calling-play', {
-			currentTime: v.currentTime,
-			readyState: v.readyState,
-			hasPipeline: Boolean(monoPipeline && monoPipeline.video === v),
-		});
-		// #endregion
+		// Write play attempt time to a global for debugging
+		window.__deskreenYtLastPlayAttempt = Date.now();
 		var p = v.play();
-		if (p && typeof p.catch === 'function') {
-			p.catch(function () {});
+		if (p && typeof p.then === 'function') {
+			p.then(function() {
+				window.__deskreenYtPlayResolved = Date.now();
+				// Playback started — restore volume if in player mode
+				if (isPlayerMode()) {
+					v.muted = false;
+					window.__deskreenYtReapplyVolume();
+					resumeMonoAudioContext();
+				} else {
+					v.muted = wasMuted;
+				}
+			}).catch(function(e) {
+				window.__deskreenYtPlayRejected = Date.now();
+				window.__deskreenYtPlayError = String(e);
+				dbgLog('H3','ensurePlaying','play-rejected-muted',{error:String(e),videoId:getUrlVideoId()});
+				v.muted = wasMuted;
+			});
 		}
 		return true;
 	};
@@ -868,10 +899,9 @@
 			return;
 		}
 		window.__deskreenYtAdGuard = true;
-		setInterval(function () {
-			if (!location.pathname.includes('/watch')) {
-				return;
-			}
+
+		function trySkipAd() {
+			// 1. Click skip button (after 5s for skippable ads)
 			var skip =
 				document.querySelector('.ytp-ad-skip-button') ||
 				document.querySelector('.ytp-ad-skip-button-modern') ||
@@ -879,21 +909,65 @@
 				document.querySelector('.videoAdUiSkipButton');
 			if (skip) {
 				skip.click();
+				return true;
 			}
+
+			// 2. For non-skippable ads: seek video to its end
+		var v = document.querySelector('video');
+		var container = v && v.closest ? v.closest('.html5-video-player') : null;
+		if (container && container.classList.contains('ad-showing')) {
+			if (v.duration && isFinite(v.duration)) {
+				v.currentTime = v.duration - 0.01;
+			} else {
+				// Ad present but video not loaded — force a large seek past ad
+				v.currentTime = 120;
+			}
+			return true;
+		}
+
+			// 3. Close overlay ads
 			var close =
 				document.querySelector('.ytp-ad-overlay-close-button') ||
 				document.querySelector('.ytp-ad-overlay-close-container .ytp-button');
 			if (close) {
 				close.click();
+				return true;
 			}
+			return false;
+		}
+
+		// Fast poll for ad detection and skipping
+		setInterval(function () {
+			if (!location.pathname.includes('/watch')) {
+				return;
+			}
+			trySkipAd();
+
+			// Hide any ad visual elements
 			try {
-				document.querySelectorAll('.ytp-ad-module, .video-ads').forEach(function (el) {
+				document.querySelectorAll(
+					'.ytp-ad-module, .video-ads, .ytp-ad-player-overlay, ' +
+					'.ytp-ad-image, .ytp-ad-text, .ytp-ad-persistent-rollover, ' +
+					'.ytp-ad-player-overlay-layout'
+				).forEach(function (el) {
 					el.style.setProperty('display', 'none', 'important');
 				});
 			} catch (e) {
 				/* ignore */
 			}
-		}, 400);
+		}, 250);
+
+		// Also use a MutationObserver for instant detection
+		var adObserver = new MutationObserver(function () {
+			if (!location.pathname.includes('/watch')) return;
+			trySkipAd();
+		});
+		if (document.body) {
+			adObserver.observe(document.body, {
+				childList: true,
+				subtree: true,
+			});
+		}
 	}
 
 	var endedVideo = null;

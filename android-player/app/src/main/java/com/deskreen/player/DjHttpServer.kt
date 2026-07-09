@@ -64,24 +64,6 @@ class DjHttpServer(
 		if (queueTime <= 0.0 || kotlin.math.abs(snapshot.currentTime - queueTime) <= 2.5) {
 			return snapshot
 		}
-		// #region agent log
-		Log.i(
-			"DeskreenDbg",
-			JSONObject()
-				.put("sessionId", "25b906")
-				.put("hypothesisId", "H11")
-				.put("location", "DjHttpServer.reconcileSnapshotProgress")
-				.put("message", "reject-stale-snap-after-seek")
-				.put(
-					"data",
-					JSONObject()
-						.put("snapTime", snapshot.currentTime)
-						.put("queueTime", queueTime),
-				)
-				.put("timestamp", System.currentTimeMillis())
-				.toString(),
-		)
-		// #endregion
 		return snapshot.copy(currentTime = queueTime)
 	}
 
@@ -115,25 +97,6 @@ class DjHttpServer(
 		queueEngine.setPlaybackProgress(resolvedTime, duration)
 		resetPlaybackClock(queueEngine.getCurrentVideoId().orEmpty(), resolvedTime)
 		seekSettleUntilMs = System.currentTimeMillis() + 4000
-		// #region agent log
-		Log.i(
-			"DeskreenDbg",
-			JSONObject()
-				.put("sessionId", "25b906")
-				.put("hypothesisId", "H11")
-				.put("location", "DjHttpServer.applySeek")
-				.put("message", "seek-applied")
-				.put(
-					"data",
-					JSONObject()
-						.put("requested", seconds)
-						.put("resolved", resolvedTime)
-						.put("duration", duration),
-				)
-				.put("timestamp", System.currentTimeMillis())
-				.toString(),
-		)
-		// #endregion
 		val snap = latestSnapshot
 		if (snap != null) {
 			val updated =
@@ -154,25 +117,6 @@ class DjHttpServer(
 				snapshot.videoId.isNotBlank() &&
 				snapshot.videoId != activeId
 		) {
-			// #region agent log
-			Log.i(
-				"DeskreenDbg",
-				JSONObject()
-					.put("sessionId", "25b906")
-					.put("hypothesisId", "H9")
-					.put("location", "DjHttpServer.notePlaybackSample")
-					.put("message", "ignore-stale-snapshot")
-					.put(
-						"data",
-						JSONObject()
-							.put("snapVideoId", snapshot.videoId)
-							.put("activeVideoId", activeId)
-							.put("snapTime", snapshot.currentTime),
-					)
-					.put("timestamp", System.currentTimeMillis())
-					.toString(),
-			)
-			// #endregion
 			return
 		}
 		val videoId = snapshot.videoId
@@ -653,27 +597,6 @@ class DjHttpServer(
 					post("/api/youtube-dj/transport/seek") {
 						val body = JSONObject(call.receiveText())
 						val seconds = body.optDouble("seconds", 0.0)
-						// #region agent log
-						Log.i(
-							"DeskreenDbg",
-							JSONObject()
-								.put("sessionId", "25b906")
-								.put("hypothesisId", "H11")
-								.put("location", "DjHttpServer.transport/seek")
-								.put("message", "seek-request")
-								.put(
-									"data",
-									JSONObject()
-										.put("seconds", seconds)
-										.put(
-											"client",
-											call.request.headers["X-Deskreen-Client"] ?: "unknown",
-										),
-								)
-								.put("timestamp", System.currentTimeMillis())
-								.toString(),
-						)
-						// #endregion
 						youtubeBridge.seek(seconds)
 						applySeek(seconds)
 						call.respondJson(
@@ -884,28 +807,6 @@ class DjHttpServer(
 				snap?.state?.takeIf { it == 1 || it == 2 } ?: 1
 			}
 		val currentTime = resolveCurrentTimeForApi(state, duration)
-		// #region agent log
-		val snapTime = latestSnapshot?.currentTime ?: 0.0
-		if (state == 1 && currentTime > snapTime + 1.0) {
-			Log.i(
-				"DeskreenDbg",
-				JSONObject()
-					.put("sessionId", "25b906")
-					.put("hypothesisId", "H8")
-					.put("location", "DjHttpServer.nowPlayingJson")
-					.put("message", "clock-extrapolate")
-					.put(
-						"data",
-						JSONObject()
-							.put("snapTime", snapTime)
-							.put("resolvedTime", currentTime)
-							.put("videoId", videoId),
-					)
-					.put("timestamp", System.currentTimeMillis())
-					.toString(),
-			)
-		}
-		// #endregion
 		return JSONObject()
 			.put("title", title)
 			.put("videoId", videoId)
