@@ -1,6 +1,6 @@
 /**
  * Shared YouTube watch-page kiosk layout (full watch URLs — never /embed/).
- * Used by Deskreen Mac player and android-player WebView.
+ * Used by Karol Mac player and android-player WebView.
  */
 (function () {
 	if (window.__deskreenYtLayout) {
@@ -44,7 +44,7 @@
 	function isPlayerMode() {
 		return (
 			window.__deskreenYtPlayerMode === true ||
-			(navigator.userAgent || '').indexOf('DeskreenPlayer') !== -1
+			(navigator.userAgent || '').indexOf('KarolPlayer') !== -1
 		);
 	}
 
@@ -101,7 +101,7 @@
 	}
 
 	function syncViewportHeight() {
-		document.documentElement.style.setProperty('--deskreen-vh', viewportHeightPx());
+		document.documentElement.style.setProperty('--karol-vh', viewportHeightPx());
 	}
 
 	function ensureViewportMeta() {
@@ -122,8 +122,8 @@
 
 	function injectKioskCss() {
 		syncViewportHeight();
-		var existing = document.getElementById('deskreen-yt-kiosk-css');
-		var vh = 'var(--deskreen-vh, 100vh)';
+		var existing = document.getElementById('karol-yt-kiosk-css');
+		var vh = 'var(--karol-vh, 100vh)';
 		var playerShell = isPlayerMode()
 			? 'ytd-watch-flexy,#columns,#primary,#player,#player-container-id,' +
 				'#player-container,#full-bleed-container.ytd-watch-flexy,ytd-player,' +
@@ -137,7 +137,7 @@
 				'margin-top:0!important;padding-top:0!important}'
 			: '';
 		var css =
-			':root{--deskreen-vh:100vh}' +
+			':root{--karol-vh:100vh}' +
 			'html,body,ytd-app{margin:0!important;padding:0!important;overflow:hidden!important;background:transparent!important}' +
 			'#movie_player,.html5-video-player{background:transparent!important}' +
 			'#movie_player,.html5-video-player{width:100%!important;height:' +
@@ -160,7 +160,7 @@
 			return;
 		}
 		var style = document.createElement('style');
-		style.id = 'deskreen-yt-kiosk-css';
+		style.id = 'karol-yt-kiosk-css';
 		style.textContent = css;
 		document.head.appendChild(style);
 	}
@@ -181,7 +181,7 @@
 
 	function readStoredVolume() {
 		try {
-			var stored = sessionStorage.getItem('deskreenVolume');
+			var stored = sessionStorage.getItem('karolVolume');
 			if (stored !== null && stored !== '') {
 				var parsed = parseFloat(stored);
 				if (Number.isFinite(parsed)) {
@@ -198,7 +198,7 @@
 		var clamped = Math.max(0, Math.min(1, level));
 		window.__deskreenVolumeLevel = clamped;
 		try {
-			sessionStorage.setItem('deskreenVolume', String(clamped));
+			sessionStorage.setItem('karolVolume', String(clamped));
 		} catch (e) {
 			/* ignore */
 		}
@@ -211,28 +211,7 @@
 			? window.__deskreenVolumeLevel
 			: storedVol !== null
 				? storedVol
-				: 1;
-
-	// #region agent log
-	function dbgLog(hypothesisId, location, message, data) {
-		try {
-			var payload = JSON.stringify({
-				sessionId: '25b906',
-				hypothesisId: hypothesisId,
-				location: location,
-				message: message,
-				data: data || {},
-				timestamp: Date.now(),
-			});
-			if (window.DeskreenPlayer && DeskreenPlayer.log) {
-				DeskreenPlayer.log('DBG|' + payload);
-			}
-		} catch (e) {
-			/* ignore */
-		}
-	}
-	// #endregion
-
+				: 1;	
 	function getDesiredOutputLevel() {
 		if (typeof window.__deskreenVolumeLevel === 'number') {
 			return Math.max(0, Math.min(1, window.__deskreenVolumeLevel));
@@ -299,15 +278,7 @@
 		if (!isPlayerMode() || !video) {
 			return false;
 		}
-		if (monoPipeline && monoPipeline.video === video) {
-			// #region agent log
-			dbgLog('H1', 'attachMonoPipeline', 'reuse-existing-pipeline', {
-				paused: video.paused,
-				currentTime: video.currentTime,
-				readyState: video.readyState,
-			});
-			// #endregion
-			applyMonoOutputLevel(getDesiredOutputLevel());
+		if (monoPipeline && monoPipeline.video === video) {			applyMonoOutputLevel(getDesiredOutputLevel());
 			resumeMonoAudioContext();
 			return true;
 		}
@@ -318,17 +289,7 @@
 			video.currentTime > 0.05;
 		if (needsMuteGate) {
 			video.muted = true;
-		}
-		// #region agent log
-		dbgLog('H1', 'attachMonoPipeline', 'wire-new-pipeline', {
-			paused: video.paused,
-			currentTime: video.currentTime,
-			readyState: video.readyState,
-			hadPreviousPipeline: Boolean(monoPipeline),
-			muteGate: needsMuteGate,
-		});
-		// #endregion
-		window.__deskreenYtReleaseMonoPipeline();
+		}		window.__deskreenYtReleaseMonoPipeline();
 		var AudioContextCtor = getAudioContextCtor();
 		if (!AudioContextCtor) {
 			if (needsMuteGate) {
@@ -412,17 +373,7 @@
 		if (btn) {
 			btn.click();
 			window.__deskreenTheaterDone = true;
-		}
-		// #region agent log
-		dbgLog('H3', '__deskreenYtEnableTheaterOnce', 'theater-attempt', {
-			hasFlexy: Boolean(flexy),
-			theater: flexy ? flexy.hasAttribute('theater') : false,
-			fullBleed: flexy ? flexy.hasAttribute('full-bleed-player') : false,
-			foundBtn: Boolean(btn),
-			theaterDone: window.__deskreenTheaterDone,
-		});
-		// #endregion
-	};
+		}	};
 
 	window.__deskreenYtExitPageFullscreen = function () {
 		if (!document.fullscreenElement) {
@@ -454,15 +405,7 @@
 		if (now - fixVideoLayerLastAt < 400) {
 			return false;
 		}
-		fixVideoLayerLastAt = now;
-		// #region agent log
-		dbgLog('H2', 'fixVideoLayer', 'called', {
-			paused: v.paused,
-			currentTime: v.currentTime,
-			videoId: getUrlVideoId(),
-		});
-		// #endregion
-		if (isPlayerMode()) {
+		fixVideoLayerLastAt = now;		if (isPlayerMode()) {
 			syncViewportHeight();
 		}
 		var vh = viewportHeightPx();
@@ -521,32 +464,11 @@
 		hidePanels();
 		window.__deskreenYtEnableTheaterOnce();
 		window.__deskreenYtFixVideoLayer();
-		window.__deskreenYtReapplyVolume();
-		// #region agent log
-		(function () {
+		window.__deskreenYtReapplyVolume();		(function () {
 			var flexy = document.querySelector('ytd-watch-flexy');
 			var v = document.querySelector('video');
 			var rect = v ? v.getBoundingClientRect() : null;
-			dbgLog('H1', '__deskreenYtApplyLayout', 'layout-state', {
-				playerMode: isPlayerMode(),
-				path: location.pathname,
-				innerWidth: window.innerWidth,
-				innerHeight: window.innerHeight,
-				hasYtdApp: Boolean(document.querySelector('ytd-app')),
-				hasYtmApp: Boolean(document.querySelector('ytm-app')),
-				theater: flexy ? flexy.hasAttribute('theater') : false,
-				fullBleed: flexy ? flexy.hasAttribute('full-bleed-player') : false,
-				secondaryVisible: Boolean(
-					document.querySelector('#secondary,ytd-watch-next-secondary-results,ytd-playlist-panel'),
-				),
-				playlistPanel: Boolean(document.querySelector('ytd-playlist-panel')),
-				videoTop: rect ? Math.round(rect.top) : -1,
-				videoHeight: rect ? Math.round(rect.height) : 0,
-				ua: (navigator.userAgent || '').slice(0, 100),
-			});
-		})();
-		// #endregion
-	};
+		})();	};
 
 	window.__deskreenYtResetForNavigation = function () {
 		window.__deskreenTheaterDone = false;
@@ -674,7 +596,6 @@
 			}).catch(function(e) {
 				window.__deskreenYtPlayRejected = Date.now();
 				window.__deskreenYtPlayError = String(e);
-				dbgLog('H3','ensurePlaying','play-rejected-muted',{error:String(e),videoId:getUrlVideoId()});
 				v.muted = wasMuted;
 			});
 		}
@@ -730,11 +651,7 @@
 	window.__deskreenYtSeek = function (seconds) {
 		var v =
 			(monoPipeline && monoPipeline.video) || document.querySelector('video');
-		if (!v) {
-			// #region agent log
-			dbgLog('H11', '__deskreenYtSeek', 'no-video', { seconds: seconds });
-			// #endregion
-			return false;
+		if (!v) {			return false;
 		}
 		var target = Math.max(0, seconds);
 		if (Number.isFinite(v.duration) && v.duration > 0) {
@@ -747,24 +664,8 @@
 				v.pause();
 			}
 			v.currentTime = target;
-		} catch (e) {
-			// #region agent log
-			dbgLog('H11', '__deskreenYtSeek', 'error', {
-				seconds: seconds,
-				error: String(e),
-			});
-			// #endregion
-			return false;
-		}
-		// #region agent log
-		dbgLog('H11', '__deskreenYtSeek', 'applied', {
-			before: before,
-			target: target,
-			after: v.currentTime,
-			wasPlaying: wasPlaying,
-		});
-		// #endregion
-		if (wasPlaying) {
+		} catch (e) {			return false;
+		}		if (wasPlaying) {
 			var p = v.play();
 			if (p && typeof p.catch === 'function') {
 				p.catch(function () {});
@@ -820,8 +721,8 @@
 			unexpectedCheckTimer = null;
 			var again = getUrlVideoId();
 			if (again && again !== expected) {
-				if (window.DeskreenPlayer && DeskreenPlayer.onUnexpectedVideoId) {
-					DeskreenPlayer.onUnexpectedVideoId(again);
+				if (window.KarolPlayer && KarolPlayer.onUnexpectedVideoId) {
+					KarolPlayer.onUnexpectedVideoId(again);
 				}
 			}
 		}, 2000);
@@ -1034,8 +935,8 @@
 			return;
 		}
 		endedState.lastEndedAt = now;
-		if (window.DeskreenPlayer && DeskreenPlayer.onPlaybackEnded && expected) {
-			DeskreenPlayer.onPlaybackEnded(expected);
+		if (window.KarolPlayer && KarolPlayer.onPlaybackEnded && expected) {
+			KarolPlayer.onPlaybackEnded(expected);
 		}
 	}
 	function bindMonoPipelineEarly() {
@@ -1053,16 +954,7 @@
 		var attachFromEarlyEvent = function (source) {
 			if (monoPipeline && monoPipeline.video === v) {
 				return;
-			}
-			// #region agent log
-			dbgLog('H1', 'bindMonoPipelineEarly', 'early-attach', {
-				source: source,
-				paused: v.paused,
-				currentTime: v.currentTime,
-				readyState: v.readyState,
-			});
-			// #endregion
-			attachMonoPipeline(v);
+			}			attachMonoPipeline(v);
 			window.__deskreenYtReapplyVolume();
 			resumeMonoAudioContext();
 		};

@@ -1,6 +1,6 @@
 <resources>
 	<string name="app_name">Karol Controller</string>
-	<string name="searching_for_deskreen">Searching for Karol Player on Wi‑Fi…</string>
+	<string name="searching_for_karol">Searching for Karol Player on Wi‑Fi…</string>
 	<string name="manual_connect_hint">Enter the tablet IP (port 3131), or scan a QR code.</string>
 	<string name="url_hint">http://192.168.1.42:3131/dj-controller/</string>
 	<string name="scan_qr_code">Scan QR code</string>

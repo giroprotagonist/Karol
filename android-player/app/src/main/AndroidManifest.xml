@@ -37,7 +37,7 @@
 		android:networkSecurityConfig="@xml/network_security_config"
 		android:roundIcon="@mipmap/ic_launcher_round"
 		android:supportsRtl="true"
-		android:theme="@style/Theme.DeskreenPlayer"
+		android:theme="@style/Theme.KarolPlayer"
 		android:usesCleartextTraffic="true">
 
 		<activity
@@ -46,7 +46,7 @@
 			android:exported="true"
 			android:launchMode="singleTask"
 			android:screenOrientation="sensorLandscape"
-			android:theme="@style/Theme.DeskreenPlayer.Fullscreen">
+			android:theme="@style/Theme.KarolPlayer.Fullscreen">
 			<intent-filter>
 				<action android:name="android.intent.action.MAIN" />
 				<category android:name="android.intent.category.LAUNCHER" />

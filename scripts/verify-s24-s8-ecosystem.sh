@@ -19,8 +19,8 @@ PY_EXIT=$?
 
 if [ -n "$S24_SERIAL" ]; then
 	echo ""
-	echo "=== S24 adb volume log tail (DeskreenVolDbg) ==="
-	adb -s "$S24_SERIAL" logcat -d -t 30 -s DeskreenVolDbg:I 2>/dev/null | tail -15 || true
+	echo "=== S24 adb volume log tail (KarolVolDbg) ==="
+	adb -s "$S24_SERIAL" logcat -d -t 30 -s KarolVolDbg:I 2>/dev/null | tail -15 || true
 fi
 
 # Also run focused sub-checks

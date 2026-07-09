@@ -121,8 +121,8 @@ curl -sf -X POST "$BASE/api/youtube-dj/transport/play" -H 'Content-Type: applica
 
 echo ""
 echo "--- Step 5: Launch S24 controller ---"
-"$ADB" -s "$S24_SERIAL" shell am force-stop com.deskreen.controller 2>/dev/null || true
-"$ADB" -s "$S24_SERIAL" shell am start -a android.intent.action.VIEW -d "$DJ_URL" com.deskreen.controller/.MainActivity 2>&1 || true
+"$ADB" -s "$S24_SERIAL" shell am force-stop com.karol.controller 2>/dev/null || true
+"$ADB" -s "$S24_SERIAL" shell am start -a android.intent.action.VIEW -d "$DJ_URL" com.karol.controller/.MainActivity 2>&1 || true
 sleep 3
 
 STATUS_JSON="$(curl -sf "$BASE/api/youtube-dj/status")"

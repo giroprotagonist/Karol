@@ -1,4 +1,4 @@
-# Deskreen Player — keep WebView JS bridge
--keepclassmembers class com.deskreen.player.YouTubeKioskBridge$JsBridge {
+# Karol Player — keep WebView JS bridge
+-keepclassmembers class com.karol.player.YouTubeKioskBridge$JsBridge {
    public *;
 }

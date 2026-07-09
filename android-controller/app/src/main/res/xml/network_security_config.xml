@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
 	<!--
-	  Deskreen DJ uses HTTP on the local LAN (tablet API on :3131).
+	  Karol DJ uses HTTP on the local LAN (tablet API on :3131).
 	  Android cannot express RFC1918 CIDR ranges in domain-config, so cleartext
 	  stays enabled for arbitrary host IPs entered by the user. Localhost is
 	  listed explicitly for emulators and loopback.

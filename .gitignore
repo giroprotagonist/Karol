@@ -41,3 +41,6 @@ config/youtube-api-key.local
 # Saved YouTube WebView session (local testing only)
 .deskreen/youtube-session.json
 .deskreen/.yt-*
+
+# Production keystores
+**/karol-release.keystore

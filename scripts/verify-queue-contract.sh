@@ -27,7 +27,7 @@ post_json() {
 	local url="$1"
 	local body="${2:-{}}"
 	curl -sf --max-time 12 -X POST -H 'Content-Type: application/json' \
-		-H 'X-Deskreen-Client: DeskreenContractTest/1.0' \
+		-H 'X-Karol-Client: KarolContractTest/1.0' \
 		-d "$body" "$url" 2>/dev/null || echo '{"ok":false}'
 }
 

@@ -31,7 +31,7 @@ def fail(msg: str) -> None:
 
 def req(method: str, url: str, body: dict | None = None) -> dict | None:
     data = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json", "X-Deskreen-Client": "DeskreenPairing/1.0"}
+    headers = {"Content-Type": "application/json", "X-Karol-Client": "KarolPairing/1.0"}
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=12) as resp:
@@ -76,7 +76,7 @@ def check_controller_spa() -> None:
     except Exception as e:
         fail(f"dj-controller HTML: {e}")
         return
-    if "Deskreen DJ" not in html and "root" not in html:
+    if "Karol DJ" not in html and "root" not in html:
         fail("dj-controller HTML missing app shell")
     else:
         ok("dj-controller HTML loads")

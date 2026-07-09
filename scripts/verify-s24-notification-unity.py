@@ -29,12 +29,12 @@ FAILURES: list[str] = []
 WARNS: list[str] = []
 PASSES = 0
 
-PKG = "com.deskreen.controller"
+PKG = "com.karol.controller"
 SERVICE = f"{PKG}/.DjMediaPlaybackService"
-ACTION_SKIP_NEXT = "com.deskreen.controller.action.SKIP_NEXT"
-ACTION_SKIP_PREV = "com.deskreen.controller.action.SKIP_PREV"
-ACTION_PAUSE = "com.deskreen.controller.action.PAUSE"
-ACTION_PLAY = "com.deskreen.controller.action.PLAY"
+ACTION_SKIP_NEXT = "com.karol.controller.action.SKIP_NEXT"
+ACTION_SKIP_PREV = "com.karol.controller.action.SKIP_PREV"
+ACTION_PAUSE = "com.karol.controller.action.PAUSE"
+ACTION_PLAY = "com.karol.controller.action.PLAY"
 
 
 def adb(serial: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -89,7 +89,7 @@ def req(method: str, path: str, body: dict | None = None) -> dict | None:
     data = json.dumps(body).encode() if body is not None else None
     headers = {
         "Content-Type": "application/json",
-        "X-Deskreen-Client": "DeskreenNotificationUnity/1.0",
+        "X-Karol-Client": "KarolNotificationUnity/1.0",
     }
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -171,7 +171,7 @@ def service_running(s24: str) -> bool:
 
 def media_session_active(s24: str) -> bool:
     proc = adb(s24, "shell", "dumpsys", "media_session", check=False)
-    return "Deskreen" in proc.stdout or PKG in proc.stdout
+    return "Karol" in proc.stdout or PKG in proc.stdout
 
 
 def logcat_ctrl(s24: str, since_s: int = 8) -> str:
@@ -182,7 +182,7 @@ def logcat_ctrl(s24: str, since_s: int = 8) -> str:
         "-t",
         str(since_s * 20),
         "-s",
-        "DeskreenCtrlDbg:I",
+        "KarolCtrlDbg:I",
         "DjMediaPlayback:I",
         check=False,
     )
@@ -268,7 +268,7 @@ def main() -> int:
         ok("DjMediaPlaybackService", "foreground service active")
 
     if media_session_active(s24):
-        ok("MediaSession", "Deskreen session registered")
+        ok("MediaSession", "Karol session registered")
     else:
         warn("MediaSession", "session not visible in dumpsys (may still work)")
 
@@ -373,7 +373,7 @@ def main() -> int:
     )
     time.sleep(2.0)
     proc = adb(s24, "shell", "dumpsys", "activity", "activities", check=False)
-    if "MainActivity" in proc.stdout and "deskreen" in proc.stdout.lower():
+    if "MainActivity" in proc.stdout and "karol" in proc.stdout.lower():
         ok("MainActivity WebView", "controller UI foreground")
     else:
         warn("MainActivity WebView", "could not confirm foreground activity")
@@ -391,7 +391,7 @@ def main() -> int:
         print(
             f"  cd android-controller && ANDROID_SERIAL={s24} "
             f"./gradlew connectedDebugAndroidTest "
-            f"-Pandroid.testInstrumentationRunnerArguments.deskreenHost={HOST}"
+            f"-Pandroid.testInstrumentationRunnerArguments.karolHost={HOST}"
         )
     for w in WARNS:
         print(f"  WARN: {w}")

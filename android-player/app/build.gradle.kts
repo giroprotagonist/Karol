@@ -4,15 +4,24 @@ plugins {
 }
 
 android {
-	namespace = "com.deskreen.player"
+	namespace = "com.karol.player"
 	compileSdk = 35
 
+	signingConfigs {
+		create("release") {
+			storeFile = file("karol-release.keystore")
+			storePassword = "karol123"
+			keyAlias = "karol"
+			keyPassword = "karol123"
+		}
+	}
+
 	defaultConfig {
-		applicationId = "com.deskreen.player"
+		applicationId = "com.karol.player"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 4
-		versionName = "2.0.0"
+		versionCode = 5
+		versionName = "2.1.0"
 		testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 	}
 
@@ -27,7 +36,7 @@ android {
 				getDefaultProguardFile("proguard-android-optimize.txt"),
 				"proguard-rules.pro",
 			)
-			signingConfig = signingConfigs.getByName("debug")
+			signingConfig = signingConfigs.getByName("release")
 		}
 	}
 

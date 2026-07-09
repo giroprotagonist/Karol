@@ -1,15 +1,15 @@
 <resources>
-	<style name="Theme.DeskreenPlayer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-		<item name="colorPrimary">@color/deskreen_accent</item>
+	<style name="Theme.KarolPlayer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+		<item name="colorPrimary">@color/karol_accent</item>
 		<item name="colorPrimaryVariant">#196127</item>
 		<item name="colorOnPrimary">#FFFFFF</item>
-		<item name="android:statusBarColor">@color/deskreen_bg</item>
-		<item name="android:navigationBarColor">@color/deskreen_bg</item>
+		<item name="android:statusBarColor">@color/karol_bg</item>
+		<item name="android:navigationBarColor">@color/karol_bg</item>
 		<item name="android:windowBackground">@android:color/transparent</item>
 		<item name="android:windowIsTranslucent">true</item>
 	</style>
 
-	<style name="Theme.DeskreenPlayer.Fullscreen" parent="Theme.DeskreenPlayer">
+	<style name="Theme.KarolPlayer.Fullscreen" parent="Theme.KarolPlayer">
 		<item name="android:windowFullscreen">true</item>
 	</style>
 </resources>

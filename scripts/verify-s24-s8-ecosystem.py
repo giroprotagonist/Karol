@@ -30,7 +30,7 @@ def req(
     body: dict | None = None,
 ) -> tuple[float, dict | None, int]:
     data = None
-    headers = {"Content-Type": "application/json", "X-Deskreen-Client": "DeskreenAudit/1.0"}
+    headers = {"Content-Type": "application/json", "X-Karol-Client": "KarolAudit/1.0"}
     if body is not None:
         data = json.dumps(body).encode()
     request = urllib.request.Request(url, data=data, headers=headers, method=method)

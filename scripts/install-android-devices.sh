@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Deskreen player (S8) and controller (S24) via wireless adb (mDNS discovery).
+# Install Karol player (S8) and controller (S24) via wireless adb (mDNS discovery).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,7 +19,7 @@ discover_serial() {
 	sleep 1
 }
 
-echo "=== Deskreen device install ==="
+echo "=== Karol device install ==="
 
 if [[ ! -f "$PLAYER_APK" ]]; then
 	echo "Building player APK..."
@@ -60,7 +60,7 @@ if [[ -n "$S8_SERIAL" ]]; then
 		echo "Restoring saved YouTube session..."
 		DESKREEN_HOST="${DESKREEN_HOST:-192.168.68.57}" bash "$ROOT/scripts/player-youtube-session-restore.sh" || true
 	fi
-	"$ADB" -s "$S8_SERIAL" shell am start -n com.deskreen.player/.MainActivity 2>/dev/null || true
+	"$ADB" -s "$S8_SERIAL" shell am start -n com.karol.player/.MainActivity 2>/dev/null || true
 	echo "Player installed."
 else
 	echo "WARN: Tab S8 not on adb — enable Wireless debugging on tablet, then re-run."
@@ -73,8 +73,8 @@ if [[ -n "$S24_SERIAL" ]]; then
 	"$ADB" -s "$S24_SERIAL" install -r "$CTRL_APK"
 	TABLET_URL="http://${DESKREEN_HOST:-192.168.68.57}:${DESKREEN_PORT:-3131}/dj-controller/"
 	echo "Launching controller → $TABLET_URL"
-	"$ADB" -s "$S24_SERIAL" shell am force-stop com.deskreen.controller 2>/dev/null || true
-	"$ADB" -s "$S24_SERIAL" shell am start -a android.intent.action.VIEW -d "$TABLET_URL" -n com.deskreen.controller/.MainActivity 2>/dev/null || true
+	"$ADB" -s "$S24_SERIAL" shell am force-stop com.karol.controller 2>/dev/null || true
+	"$ADB" -s "$S24_SERIAL" shell am start -a android.intent.action.VIEW -d "$TABLET_URL" -n com.karol.controller/.MainActivity 2>/dev/null || true
 	echo "Controller installed."
 else
 	echo "WARN: S24 not on adb."

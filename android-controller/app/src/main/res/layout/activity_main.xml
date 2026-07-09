@@ -4,7 +4,7 @@
 	android:id="@+id/rootLayout"
 	android:layout_width="match_parent"
 	android:layout_height="match_parent"
-	android:background="@color/deskreen_bg">
+	android:background="@color/karol_bg">
 
 	<WebView
 		android:id="@+id/webView"
@@ -17,7 +17,7 @@
 		android:layout_width="match_parent"
 		android:layout_height="wrap_content"
 		android:layout_gravity="top"
-		android:background="@color/deskreen_surface"
+		android:background="@color/karol_surface"
 		android:elevation="4dp"
 		android:gravity="center_vertical"
 		android:orientation="horizontal"
@@ -37,7 +37,7 @@
 			android:layout_height="wrap_content"
 			android:layout_marginStart="10dp"
 			android:layout_weight="1"
-			android:textColor="@color/deskreen_text_primary"
+			android:textColor="@color/karol_text_primary"
 			android:textSize="14sp" />
 	</LinearLayout>
 
@@ -45,7 +45,7 @@
 		android:id="@+id/statusPanel"
 		android:layout_width="match_parent"
 		android:layout_height="match_parent"
-		android:background="@color/deskreen_bg"
+		android:background="@color/karol_bg"
 		android:gravity="center"
 		android:orientation="vertical"
 		android:padding="32dp"
@@ -56,7 +56,7 @@
 			android:layout_width="wrap_content"
 			android:layout_height="wrap_content"
 			android:indeterminate="true"
-			app:indicatorColor="@color/deskreen_accent" />
+			app:indicatorColor="@color/karol_accent" />
 
 		<TextView
 			android:id="@+id/statusText"
@@ -64,8 +64,8 @@
 			android:layout_height="wrap_content"
 			android:layout_marginTop="20dp"
 			android:gravity="center"
-			android:text="@string/searching_for_deskreen"
-			android:textColor="@color/deskreen_text_primary"
+			android:text="@string/searching_for_karol"
+			android:textColor="@color/karol_text_primary"
 			android:textSize="18sp" />
 
 		<com.google.android.material.button.MaterialButton
@@ -81,7 +81,7 @@
 		android:id="@+id/connectPanel"
 		android:layout_width="match_parent"
 		android:layout_height="match_parent"
-		android:background="@color/deskreen_bg"
+		android:background="@color/karol_bg"
 		android:gravity="center"
 		android:orientation="vertical"
 		android:padding="24dp"
@@ -92,7 +92,7 @@
 			android:layout_height="wrap_content"
 			android:paddingBottom="8dp"
 			android:text="@string/app_name"
-			android:textColor="@color/deskreen_text_primary"
+			android:textColor="@color/karol_text_primary"
 			android:textSize="24sp"
 			android:textStyle="bold" />
 
@@ -101,7 +101,7 @@
 			android:layout_height="wrap_content"
 			android:paddingBottom="16dp"
 			android:text="@string/manual_connect_hint"
-			android:textColor="@color/deskreen_text_secondary"
+			android:textColor="@color/karol_text_secondary"
 			android:textSize="15sp" />
 
 		<com.google.android.material.textfield.TextInputLayout
@@ -121,7 +121,7 @@
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
 			android:layout_marginTop="8dp"
-			android:textColor="@color/deskreen_error"
+			android:textColor="@color/karol_error"
 			android:textSize="13sp"
 			android:visibility="gone" />
 

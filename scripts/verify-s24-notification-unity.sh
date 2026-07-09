@@ -26,7 +26,7 @@ if [[ -n "${S24_SERIAL:-}" ]] || adb devices -l | grep -qE 'SM_S928|e3q'; then
 	if [[ -n "$S24" && -n "${DESKREEN_HOST:-}" ]]; then
 		cd "$ROOT/android-controller"
 		ANDROID_SERIAL="$S24" ./gradlew connectedDebugAndroidTest --no-daemon -q \
-			-Pandroid.testInstrumentationRunnerArguments.deskreenHost="${DESKREEN_HOST}"
+			-Pandroid.testInstrumentationRunnerArguments.karolHost="${DESKREEN_HOST}"
 		cd "$ROOT"
 	fi
 fi

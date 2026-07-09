@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
 	<!--
-	  Deskreen Player serves HTTP on the local LAN and loads YouTube over HTTPS.
+	  Karol Player serves HTTP on the local LAN and loads YouTube over HTTPS.
 	  Cleartext is required for the embedded DJ controller and LAN API.
 	-->
 	<base-config cleartextTrafficPermitted="true">

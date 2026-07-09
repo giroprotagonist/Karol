@@ -49,7 +49,7 @@
 				android:layout_height="wrap_content"
 				android:layout_marginBottom="4dp"
 				android:text="@string/controller_url_label"
-				android:textColor="@color/deskreen_text_secondary"
+				android:textColor="@color/karol_text_secondary"
 				android:textSize="12sp"
 				android:textAllCaps="true"
 				android:letterSpacing="0.08" />
@@ -60,7 +60,7 @@
 				android:layout_height="wrap_content"
 				android:layout_marginBottom="12dp"
 				android:gravity="center"
-				android:textColor="@color/deskreen_text_primary"
+				android:textColor="@color/karol_text_primary"
 				android:textIsSelectable="true"
 				android:textSize="14sp" />
 
@@ -69,7 +69,7 @@
 				android:layout_height="wrap_content"
 				android:layout_marginBottom="4dp"
 				android:text="@string/api_url_label"
-				android:textColor="@color/deskreen_text_secondary"
+				android:textColor="@color/karol_text_secondary"
 				android:textSize="12sp"
 				android:textAllCaps="true"
 				android:letterSpacing="0.08" />
@@ -80,7 +80,7 @@
 				android:layout_height="wrap_content"
 				android:layout_marginBottom="12dp"
 				android:gravity="center"
-				android:textColor="@color/deskreen_text_secondary"
+				android:textColor="@color/karol_text_secondary"
 				android:textIsSelectable="true"
 				android:textSize="13sp" />
 
@@ -127,7 +127,7 @@
 				android:layout_marginBottom="12dp"
 				android:padding="8dp"
 				android:text="@string/sign_in_trouble_import"
-				android:textColor="@color/deskreen_text_secondary"
+				android:textColor="@color/karol_text_secondary"
 				android:textSize="12sp" />
 
 			<com.google.android.material.button.MaterialButton
@@ -183,7 +183,7 @@
 			android:layout_height="wrap_content"
 			android:gravity="center"
 			android:text="@string/reauth_overlay_message"
-			android:textColor="@color/deskreen_text_primary"
+			android:textColor="@color/karol_text_primary"
 			android:textSize="18sp" />
 
 		<com.google.android.material.button.MaterialButton

@@ -27,8 +27,8 @@ pathlib.Path("$DEVICE_BACKUP").write_text(
 	base64.b64encode(plain.encode()).decode()
 )
 PY
-	"$ADB" -s "$TABLET_SERIAL" push "$DEVICE_BACKUP" /data/local/tmp/deskreen-youtube-session.json
-	"$ADB" -s "$TABLET_SERIAL" shell run-as com.deskreen.player cp /data/local/tmp/deskreen-youtube-session.json /data/data/com.deskreen.player/files/deskreen-youtube-session.json
+	"$ADB" -s "$TABLET_SERIAL" push "$DEVICE_BACKUP" /data/local/tmp/karol-youtube-session.json
+	"$ADB" -s "$TABLET_SERIAL" shell run-as com.karol.player cp /data/local/tmp/karol-youtube-session.json /data/data/com.karol.player/files/karol-youtube-session.json
 	echo "  Pushed to device — restart Karol Player to auto-restore."
 else
 	echo "  WARNING: No tablet adb device found. Session exported to $ROOT/.deskreen/youtube-session.json"

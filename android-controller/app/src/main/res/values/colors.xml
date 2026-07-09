@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-	<color name="deskreen_bg">#07070D</color>
-	<color name="deskreen_surface">#12121A</color>
-	<color name="deskreen_accent">#238636</color>
-	<color name="deskreen_text_primary">#F0F3F6</color>
-	<color name="deskreen_text_secondary">#9AA4B2</color>
-	<color name="deskreen_error">#F85149</color>
-	<color name="deskreen_warning">#D29922</color>
-	<color name="deskreen_connected">#3FB950</color>
+	<color name="karol_bg">#07070D</color>
+	<color name="karol_surface">#12121A</color>
+	<color name="karol_accent">#238636</color>
+	<color name="karol_text_primary">#F0F3F6</color>
+	<color name="karol_text_secondary">#9AA4B2</color>
+	<color name="karol_error">#F85149</color>
+	<color name="karol_warning">#D29922</color>
+	<color name="karol_connected">#3FB950</color>
 	<color name="ic_launcher_background">#07070D</color>
 	<color name="karol_icon_bg">#1A0B2E</color>
 </resources>
