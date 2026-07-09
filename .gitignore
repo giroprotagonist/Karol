@@ -44,3 +44,8 @@ config/youtube-api-key.local
 
 # Production keystores
 **/karol-release.keystore
+
+# Tidal exports (large audio/image files)
+.deskreen/tidal-exports/
+.deskreen/tidal-playlist.m3u
+.deskreen/*.png

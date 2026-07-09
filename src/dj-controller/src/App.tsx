@@ -43,11 +43,12 @@ import NowPlayingCard from './components/NowPlayingCard';
 import PlaylistLibrary from './components/PlaylistLibrary';
 import QueueList, { reorderItemsLocally } from './components/QueueList';
 import SearchResults from './components/SearchResults';
+import VlcPlayerTab from './components/VlcPlayerTab';
 import { hapticLight, isNativeAndroidController, notifyNativeConnection, publishNowPlayingToNative, registerNativeNowPlayingListener, registerNativeVolumeListener } from './nativeBridge';
 import { syncPlaybackAnchor } from './playbackClock';
 import { IconPause, IconPlay } from './components/TransportIcons';
 
-type AppTab = 'player' | 'queue' | 'add' | 'playlist';
+type AppTab = 'player' | 'queue' | 'add' | 'playlist' | 'vlc';
 
 export default function App() {
 	const initialHost = getDefaultHost();
@@ -207,9 +208,12 @@ export default function App() {
 			return;
 		}
 		void refreshAll();
+		// On Android, the native bridge pushes now-playing/volume updates in real time
+		// so we only need occasional full refreshes to sync queue/status changes.
+		const intervalMs = isNativeAndroidController() ? 10_000 : 2_500;
 		const interval = setInterval(() => {
 			void refreshAll();
-		}, 2500);
+		}, intervalMs);
 		return () => clearInterval(interval);
 	}, [pollEnabled, refreshAll]);
 
@@ -229,6 +233,11 @@ export default function App() {
 
 	useEffect(() => {
 		if (!pollEnabled || !host) {
+			return;
+		}
+		// Android native bridge pushes now-playing updates via __karolNativeNowPlaying —
+		// the JS poll is redundant and causes 4 API calls/sec in dual-poll mode.
+		if (isNativeAndroidController()) {
 			return;
 		}
 		let cancelled = false;
@@ -659,13 +668,6 @@ export default function App() {
 				</div>
 			) : null}
 
-			{status?.youtubeSignedIn && status.youtubePremiumActive === false ? (
-				<div className="banner tablet-alert-banner" role="alert">
-					YouTube Premium not detected on tablet — ads may appear. Open Karol Player
-					on the tablet and tap Re-check YouTube Premium.
-				</div>
-			) : null}
-
 			{error && !reconnecting ? (
 				<div className="banner error-banner" role="alert">
 					{error}
@@ -859,17 +861,24 @@ export default function App() {
 				>
 					Add
 				</button>
-				<button
-					type="button"
-					className={`tab-btn ${activeTab === 'playlist' ? 'active' : ''}`}
-					onClick={() => changeTab('playlist')}
-				>
-					Playlist
-					{playlistConfig?.playlists?.length ? (
-						<span className="tab-badge">{playlistConfig.playlists.length}</span>
-					) : null}
-				</button>
-			</nav>
+			<button
+				type="button"
+				className={`tab-btn ${activeTab === 'playlist' ? 'active' : ''}`}
+				onClick={() => changeTab('playlist')}
+			>
+				Playlist
+				{playlistConfig?.playlists?.length ? (
+					<span className="tab-badge">{playlistConfig.playlists.length}</span>
+				) : null}
+			</button>
+			<button
+				type="button"
+				className={`tab-btn ${activeTab === 'vlc' ? 'active' : ''}`}
+				onClick={() => changeTab('vlc')}
+			>
+				VLC
+			</button>
+		</nav>
 
 			{activeTab === 'queue' ? (
 			<div className="tab-panel">
@@ -1064,6 +1073,12 @@ export default function App() {
 					})
 				}
 			/>
+			</div>
+			) : null}
+
+			{activeTab === 'vlc' ? (
+			<div className="tab-panel">
+			<VlcPlayerTab host={host} connected={connected} />
 			</div>
 			) : null}
 

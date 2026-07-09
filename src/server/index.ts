@@ -27,6 +27,7 @@ import { getDjControllerDistPath } from './getDjControllerDistPath';
 import getScreenCapturePermissionStatus from '../main/utils/getScreenCapturePermissionStatus';
 import SharingSessionStatusEnum from '../features/SharingSessionService/SharingSessionStatusEnum';
 import { registerYouTubeKaraokeApi } from './youtubeKaraokeApi';
+import { registerVlcControllerApi } from './vlcControllerApi';
 import bodyParser from 'koa-bodyparser';
 
 const { hostname, primaryPort, backupPort } = config;
@@ -162,6 +163,7 @@ class DeskreenSignalingServer {
 			};
 		});
 		registerYouTubeKaraokeApi(router);
+		registerVlcControllerApi(router);
 
 		this.app.use(router.routes());
 

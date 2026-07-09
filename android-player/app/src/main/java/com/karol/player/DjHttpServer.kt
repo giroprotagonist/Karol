@@ -11,6 +11,8 @@ import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.cio.CIO
 import io.ktor.server.request.receiveText
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.uri
 import io.ktor.server.response.header
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
@@ -19,10 +21,15 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
+import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import com.karol.player.BuildConfig
 
 class DjHttpServer(
@@ -36,6 +43,7 @@ class DjHttpServer(
 	private val statusProvider: () -> HostStatus = {
 		HostStatus(false, 0, "", null, null)
 	},
+	private val vlcProxyTarget: String = "http://192.168.68.51:3131",
 ) {
 	private var engine: ApplicationEngine? = null
 
@@ -678,6 +686,14 @@ class DjHttpServer(
 						}
 						call.respondJson(JSONObject().put("ok", true))
 					}
+					// VLC DJ proxy – forward requests to the Mac Deskreen host
+					route("/api/vlc-dj") {
+						get("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
+						post("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
+						put("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
+						delete("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
+						patch("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
+					}
 					get("/dj-controller") {
 						call.response.header(HttpHeaders.Location, "/dj-controller/")
 						call.respondText("", status = HttpStatusCode.MovedPermanently)
@@ -822,6 +838,48 @@ class DjHttpServer(
 			.put("duration", duration)
 			.put("volumeLevel", volumeLevel)
 			.put("state", state)
+	}
+
+	private suspend fun proxyToVlcHost(
+		call: io.ktor.server.application.ApplicationCall,
+		targetBase: String,
+	) {
+		try {
+			val path = call.request.uri.removePrefix("/api/vlc-dj")
+			val url = URL("$targetBase/api/vlc-dj$path")
+			val conn = (url.openConnection() as HttpURLConnection).apply {
+				requestMethod = call.request.httpMethod.value
+				connectTimeout = 5000
+				readTimeout = 8000
+				setRequestProperty("Accept", "application/json")
+				if (call.request.httpMethod.value in listOf("POST", "PUT", "PATCH")) {
+					doOutput = true
+					setRequestProperty("Content-Type", "application/json")
+					val body = call.receiveText()
+					outputStream.use { os: OutputStream -> os.write(body.toByteArray()) }
+				}
+			}
+			val status = conn.responseCode
+			val bodyStream: InputStream = try {
+				conn.inputStream
+			} catch (_: IOException) {
+				conn.errorStream ?: ByteArray(0).inputStream()
+			}
+			val body = bodyStream.bufferedReader().use { it.readText() }
+			conn.disconnect()
+
+			call.response.header(HttpHeaders.AccessControlAllowOrigin, "*")
+			call.response.header(HttpHeaders.ContentType, "application/json")
+			call.respondText(body, ContentType.Application.Json, HttpStatusCode.fromValue(status))
+		} catch (e: IOException) {
+			call.response.header(HttpHeaders.AccessControlAllowOrigin, "*")
+			call.respondJson(
+				JSONObject()
+					.put("ok", false)
+					.put("error", "VLC host unreachable – is Deskreen running on your Mac?")
+					.put("vlcProxyTarget", targetBase),
+			)
+		}
 	}
 
 	private suspend fun io.ktor.server.application.ApplicationCall.respondJson(json: JSONObject) {
