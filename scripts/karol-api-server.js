@@ -317,6 +317,167 @@ function sendOscBundle(msg) {
 
 function sendOsc(address, ...args) { sendOscBundle(oscMsg(address, args)); }
 
+// Reusable single-message bundle (used by queryTrackProperties)
+function oscBundleSingle(address, args) {
+  const msg = oscMsg(address, args || []);
+  const header = Buffer.from('#bundle\0');
+  const timetag = Buffer.alloc(8);
+  timetag.writeBigInt64BE(BigInt(1), 0);
+  const size = Buffer.alloc(4);
+  size.writeInt32BE(msg.length, 0);
+  return Buffer.concat([header, timetag, size, msg]);
+}
+
+// ── OSC reply parser (reverse of oscMsg) ──
+function parseOscReply(buf) {
+  // Skip bundle header (#bundle + timetag = 16 bytes)
+  let offset = 16;
+  const messages = [];
+  while (offset < buf.length) {
+    const size = buf.readInt32BE(offset);
+    offset += 4;
+    const msg = buf.slice(offset, offset + size);
+    offset += size;
+    if (msg.length === 0) continue;
+    // Parse address pattern
+    let addrEnd = 0;
+    while (addrEnd < msg.length && msg[addrEnd] !== 0) addrEnd++;
+    const address = msg.slice(0, addrEnd).toString();
+    // Skip to aligned address end
+    let cursor = addrEnd;
+    while (cursor % 4 !== 0) cursor++;
+    // Type tag starts with comma
+    if (msg[cursor] !== 0x2c) continue; // ','
+    let typeEnd = cursor;
+    while (typeEnd < msg.length && msg[typeEnd] !== 0) typeEnd++;
+    const types = msg.slice(cursor + 1, typeEnd).toString();
+    cursor = typeEnd;
+    while (cursor % 4 !== 0) cursor++;
+    // Parse arguments
+    const args = [];
+    for (let i = 0; i < types.length && cursor < msg.length; i++) {
+      if (types[i] === 'f') {
+        args.push(msg.readFloatBE(cursor));
+        cursor += 4;
+      } else if (types[i] === 'i') {
+        args.push(msg.readInt32BE(cursor));
+        cursor += 4;
+      } else if (types[i] === 's' || types[i] === 'S') {
+        let strEnd = cursor;
+        while (strEnd < msg.length && msg[strEnd] !== 0) strEnd++;
+        args.push(msg.slice(cursor, strEnd).toString());
+        cursor = strEnd;
+        while (cursor % 4 !== 0) cursor++;
+      } else if (types[i] === 'T') { args.push(true); }
+      else if (types[i] === 'F') { args.push(false); }
+      else { cursor += 4; } // skip unknown
+    }
+    messages.push({ address, args });
+  }
+  return messages;
+}
+
+// ── Bidirectional OSC: single persistent socket for send + receive ──
+let oscSocket = null;
+let trackCache = {}; // track_id -> { name, volume, muted, solo, pan, sends[], meters }
+let oscSocketBound = false;
+
+function ensureOscSocket() {
+  const dgram = require('dgram');
+  if (oscSocket && oscSocketBound) return;
+  if (oscSocket) { try { oscSocket.close(); } catch {} }
+  oscSocket = dgram.createSocket('udp4');
+  oscSocket.on('message', (buf) => {
+    try {
+      const msgs = parseOscReply(buf);
+      for (const { address, args } of msgs) {
+        if (address.startsWith('/live/track/get/name') && args.length >= 2) {
+          const tid = Math.round(args[0]);
+          if (tid >= 0) { trackCache[tid] = trackCache[tid] || {}; trackCache[tid].name = args[1]; }
+        } else if (address.startsWith('/live/track/get/volume') && args.length >= 2) {
+          const tid = Math.round(args[0]);
+          if (tid >= 0) { trackCache[tid] = trackCache[tid] || {}; trackCache[tid].volume = args[1]; }
+        } else if (address.startsWith('/live/track/get/mute') && args.length >= 2) {
+          const tid = Math.round(args[0]);
+          if (tid >= 0) { trackCache[tid] = trackCache[tid] || {}; trackCache[tid].muted = args[1] === 1; }
+        } else if (address.startsWith('/live/track/get/solo') && args.length >= 2) {
+          const tid = Math.round(args[0]);
+          if (tid >= 0) { trackCache[tid] = trackCache[tid] || {}; trackCache[tid].solo = args[1] === 1; }
+        } else if (address.startsWith('/live/track/get/panning') && args.length >= 2) {
+          const tid = Math.round(args[0]);
+          if (tid >= 0) { trackCache[tid] = trackCache[tid] || {}; trackCache[tid].pan = args[1]; }
+        } else if (address.startsWith('/live/track/get/send') && args.length >= 3) {
+          const tid = Math.round(args[0]);
+          const sid = Math.round(args[1]);
+          if (tid >= 0) { trackCache[tid] = trackCache[tid] || {}; trackCache[tid].sends = trackCache[tid].sends || []; trackCache[tid].sends[sid] = args[2]; }
+        } else if (address.startsWith('/live/track/get/output_meter_left') && args.length >= 2) {
+          const tid = Math.round(args[0]);
+          if (tid >= 0) { trackCache[tid] = trackCache[tid] || {}; trackCache[tid].meterLeft = args[1]; }
+        } else if (address.startsWith('/live/track/get/output_meter_right') && args.length >= 2) {
+          const tid = Math.round(args[0]);
+          if (tid >= 0) { trackCache[tid] = trackCache[tid] || {}; trackCache[tid].meterRight = Math.max(0, args[1]); }
+        } else if (address === '/live/song/get/tempo' && args.length >= 1) {
+          cachedAbletonState.tempo = Math.round(args[0]);
+        }
+      }
+    } catch { /* ignore parse errors */ }
+  });
+  oscSocket.bind(0, '127.0.0.1', () => { oscSocketBound = true; });
+}
+
+function sendOscPersistent(address, ...args) {
+  ensureOscSocket();
+  if (!oscSocket) return;
+  const buf = oscBundleSingle(address, args);
+  oscSocket.send(buf, 0, buf.length, 11000, '127.0.0.1');
+}
+
+// ── Track discovery: query track names and properties ──
+let oscQueryTimer = null;
+
+function queryTrackProperties() {
+  // Query master meters
+  sendOscPersistent('/live/track/get/output_meter_left', -1, 0);
+  sendOscPersistent('/live/track/get/output_meter_right', -1, 0);
+  
+  // Query up to 8 tracks for all properties
+  for (let i = 0; i < 8; i++) {
+    const props = ['name', 'volume', 'mute', 'solo', 'panning', 'output_meter_left', 'output_meter_right'];
+    for (const p of props) {
+      if (p === 'name') {
+        sendOscPersistent('/live/track/get/' + p, i);
+      } else {
+        sendOscPersistent('/live/track/get/' + p, i, 0);
+      }
+    }
+  }
+  
+  // After 2 seconds, sync trackCache into cachedAbletonState
+  setTimeout(() => {
+    const keys = Object.keys(trackCache).filter(k => k !== '-1').map(Number).sort((a,b) => a-b);
+    if (keys.length > 0) {
+      cachedAbletonState.tracks = keys.map(idx => ({
+        index: idx,
+        name: (trackCache[idx] && trackCache[idx].name) || ('Track ' + (idx + 1)),
+        volume: trackCache[idx].volume != null ? trackCache[idx].volume : 0.75,
+        muted: trackCache[idx].muted || false,
+        solo: trackCache[idx].solo || false,
+        pan: trackCache[idx].pan != null ? trackCache[idx].pan : 0,
+        sends: trackCache[idx].sends || [],
+        meterLeft: trackCache[idx].meterLeft != null ? trackCache[idx].meterLeft : 0,
+        meterRight: trackCache[idx].meterRight != null ? trackCache[idx].meterRight : 0,
+        color: '#555',
+        hasClip: false,
+        isPlaying: false,
+      }));
+    }
+    if (trackCache['-1']) {
+      cachedAbletonState.masterMeterLeft = trackCache['-1'].meterLeft || 0;
+      cachedAbletonState.masterMeterRight = trackCache['-1'].meterRight || 0;
+    }
+  }, 2000);
+}
+
 // ── Ableton connection state ──
 let abletonConnected = false;
 
@@ -373,12 +534,20 @@ function ensureTrack(idx) {
   return cachedAbletonState.tracks[idx];
 }
 
-// Poll connection every 5 seconds
+// Poll connection every 5 seconds, query track properties every 5s
 function startAbletonPoll() {
   setInterval(() => {
     abletonConnected = checkAbletonConnected();
+    if (abletonConnected) {
+      ensureOscSocket();
+      queryTrackProperties();
+    }
   }, 5000);
   abletonConnected = checkAbletonConnected();
+  if (abletonConnected) {
+    ensureOscSocket();
+    setTimeout(queryTrackProperties, 1000);
+  }
 }
 
 // ── Ableton routes (AbletonOSC Remote Script API) ──
