@@ -107,14 +107,24 @@ curl http://127.0.0.1:3131/api/vlc-dj/health
 
 ### Audio Routing (Karaoke DJ + VLC → Ableton)
 ```bash
-# Create Multi-Output Device in Audio MIDI Setup:
-#   - BlackHole 16ch (for Ableton input)
-#   - Built-in Output (for monitoring)
-#   Enable Drift Correction on BlackHole 16ch
+# One-command setup (handles Multi-Output Device, VLC config, default output):
+bash scripts/setup-uphoria-audio.sh
 
-# Route VLC output to BlackHole
-#   VLC → Audio → Audio Device → BlackHole 16ch
+# Then verify:
+bash scripts/verify-audio-routing.sh
 ```
+
+The setup script creates a Multi-Output Device called "Karol" containing:
+- UMC404HD 192k (master clock — goes to PA)
+- BlackHole 16ch (drift-corrected — feeds VLC audio into Ableton)
+
+After setup, configure Ableton:
+1. Preferences → Audio → Output Device: "Karol"
+2. Preferences → Audio → Input Device: "UMC404HD 192k"
+3. Track 0 (Karol DJ): Audio From → "BlackHole 16ch" channels 1/2
+4. Track 1 (VLC Playlist): Audio From → "BlackHole 16ch" channels 3/4
+
+VLC is automatically configured to output to BlackHole 16ch.
 
 ### Verify
 ```bash
@@ -130,7 +140,38 @@ http://192.168.68.51:3131/ableton-mixer/
 ```
 Add to Home Screen for PWA experience (landscape, full-screen).
 
-## 7. Environment Variables
+## 7. U-Phoria UMC404HD Audio Interface
+
+### Verify Detection
+```bash
+system_profiler SPAudioDataType | grep UMC404HD
+# → UMC404HD 192k
+```
+
+### Check Status from S24
+```bash
+curl http://127.0.0.1:3131/api/audio/devices
+# → {"ok":true,"devices":{"umc404hd":{"present":true,...},"blackhole16ch":{"present":true},"karolAggregate":{"present":true}},...}
+```
+
+### Get Recommended Track Layout
+```bash
+curl http://127.0.0.1:3131/api/ableton/template | python3 -m json.tool
+# Returns the full track layout with inputs, plugins, and routing
+```
+
+### Signal Flow
+```
+Mic (UMC Input 1) ──→ Ableton Track 0 "Karol DJ" ──→ UMC Outputs 1-2 ──→ PA
+VLC audio ──→ BlackHole ch 3-4 ──→ Ableton Track 1 "VLC Playlist" ──→ UMC Outputs 1-2 ──→ PA
+```
+
+### Troubleshooting
+- **No audio from VLC in Ableton**: Check VLC output device → BlackHole 16ch. Verify Ableton track input monitoring is set to "In".
+- **Mic not audible**: Check UMC input gain knob. Verify Ableton track 0 input is "UMC404HD 192k" channels 1/2.
+- **Aggregate device missing**: Run `bash scripts/setup-uphoria-audio.sh` again.
+
+## 8. Environment Variables
 
 Copy `.env.example` to `.env` and customize:
 ```bash
@@ -146,9 +187,13 @@ cp .env.example .env
 | `VLC_PASSWORD` | `karol` | VLC HTTP interface password |
 | `KAROL_API_PORT` | `3131` | API server port |
 
-## 8. Common Commands
+## 9. Common Commands
 
 ```bash
+# Audio setup (one-time)
+bash scripts/setup-uphoria-audio.sh
+bash scripts/verify-audio-routing.sh
+
 # Save YouTube session from tablet
 npm run player:save-youtube-session
 

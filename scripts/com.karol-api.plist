@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.karol-api</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/node</string>
+		<string>/Users/macdonk/Documents/GitHub/deskreen/scripts/karol-api-server.js</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/macdonk/Documents/GitHub/deskreen</string>
+	<key>KeepAlive</key>
+	<true/>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/karol-api.out</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/karol-api.err</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<key>NODE_ENV</key>
+		<string>production</string>
+	</dict>
+</dict>
+</plist>

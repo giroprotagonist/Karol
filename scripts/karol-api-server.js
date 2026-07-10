@@ -724,6 +724,90 @@ router.post('/api/ableton/track/:i/send/:sendIndex', (ctx) => {
   ctx.body = { ok: true, sendIndex: sendIdx, value: clamped };
 });
 
+// ── Audio device discovery (for U-Phoria detection from S24) ──
+router.get('/api/audio/devices', (ctx) => {
+  const { execSync } = require('child_process');
+  let umcPresent = false;
+  let blackholePresent = false;
+  let karolAggregate = false;
+  let defaultOutput = '';
+  let umcSampleRate = 0;
+
+  try {
+    const out = execSync('system_profiler SPAudioDataType -json', { timeout: 3000 }).toString();
+    const data = JSON.parse(out);
+    for (const item of data.SPAudioDataType || []) {
+      for (const d of item._items || []) {
+        const name = d._name || '';
+        if (name.includes('UMC404HD')) {
+          umcPresent = true;
+          umcSampleRate = d.coreaudio_device_srate || 0;
+        }
+        if (name === 'BlackHole 16ch') blackholePresent = true;
+        if (name === 'Karol') karolAggregate = true;
+        if (d.coreaudio_default_audio_output_device === 'spaudio_yes') defaultOutput = name;
+      }
+    }
+  } catch {}
+
+  ctx.body = {
+    ok: true,
+    devices: {
+      umc404hd: { present: umcPresent, sampleRate: umcSampleRate, type: 'USB audio interface', inputs: 4, outputs: 4 },
+      blackhole16ch: { present: blackholePresent, type: 'Virtual audio driver' },
+      karolAggregate: { present: karolAggregate, type: 'Multi-Output Device' },
+    },
+    defaultOutput,
+    abletonConnected: abletonConnected,
+    apiOnline: true,
+  };
+});
+
+// ── Ableton session template (recommended track layout) ──
+router.get('/api/ableton/template', (ctx) => {
+  ctx.body = {
+    ok: true,
+    template: {
+      name: 'Karol DJ Session',
+      description: 'Recommended Ableton Live track layout for Karol DJ/karaoke',
+      tracks: [
+        {
+          index: 0,
+          name: 'Karol DJ',
+          type: 'Audio',
+          input: { device: 'BlackHole 16ch', channels: '1-2' },
+          output: 'Master',
+          description: 'Karaoke mic / DJ audio input from BlackHole channels 1-2',
+          recommendedPlugins: ['EQ Eight (HPF at 80Hz)', 'Compressor (light, 2:1)', 'Reverb (Send A)'],
+        },
+        {
+          index: 1,
+          name: 'VLC Playlist',
+          type: 'Audio',
+          input: { device: 'BlackHole 16ch', channels: '3-4' },
+          output: 'Master',
+          description: 'Background music from VLC via BlackHole channels 3-4',
+          recommendedPlugins: ['EQ Eight (slight smile curve)', 'Compressor (gentle)'],
+        },
+      ],
+      sends: [
+        { index: 0, label: 'A - Reverb', type: 'Reverb', preset: 'Medium Hall' },
+        { index: 1, label: 'B - Delay', type: 'Delay', preset: 'Stereo 1/4' },
+      ],
+      master: {
+        output: { device: 'Karol', description: 'Multi-Output Device (UMC404HD + BlackHole 16ch)' },
+        recommendedPlugins: ['Limiter (ceiling -0.3dB)'],
+      },
+      audioSettings: {
+        inputDevice: 'UMC404HD 192k',
+        outputDevice: 'Karol',
+        sampleRate: 48000,
+        bufferSize: 256,
+      },
+    },
+  };
+});
+
 // ── Hardware routes (match React SPA paths) ──
 router.get('/api/vlc-dj/hardware/mic', (ctx) => {
   ctx.body = { micVolume: 50, micMuted: false, vlcVolume: 75 };

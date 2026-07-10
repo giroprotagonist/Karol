@@ -20,8 +20,8 @@ android {
 		applicationId = "com.karol.controller"
 		minSdk = 26
 		targetSdk = 35
-		versionCode = 10
-		versionName = "2.3.0"
+		versionCode = 11
+		versionName = "3.2.0"
 		testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 	}
 
