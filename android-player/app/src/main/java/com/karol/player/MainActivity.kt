@@ -181,6 +181,10 @@ class MainActivity : AppCompatActivity() {
 			startShow()
 		}
 
+		if (!showStarted && YouTubeSessionHelper.isSignedIn()) {
+			startShow()
+		}
+
 		startStatusRefresh()
 	}
 

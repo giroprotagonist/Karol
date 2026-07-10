@@ -1,4 +1,4 @@
-import { type CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import type { VlcNowPlaying, VlcStatus } from '@common/VlcControllerTypes';
 import { formatTime } from '../api';
 
@@ -6,6 +6,7 @@ type VlcTransportCardProps = {
   nowPlaying: VlcNowPlaying | null;
   status: VlcStatus | null;
   connected: boolean;
+  host: string;
   onPlay: () => void;
   onPause: () => void;
   onSkipNext: () => void;
@@ -18,6 +19,7 @@ export default function VlcTransportCard({
   nowPlaying,
   status,
   connected,
+  host,
   onPlay,
   onPause,
   onSkipNext,
@@ -31,11 +33,38 @@ export default function VlcTransportCard({
   const volume = status?.volume ?? 128;
   const volumePercent = Math.round((volume / 256) * 100);
   const progress = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  const coverSrc =
+    nowPlaying?.coverUrl
+      ? `${host}${nowPlaying.coverUrl}`
+      : nowPlaying?.coverArt || null;
+
+  // Reset load state when cover source changes
+  const pendingCoverKey = nowPlaying?.filePath ?? nowPlaying?.id ?? '';
+  const [lastCoverKey, setLastCoverKey] = useState('');
+  if (pendingCoverKey !== lastCoverKey) {
+    setLastCoverKey(pendingCoverKey);
+    setImgLoaded(false);
+    setImgError(false);
+  }
 
   return (
     <div className="card vlc-transport-card">
-      {nowPlaying?.coverArt ? (
-        <div className="vlc-artwork" style={{ backgroundImage: `url(${nowPlaying.coverArt})` }} />
+      {coverSrc && !imgError ? (
+        <div className={`vlc-artwork ${imgLoaded ? 'loaded' : 'loading'}`}>
+          {!imgLoaded && (
+            <i className="fas fa-music vlc-artwork-placeholder" />
+          )}
+          <img
+            src={coverSrc}
+            alt=""
+            className={`vlc-artwork-img ${imgLoaded ? 'visible' : 'hidden'}`}
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
+          />
+        </div>
       ) : (
         <div className="vlc-artwork">
           <i className="fas fa-music" />

@@ -862,6 +862,46 @@ textarea {
 	cursor: not-allowed;
 }
 
+.queue-row-btn.preview {
+	background: rgba(99, 102, 241, 0.12);
+	color: var(--accent);
+}
+
+.queue-row-btn.preview:hover,
+.queue-row-btn.preview:active {
+	background: rgba(99, 102, 241, 0.25);
+}
+
+.queue-row-btn.stop-preview {
+	background: rgba(239, 68, 68, 0.12);
+	color: var(--danger);
+}
+
+.queue-row-btn.stop-preview:hover,
+.queue-row-btn.stop-preview:active {
+	background: rgba(239, 68, 68, 0.25);
+}
+
+@keyframes preview-spin {
+	0% { transform: rotate(0deg); }
+	100% { transform: rotate(360deg); }
+}
+
+.queue-row-btn.stop-preview.preview-loading {
+	animation: preview-spin 1.2s linear infinite;
+	cursor: wait;
+}
+
+.queue-item.preview-active {
+	border-color: var(--accent);
+	background: rgba(99, 102, 241, 0.06);
+}
+
+.search-result.preview-active {
+	border-color: var(--accent);
+	background: rgba(99, 102, 241, 0.06);
+}
+
 /* Artwork as drag handle */
 .queue-art-drag {
 	flex-shrink: 0;
@@ -1320,16 +1360,591 @@ textarea {
 		flex: 1;
 	}
 
+	.tab-panel .vlc-library-card {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		min-height: 0;
+		margin-bottom: 0;
+	}
+
+	.tab-panel .vlc-queue-card {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		min-height: 0;
+		margin-bottom: 0;
+	}
+
 	.queue-hint {
 		flex-shrink: 0;
 	}
 }
 
-/* ─── VLC Controller ──────────────────────────────────────── */
+/* ─── VLC Library (redesigned) ───────────────────────────── */
+
+.vlc-library-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.vlc-library-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vlc-library-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+}
+
+.enqueue-all-btn {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.25);
+  color: #c4b5fd;
+  flex-shrink: 0;
+}
+
+.enqueue-all-btn:active:not(:disabled) {
+  background: rgba(139, 92, 246, 0.25);
+}
+
+/* Search bar */
+.vlc-library-search-wrap {
+  position: relative;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.vlc-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.vlc-search-input {
+  width: 100%;
+  padding: 11px 36px 11px 36px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.88rem;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.vlc-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.vlc-search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.vlc-search-clear:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* Library list */
+.vlc-library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 2px;
+}
+
+.vlc-library-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.vlc-library-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+/* Library row */
+.vlc-library-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+  min-width: 0;
+}
+
+.vlc-library-row:active {
+  background: var(--bg-hover);
+}
+
+.vlc-library-row--previewing {
+  border-color: var(--accent);
+  background: rgba(35, 134, 54, 0.08);
+}
+
+/* Top row: thumb + text + duration */
+.vlc-lib-top-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Bottom row: 3 evenly-spaced icon+label buttons */
+.vlc-lib-bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
+  gap: 4px;
+}
+
+/* Library thumb */
+.vlc-lib-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--bg-hover);
+}
+
+.vlc-lib-thumb-fb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 1rem;
+  background: linear-gradient(135deg, #1a1a2e, #12121c);
+  border: 1px solid var(--border);
+}
+
+/* Skeleton thumb */
+.vlc-lib-thumb-skel {
+  border-radius: 6px;
+  background: var(--bg-hover);
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+/* Library meta */
+.vlc-lib-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.vlc-lib-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--text);
+}
+
+.vlc-lib-subtitle {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vlc-lib-dur {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Library action buttons - stacked icon+label */
+.vlc-lib-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: auto;
+  min-width: 52px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  background: transparent;
+  color: var(--text-muted);
+  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+
+.vlc-lib-btn i {
+  font-size: 0.85rem;
+}
+
+.vlc-lib-btn-label {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1;
+}
+
+.vlc-lib-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.vlc-lib-btn--preview {
+  color: var(--accent-strong);
+  background: rgba(35, 134, 54, 0.12);
+}
+
+.vlc-lib-btn--preview:hover:not(:disabled) {
+  background: rgba(35, 134, 54, 0.25);
+}
+
+.vlc-lib-btn--stop {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.vlc-lib-btn--stop:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.25);
+}
+
+.vlc-lib-btn--play {
+  color: var(--playing);
+  background: rgba(96, 165, 250, 0.12);
+}
+
+.vlc-lib-btn--play:hover:not(:disabled) {
+  background: rgba(96, 165, 250, 0.25);
+}
+
+.vlc-lib-btn--enqueue {
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.vlc-lib-btn--enqueue:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.25);
+}
+
+/* Skeleton loading */
+.vlc-library-skeleton {
+  pointer-events: none;
+  cursor: default;
+  opacity: 0.5;
+}
+
+.vlc-skel-line {
+  height: 12px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  margin-bottom: 4px;
+}
+
+.vlc-skel-line.w-70 {
+  width: 70%;
+}
+
+.vlc-skel-line.w-40 {
+  width: 40%;
+}
+
+.vlc-skel-line.w-30 {
+  width: 30%;
+}
+
+@keyframes vlc-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.8; }
+}
+
+.pulse {
+  animation: vlc-pulse 1.5s ease-in-out infinite;
+}
+
+/* ─── VLC Queue (redesigned compact) ──────────────────────── */
+
+.vlc-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 2px;
+}
+
+.vlc-queue-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.vlc-queue-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+/* Queue row */
+.vlc-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid transparent;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  min-height: 44px;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.vlc-queue-row:active {
+  background: var(--bg-hover);
+}
+
+.vlc-queue-row--active {
+  border-color: rgba(96, 165, 250, 0.30);
+  background: var(--playing-bg);
+}
+
+.vlc-queue-row--active .vlc-queue-row-accent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--playing);
+  border-radius: 0 2px 2px 0;
+}
+
+.vlc-queue-row--pending {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Queue number */
+.vlc-queue-num {
+  width: 20px;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.vlc-queue-row--active .vlc-queue-num {
+  color: var(--playing);
+}
+
+/* Queue thumb */
+.vlc-queue-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--bg-hover);
+}
+
+.vlc-queue-thumb-fb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  background: linear-gradient(135deg, #1a1a2e, #12121c);
+  border: 1px solid var(--border);
+}
+
+/* Queue meta */
+.vlc-queue-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.vlc-queue-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--text);
+}
+
+.vlc-queue-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vlc-queue-dur {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vlc-queue-status {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--playing-bg);
+  color: var(--playing);
+}
+
+/* Queue remove button */
+.vlc-queue-remove-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: transparent;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  touch-action: manipulation;
+}
+
+.vlc-queue-row:active .vlc-queue-remove-btn {
+  opacity: 1;
+}
+
+.vlc-queue-remove-btn:active:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--danger);
+  opacity: 1;
+}
+
+.vlc-queue-remove-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+/* Empty state */
+.vlc-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px 24px;
+  flex: 1;
+}
+
+.vlc-empty-icon {
+  font-size: 2.5rem;
+  margin-bottom: 12px;
+  opacity: 0.3;
+  color: var(--text-muted);
+}
+
+.vlc-empty-heading {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.vlc-empty-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  max-width: 240px;
+  line-height: 1.5;
+}
+
+/* ─── VLC queue card (layout fix for flex children) ──────── */
+
+.vlc-queue-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+/* ─── VLC Transport Card (preserved) ─────────────────────── */
 
 .vlc-transport-card {
-	padding: 20px;
-	text-align: center;
+  padding: 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-bottom: 0;
 }
 
 .vlc-artwork {
@@ -1343,6 +1958,49 @@ textarea {
 	font-size: 3rem;
 	color: var(--text-muted);
 	border: 1px solid var(--border);
+	position: relative;
+	overflow: hidden;
+}
+
+.vlc-artwork-img {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	border-radius: var(--radius);
+	transition: opacity 0.3s ease;
+}
+
+.vlc-artwork-img.hidden {
+	opacity: 0;
+}
+
+.vlc-artwork-img.visible {
+	opacity: 1;
+}
+
+.vlc-artwork.loading .vlc-artwork-placeholder {
+	position: absolute;
+	font-size: 2.5rem;
+	z-index: 1;
+	opacity: 0.4;
+	animation: vlc-artwork-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes vlc-artwork-pulse {
+	0%, 100% { opacity: 0.3; }
+	50% { opacity: 0.6; }
+}
+
+/* VLC active track fade in */
+.vlc-active-fade.active {
+	animation: vlc-active-fadein 0.4s ease-out;
+}
+
+@keyframes vlc-active-fadein {
+	from { background: rgba(var(--accent-rgb, 99, 102, 241), 0.15); }
+	to { background: transparent; }
 }
 
 .vlc-track-info {
@@ -1388,83 +2046,20 @@ textarea {
 	min-height: 56px;
 }
 
-/* VLC Playlist Section */
-.vlc-playlist-section {
-	background: var(--bg-card);
-	border-radius: var(--radius);
-	border: 1px solid var(--border);
-	padding: 16px;
-	margin-top: 14px;
+/* ─── VLC Misc (preserved) ───────────────────────────────── */
+
+.vlc-track-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin-bottom: 4px;
 }
 
-.vlc-playlist-section h2 {
-	margin: 0 0 10px;
-	font-size: 0.85rem;
-	font-weight: 700;
-	color: var(--text-muted);
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
+.vlc-track-artist {
+  font-size: 0.9rem;
+  color: var(--text-muted);
 }
 
-.vlc-library-list {
-	overflow-y: auto;
-	max-height: 300px;
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-	margin-top: 10px;
-}
-
-.vlc-library-item {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	padding: 8px 10px;
-	border-radius: var(--radius-sm);
-	background: var(--bg);
-	border: 1px solid transparent;
-	transition: var(--transition);
-}
-
-.vlc-library-item:hover {
-	background: var(--bg-hover);
-}
-
-.vlc-library-item.active {
-	border-color: rgba(96, 165, 250, 0.35);
-	background: var(--playing-bg);
-}
-
-.vlc-track-meta {
-	flex: 1;
-	min-width: 0;
-	text-align: left;
-}
-
-.vlc-track-meta .vlc-track-title {
-	font-size: 0.88rem;
-	margin-bottom: 2px;
-}
-
-.vlc-track-meta .vlc-track-artist {
-	font-size: 0.75rem;
-}
-
-.vlc-track-actions {
-	display: flex;
-	gap: 6px;
-	flex-shrink: 0;
-}
-
-.vlc-index {
-	font-size: 0.85rem;
-	font-weight: 700;
-	color: var(--text-muted);
-	min-width: 24px;
-	text-align: center;
-}
-
-/* Hardware Mixer Strip */
 .hardware-mixer-strip {
 	background: var(--bg-card);
 	border-radius: var(--radius);
@@ -1540,24 +2135,33 @@ textarea {
 }
 
 /* VLC Tab layout */
+.vlc-tab-wrapper {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+}
+
 .vlc-tab-layout {
 	display: flex;
+	flex: 1;
+	min-height: 0;
 	gap: 16px;
 	align-items: flex-start;
+	overflow: hidden;
 }
 
 .vlc-main-col {
 	flex: 1;
 	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 }
 
 /* VLC sub-tab nav */
-.vlc-tab-wrapper {
-	display: flex;
-	flex-direction: column;
-	gap: 0;
-}
-
 .vlc-subtab-nav {
 	display: flex;
 	gap: 4px;
@@ -1598,9 +2202,159 @@ textarea {
 @media (max-width: 768px) {
 	.vlc-tab-layout {
 		flex-direction: column;
+		align-items: stretch;
 	}
 
 	.hardware-mixer-strip {
 		width: 100%;
 	}
+}
+
+/* ── Ableton Mixer Strip ─────────────────────────────────────────────── */
+
+.ableton-card {
+  margin: 0;
+}
+
+.ableton-status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.ableton-status.connected {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.ableton-status.disconnected {
+  color: #a1a1aa;
+  background: rgba(161, 161, 170, 0.1);
+}
+
+/* ── Transport ─────────────────────────────────────── */
+
+.ableton-transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border, #27272a);
+}
+
+.ableton-transport-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.ableton-tempo {
+  flex: 1;
+  min-width: 120px;
+}
+
+.ableton-tempo label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted, #a1a1aa);
+  margin-bottom: 4px;
+}
+
+.ableton-tempo strong {
+  color: var(--fg, #fafafa);
+}
+
+.ableton-tempo input[type="range"] {
+  width: 100%;
+}
+
+/* ── Channel strips ─────────────────────────────────── */
+
+.ableton-strips {
+  display: flex;
+  gap: 10px;
+  padding: 12px 0;
+}
+
+.ableton-channel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid var(--border, #27272a);
+}
+
+.ableton-channel-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ableton-channel-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg, #fafafa);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ableton-channel-vol {
+  font-size: 11px;
+  color: var(--muted, #a1a1aa);
+}
+
+.ableton-fader-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.ableton-fader {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  width: 8px;
+  height: 120px;
+  accent-color: var(--accent, #6366f1);
+  background: rgba(255,255,255,0.05);
+  border-radius: 4px;
+}
+
+/* Horizontal range for master on narrow screens */
+.ableton-fader--master {
+  -webkit-appearance: auto;
+  appearance: auto;
+  width: 100%;
+  height: auto;
+}
+
+.ableton-mute-btn {
+  width: 100%;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+/* ── Master ─────────────────────────────────────────── */
+
+.ableton-master {
+  padding: 12px 0;
+  border-top: 1px solid var(--border, #27272a);
+}
+
+.ableton-loading {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted, #a1a1aa);
+  padding: 4px 0;
+  animation: ableton-pulse 1s infinite;
+}
+
+@keyframes ableton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }

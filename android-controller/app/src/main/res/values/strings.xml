@@ -33,4 +33,7 @@
 	<string name="discovery_mac_host">Mac host at %1$s:%2$d</string>
 	<string name="invalid_url">Enter a valid http:// address</string>
 	<string name="connecting">Connecting\u2026</string>
+	<string name="connecting_to_karol">Connecting to Karol\u2026</string>
+	<string name="cannot_connect_karol">Cannot connect to Karol server</string>
+	<string name="retry">Retry</string>
 </resources>

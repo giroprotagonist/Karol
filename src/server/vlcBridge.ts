@@ -119,20 +119,45 @@ function extractMeta(d: Record<string, unknown>): {
   };
 }
 
+function resolveFullPath(currentPlId: unknown, playlistData: Record<string, unknown>): string | undefined {
+  if (currentPlId == null) return undefined;
+  const rootChildren = playlistData.children as unknown[] | undefined;
+  const first = (rootChildren?.[0] ?? {}) as Record<string, unknown>;
+  const items = (first.children ?? []) as unknown[];
+  for (const item of items) {
+    const t = item as Record<string, unknown>;
+    if (String(t.id) === String(currentPlId)) {
+      const uri = t.uri as string | undefined;
+      if (uri && uri.startsWith('file://')) {
+        return decodeURIComponent(uri.replace('file://', ''));
+      }
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 export async function getNowPlaying(): Promise<VlcNowPlaying | null> {
   try {
-    const d = await vlcGet('/requests/status.json');
+    const [d, plData] = await Promise.all([
+      vlcGet('/requests/status.json'),
+      vlcGet('/requests/playlist.json'),
+    ]);
     const meta = extractMeta(d);
     if (!meta.title && !meta.filename) return null;
+    // Resolve the full absolute file path from the playlist URI (meta.filename is relative)
+    const fullPath = resolveFullPath(d.currentplid, plData) ?? meta.filename;
+    const coverPath = findCoverPath(fullPath ?? '');
     return {
       title: meta.title || meta.filename || '',
       artist: meta.artist,
       album: meta.album,
       duration: Number(d.length ?? 0),
       position: Number(d.time ?? 0),
-      filePath: meta.filename,
+      filePath: fullPath,
       id: d.currentplid != null ? String(d.currentplid) : undefined,
-      coverArt: meta.filename ? findCoverForTrack(meta.filename) : undefined,
+      coverPath,
+      coverUrl: fullPath ? `/api/vlc-dj/cover?path=${encodeURIComponent(fullPath)}` : undefined,
     };
   } catch {
     return null;
@@ -152,11 +177,21 @@ export async function getVlcPlaylist(): Promise<VlcPlaylistState> {
     const items = (first.children ?? []) as unknown[];
     const tracks: VlcTrack[] = items.map((item: unknown, i: number) => {
       const t = item as Record<string, unknown>;
+      const uri = String(t.uri ?? '');
+      const filename = String(t.name ?? '');
+      const fullPath = uri.startsWith('file://')
+        ? decodeURIComponent(uri.replace('file://', ''))
+        : filename;
+      const coverPath = findCoverPath(fullPath);
+      const coverUrl = coverPath
+        ? `/api/vlc-dj/cover?path=${encodeURIComponent(fullPath)}`
+        : undefined;
       return {
         id: String(t.id ?? i),
-        name: String(t.name ?? ''),
-        uri: String(t.uri ?? ''),
+        name: filename,
+        uri,
         duration: typeof t.duration === 'number' ? t.duration : undefined,
+        coverUrl,
       };
     });
     const cid = Number(stData.currentplid);
@@ -171,7 +206,22 @@ export async function getVlcPlaylist(): Promise<VlcPlaylistState> {
 
 const coverCache = new Map<string, string>(); // path → data URI
 
-function findCoverForTrack(trackPath: string): string | undefined {
+export function findCoverForTrack(trackPath: string): string | undefined {
+  return findCoverForTrackInternal(trackPath);
+}
+
+export function findCoverPath(trackPath: string): string | undefined {
+  if (!trackPath || !fs.existsSync(trackPath)) return undefined;
+  const dir = path.dirname(trackPath);
+  const candidates = ['cover.jpg', 'cover.png', 'folder.jpg', 'folder.png', 'artwork.jpg'];
+  for (const c of candidates) {
+    const coverPath = path.join(dir, c);
+    if (fs.existsSync(coverPath)) return coverPath;
+  }
+  return undefined;
+}
+
+function findCoverForTrackInternal(trackPath: string): string | undefined {
   if (!trackPath || !fs.existsSync(trackPath)) return undefined;
   const cached = coverCache.get(trackPath);
   if (cached) return cached;

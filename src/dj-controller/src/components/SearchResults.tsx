@@ -4,6 +4,10 @@ import TrackTitle from './TrackTitle';
 type SearchResultsProps = {
 	results: YouTubeSearchResult[];
 	connected: boolean;
+	previewVideoId: string | null;
+	previewLoading: boolean;
+	onPreview: (videoId: string) => void;
+	onStopPreview: () => void;
 	onQueue: (url: string) => void;
 	onPlayNow: (url: string) => void;
 };
@@ -11,6 +15,10 @@ type SearchResultsProps = {
 export default function SearchResults({
 	results,
 	connected,
+	previewVideoId,
+	previewLoading,
+	onPreview,
+	onStopPreview,
 	onQueue,
 	onPlayNow,
 }: SearchResultsProps) {
@@ -20,8 +28,10 @@ export default function SearchResults({
 
 	return (
 		<div className="search-results">
-			{results.map((result) => (
-				<div key={result.videoId} className="search-result">
+			{results.map((result) => {
+				const isPreviewing = previewVideoId === result.videoId;
+				return (
+				<div key={result.videoId} className={`search-result${isPreviewing ? ' preview-active' : ''}`}>
 					<img
 						className="search-thumb"
 						src={result.thumbnailUrl || `https://img.youtube.com/vi/${result.videoId}/mqdefault.jpg`}
@@ -32,6 +42,24 @@ export default function SearchResults({
 						<TrackTitle text={result.title} className="search-title" clampLines={4} />
 						<div className="search-channel">{result.channelTitle}</div>
 						<div className="search-actions">
+							{isPreviewing ? (
+								<button
+									className="btn small"
+									type="button"
+									disabled={previewLoading}
+									onClick={previewLoading ? undefined : onStopPreview}
+								>
+									{previewLoading ? '◌ Loading...' : '■ Stop'}
+								</button>
+							) : (
+								<button
+									className="btn small"
+									type="button"
+									onClick={() => onPreview(result.videoId)}
+								>
+									♪ Preview
+								</button>
+							)}
 							<button
 								className="btn small"
 								type="button"
@@ -51,7 +79,8 @@ export default function SearchResults({
 						</div>
 					</div>
 				</div>
-			))}
+				);
+			})}
 		</div>
 	);
 }

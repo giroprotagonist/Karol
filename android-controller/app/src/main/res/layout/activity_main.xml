@@ -49,7 +49,7 @@
 		android:gravity="center"
 		android:orientation="vertical"
 		android:padding="32dp"
-		android:visibility="visible">
+		android:visibility="gone">
 
 		<com.google.android.material.progressindicator.CircularProgressIndicator
 			android:id="@+id/discoveryProgress"
@@ -147,6 +147,53 @@
 			android:layout_height="wrap_content"
 			android:layout_marginTop="8dp"
 			android:text="@string/disconnect"
+			android:visibility="gone" />
+	</LinearLayout>
+
+	<LinearLayout
+		android:id="@+id/healthCheckPanel"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"
+		android:background="@color/karol_bg"
+		android:gravity="center"
+		android:orientation="vertical"
+		android:padding="32dp"
+		android:visibility="gone">
+
+		<com.google.android.material.progressindicator.CircularProgressIndicator
+			android:id="@+id/healthCheckProgress"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:indeterminate="true"
+			app:indicatorColor="@color/karol_accent" />
+
+		<TextView
+			android:id="@+id/healthCheckText"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="20dp"
+			android:gravity="center"
+			android:text="@string/connecting_to_karol"
+			android:textColor="@color/karol_text_primary"
+			android:textSize="18sp" />
+
+		<TextView
+			android:id="@+id/healthCheckErrorText"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="16dp"
+			android:gravity="center"
+			android:text="@string/cannot_connect_karol"
+			android:textColor="@color/karol_error"
+			android:textSize="14sp"
+			android:visibility="gone" />
+
+		<com.google.android.material.button.MaterialButton
+			android:id="@+id/healthCheckRetryButton"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_marginTop="24dp"
+			android:text="@string/retry"
 			android:visibility="gone" />
 	</LinearLayout>
 </FrameLayout>

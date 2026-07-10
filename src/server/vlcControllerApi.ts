@@ -1,10 +1,13 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   getVlcStatus,
   getVlcPlaylist,
   getNowPlaying,
   isVlcRunning,
+  findCoverPath,
   vlcPlay,
   vlcPause,
   vlcSkipNext,
@@ -55,6 +58,66 @@ export function registerVlcControllerApi(router: Router): void {
     } catch (error) {
       ctx.status = 500;
       ctx.body = { error: error instanceof Error ? error.message : 'Failed to get now playing' };
+    }
+  });
+
+  // Cover art — serves the actual image binary for browser caching
+  router.get('/api/vlc-dj/cover', async (ctx: Context) => {
+    setCors(ctx);
+    const trackPath = (ctx.query.path as string) || '';
+    if (!trackPath) {
+      ctx.status = 400;
+      ctx.body = { error: 'path query parameter is required' };
+      return;
+    }
+    const coverPath = findCoverPath(trackPath);
+    if (!coverPath || !fs.existsSync(coverPath)) {
+      ctx.status = 404;
+      ctx.set('Content-Type', 'image/svg+xml');
+      ctx.body = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><rect fill="#1a1a2e" width="300" height="300"/><text fill="#555" font-size="40" text-anchor="middle" x="150" y="170">♪</text></svg>';
+      return;
+    }
+    try {
+      const ext = path.extname(coverPath).toLowerCase();
+      const mime = ext === '.png' ? 'image/png' : 'image/jpeg';
+      ctx.set('Content-Type', mime);
+      ctx.set('Cache-Control', 'public, max-age=86400, immutable');
+      ctx.body = fs.createReadStream(coverPath);
+    } catch {
+      ctx.status = 500;
+      ctx.body = { error: 'Failed to serve cover art' };
+    }
+  });
+
+  // Audio preview — streams the actual audio file for local preview on the controller
+  router.get('/api/vlc-dj/audio', async (ctx: Context) => {
+    setCors(ctx);
+    const filePath = (ctx.query.path as string) || '';
+    if (!filePath || !fs.existsSync(filePath)) {
+      ctx.status = 400;
+      ctx.body = { error: 'path query parameter is required and must point to an existing file' };
+      return;
+    }
+    try {
+      const stat = fs.statSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.mp3': 'audio/mpeg',
+        '.m4a': 'audio/mp4',
+        '.flac': 'audio/flac',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.aiff': 'audio/aiff',
+      };
+      const mime = mimeMap[ext] || 'audio/mpeg';
+      ctx.set('Content-Type', mime);
+      ctx.set('Content-Length', String(stat.size));
+      ctx.set('Accept-Ranges', 'bytes');
+      ctx.set('Cache-Control', 'public, max-age=86400, immutable');
+      ctx.body = fs.createReadStream(filePath);
+    } catch {
+      ctx.status = 500;
+      ctx.body = { error: 'Failed to stream audio file' };
     }
   });
 

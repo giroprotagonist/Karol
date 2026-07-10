@@ -219,6 +219,17 @@ class PlayerPreferences(context: Context) {
 		prefs.edit().putInt(KEY_TRUSTED_UA_VERSION, version).apply()
 	}
 
+	fun getMacHostIp(): String = prefs.getString(KEY_MAC_HOST_IP, DEFAULT_MAC_HOST_IP) ?: DEFAULT_MAC_HOST_IP
+
+	fun setMacHostIp(host: String) {
+		prefs.edit().putString(KEY_MAC_HOST_IP, host.trim()).apply()
+	}
+
+	fun getMacProxyBaseUrl(): String {
+		val ip = getMacHostIp()
+		return "http://$ip:3131"
+	}
+
 	fun getVolumeLevel(): Double =
 		prefs.getFloat(KEY_VOLUME_LEVEL, 1f).toDouble().coerceIn(0.0, 1.0)
 
@@ -262,6 +273,8 @@ class PlayerPreferences(context: Context) {
 
 	companion object {
 		private const val KEY_API = "youtube_api_key"
+		private const val KEY_MAC_HOST_IP = "mac_host_ip"
+		private const val DEFAULT_MAC_HOST_IP = "192.168.68.51"
 		private const val KEY_PLAYLIST_ENABLED = "playlist_enabled"
 		private const val KEY_PLAYLISTS_LIBRARY = "playlists_library"
 		private const val KEY_ACTIVE_PLAYLIST_ID = "active_playlist_id"

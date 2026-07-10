@@ -6,6 +6,7 @@ import android.util.Log
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.CacheControl
 import io.ktor.server.application.call
 import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
@@ -13,6 +14,7 @@ import io.ktor.server.cio.CIO
 import io.ktor.server.request.receiveText
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.uri
+import io.ktor.server.request.queryString
 import io.ktor.server.response.header
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
@@ -43,8 +45,9 @@ class DjHttpServer(
 	private val statusProvider: () -> HostStatus = {
 		HostStatus(false, 0, "", null, null)
 	},
-	private val vlcProxyTarget: String = "http://192.168.68.51:3131",
 ) {
+	private val vlcProxyTarget: String
+		get() = preferences.getMacProxyBaseUrl()
 	private var engine: ApplicationEngine? = null
 
 	@Volatile
@@ -684,15 +687,41 @@ class DjHttpServer(
 						if (body.has("youtubeApiKey")) {
 							preferences.setYouTubeApiKey(body.optString("youtubeApiKey"))
 						}
-						call.respondJson(JSONObject().put("ok", true))
+						if (body.has("macHostIp")) {
+							val ip = body.optString("macHostIp").trim()
+							if (ip.isNotBlank()) {
+								preferences.setMacHostIp(ip)
+							}
+						}
+						call.respondJson(
+							JSONObject()
+								.put("ok", true)
+								.put("macHostIp", preferences.getMacHostIp()),
+						)
 					}
-					// VLC DJ proxy – forward requests to the Mac Deskreen host
+					// Proxy routes – forward to the Mac Deskreen host (192.168.68.51:3131)
 					route("/api/vlc-dj") {
-						get("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
-						post("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
-						put("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
-						delete("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
-						patch("{path...}") { proxyToVlcHost(call, vlcProxyTarget) }
+						get("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
+						post("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
+						put("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
+						delete("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
+						patch("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
+					}
+					route("/api/ableton") {
+						get("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
+						post("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
+						put("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
+						delete("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
+						patch("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
+					}
+					// YouTube audio preview proxy – forward to Mac where yt-dlp is available
+					get("/api/youtube-dj/audio-stream") {
+						val targetUrl = "$vlcProxyTarget/api/youtube-dj/audio-stream?${call.request.queryString()}"
+						proxyJsonToHost(call, targetUrl)
+					}
+					// Root path – serve the DJ controller SPA
+					get("/") {
+						call.serveAsset("dj-controller/index.html", "text/html")
 					}
 					get("/dj-controller") {
 						call.response.header(HttpHeaders.Location, "/dj-controller/")
@@ -840,24 +869,15 @@ class DjHttpServer(
 			.put("state", state)
 	}
 
-	private suspend fun proxyToVlcHost(
+	private suspend fun proxyJsonToHost(
 		call: io.ktor.server.application.ApplicationCall,
-		targetBase: String,
+		targetUrl: String,
 	) {
 		try {
-			val path = call.request.uri.removePrefix("/api/vlc-dj")
-			val url = URL("$targetBase/api/vlc-dj$path")
-			val conn = (url.openConnection() as HttpURLConnection).apply {
-				requestMethod = call.request.httpMethod.value
-				connectTimeout = 5000
-				readTimeout = 8000
-				setRequestProperty("Accept", "application/json")
-				if (call.request.httpMethod.value in listOf("POST", "PUT", "PATCH")) {
-					doOutput = true
-					setRequestProperty("Content-Type", "application/json")
-					val body = call.receiveText()
-					outputStream.use { os: OutputStream -> os.write(body.toByteArray()) }
-				}
+			val conn = (URL(targetUrl).openConnection() as HttpURLConnection).apply {
+				requestMethod = "GET"
+				connectTimeout = 15_000
+				readTimeout = 15_000
 			}
 			val status = conn.responseCode
 			val bodyStream: InputStream = try {
@@ -867,17 +887,78 @@ class DjHttpServer(
 			}
 			val body = bodyStream.bufferedReader().use { it.readText() }
 			conn.disconnect()
-
 			call.response.header(HttpHeaders.AccessControlAllowOrigin, "*")
-			call.response.header(HttpHeaders.ContentType, "application/json")
+			call.response.header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
 			call.respondText(body, ContentType.Application.Json, HttpStatusCode.fromValue(status))
 		} catch (e: IOException) {
 			call.response.header(HttpHeaders.AccessControlAllowOrigin, "*")
 			call.respondJson(
 				JSONObject()
 					.put("ok", false)
-					.put("error", "VLC host unreachable – is Deskreen running on your Mac?")
-					.put("vlcProxyTarget", targetBase),
+					.put("error", "Media host unreachable – is Deskreen running on your Mac?"),
+			)
+		}
+	}
+
+	private suspend fun proxyToMacHost(
+		call: io.ktor.server.application.ApplicationCall,
+		targetBase: String,
+		prefix: String,
+	) {
+		try {
+			val path = call.request.uri.removePrefix(prefix)
+			val url = URL("$targetBase$prefix$path")
+			val conn = (url.openConnection() as HttpURLConnection).apply {
+				requestMethod = call.request.httpMethod.value
+				connectTimeout = 5000
+				// Use a longer read timeout for binary streams (e.g. audio preview)
+				readTimeout = if (path.startsWith("/audio")) 120_000 else 8000
+				if (call.request.httpMethod.value in listOf("POST", "PUT", "PATCH")) {
+					doOutput = true
+					setRequestProperty("Content-Type", "application/json")
+					val body = call.receiveText()
+					outputStream.use { os: OutputStream -> os.write(body.toByteArray()) }
+				}
+			}
+			val status = conn.responseCode
+			val upstreamContentType = conn.contentType ?: "application/json"
+
+			val isBinary = upstreamContentType.startsWith("audio/")
+				|| upstreamContentType.startsWith("image/")
+				|| upstreamContentType.startsWith("video/")
+
+			call.response.header(HttpHeaders.AccessControlAllowOrigin, "*")
+
+			if (isBinary) {
+				val bodyStream: InputStream = try {
+					conn.inputStream
+				} catch (_: IOException) {
+					conn.errorStream ?: ByteArray(0).inputStream()
+				}
+				val bodyBytes = bodyStream.readBytes()
+				conn.disconnect()
+				val ct = ContentType.parse(upstreamContentType)
+				call.response.header(HttpHeaders.ContentType, ct.toString())
+				call.respondBytes(bodyBytes, ct, HttpStatusCode.fromValue(status))
+			} else {
+				val bodyStream: InputStream = try {
+					conn.inputStream
+				} catch (_: IOException) {
+					conn.errorStream ?: ByteArray(0).inputStream()
+				}
+				val body = bodyStream.bufferedReader().use { it.readText() }
+				conn.disconnect()
+				call.response.header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+				call.respondText(body, ContentType.Application.Json, HttpStatusCode.fromValue(status))
+			}
+		} catch (e: IOException) {
+			call.response.header(HttpHeaders.AccessControlAllowOrigin, "*")
+			call.respondJson(
+				JSONObject()
+					.put("ok", false)
+					.put("error", "Host unreachable – is Deskreen running on your Mac?")
+					.put("proxyTarget", targetBase)
+					.put("prefix", prefix),
 			)
 		}
 	}
@@ -894,6 +975,15 @@ class DjHttpServer(
 		contentType: String,
 	) {
 		response.header(HttpHeaders.AccessControlAllowOrigin, "*")
+		// Hashed assets can be cached forever (content-addressed URLs).
+		// Hashed file pattern: index-<8 char hex hash>.js / .css
+		val isHashedAsset = assetPath.endsWith(".js") || assetPath.endsWith(".css")
+		if (isHashedAsset && assetPath.matches(Regex(".*/[a-zA-Z0-9_-]{8,}\\.(js|css)$"))) {
+			response.header(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
+		} else if (assetPath.endsWith(".html")) {
+			// HTML must never be cached — it lists the current asset hashes
+			response.header(HttpHeaders.CacheControl, "no-cache, no-store, must-revalidate")
+		}
 		try {
 			val bytes = context.assets.open(assetPath).use { it.readBytes() }
 			respondBytes(bytes, ContentType.parse(contentType))

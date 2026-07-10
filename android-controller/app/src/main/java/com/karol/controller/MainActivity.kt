@@ -28,10 +28,12 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 class MainActivity : AppCompatActivity() {
 	private lateinit var webView: WebView
@@ -47,11 +49,18 @@ class MainActivity : AppCompatActivity() {
 	private lateinit var scanQrButton: MaterialButton
 	private lateinit var disconnectButton: MaterialButton
 	private lateinit var openInChromeButton: MaterialButton
+	private lateinit var healthCheckPanel: LinearLayout
+	private lateinit var healthCheckProgress: com.google.android.material.progressindicator.CircularProgressIndicator
+	private lateinit var healthCheckText: TextView
+	private lateinit var healthCheckErrorText: TextView
+	private lateinit var healthCheckRetryButton: MaterialButton
 
 	private var isConnected = false
 	private var hostHealthy = true
 	private var discoveryJob: Job? = null
 	private var healthJob: Job? = null
+	private var healthCheckJob: Job? = null
+	private var pendingUrl: String = ""
 	private var lastLoadedUrl: String = ""
 	private var consecutiveHealthFailures = 0
 	private var lastWebViewReloadAt = 0L
@@ -77,6 +86,13 @@ class MainActivity : AppCompatActivity() {
 				)
 				// #endregion
 				nativeBridge.pushNowPlayingToWebView(nowPlaying)
+			}
+		}
+
+	private val vlcPlaybackRelayListener: (VlcNowPlayingData?, VlcPlaybackRelay.Source) -> Unit =
+		{ data, source ->
+			if (source == VlcPlaybackRelay.Source.NOTIFICATION && data != null && ::nativeBridge.isInitialized) {
+				nativeBridge.pushVlcNowPlayingToWebView(data)
 			}
 		}
 
@@ -122,6 +138,11 @@ class MainActivity : AppCompatActivity() {
 		scanQrButton = findViewById(R.id.scanQrButton)
 		disconnectButton = findViewById(R.id.disconnectButton)
 		openInChromeButton = findViewById(R.id.openInChromeButton)
+		healthCheckPanel = findViewById(R.id.healthCheckPanel)
+		healthCheckProgress = findViewById(R.id.healthCheckProgress)
+		healthCheckText = findViewById(R.id.healthCheckText)
+		healthCheckErrorText = findViewById(R.id.healthCheckErrorText)
+		healthCheckRetryButton = findViewById(R.id.healthCheckRetryButton)
 
 		val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 		val savedUrl = prefs.getString(KEY_URL, "") ?: ""
@@ -129,9 +150,21 @@ class MainActivity : AppCompatActivity() {
 			urlInput.setText(savedUrl)
 		}
 
+		// Track whether this is a fresh install (first launch) vs an update
+		val lastVersionCode = prefs.getInt("last_version_code", 0)
+		val currentVersionCode = packageManager.getPackageInfo(packageName, 0).versionCode
+		if (lastVersionCode != currentVersionCode) {
+			// New install or update — clear stale WebView cache to prevent
+			// crashes from cached HTML referencing old asset filenames.
+			android.webkit.WebStorage.getInstance().deleteAllData()
+			clearWebViewCache()
+			prefs.edit().putInt("last_version_code", currentVersionCode).apply()
+		}
+
 		configureWebView()
 		RemoteVolumeController.addListener(volumeListener)
 		PlaybackStateRelay.addListener(playbackRelayListener)
+		VlcPlaybackRelay.addListener(vlcPlaybackRelayListener)
 
 		savedInstanceState?.let {
 			isConnected = it.getBoolean(SAVED_CONNECTED, false)
@@ -166,34 +199,25 @@ class MainActivity : AppCompatActivity() {
 
 		disconnectButton.setOnClickListener { disconnect() }
 
+		healthCheckRetryButton.setOnClickListener {
+			// After a failed health check (e.g. host IP changed), rediscover
+			// the player on the LAN rather than retrying the same stale URL.
+			startAutoDiscovery()
+		}
+
 		intent?.data?.toString()?.let { incoming ->
 			KarolUrl.normalize(incoming)?.let { url ->
 				prefs.edit().putString(KEY_URL, url).apply()
 				urlInput.setText(url)
-				loadControllerUrl(url)
+				startStartupHealthCheck(url)
 			}
 			return
 		}
 
 		if (lastLoadedUrl.isNotBlank()) {
-			loadControllerUrl(lastLoadedUrl)
+			startStartupHealthCheck(lastLoadedUrl)
 		} else if (savedUrl.isNotBlank()) {
-			lifecycleScope.launch {
-				val host = extractHostFromUrl(savedUrl) ?: run {
-					startAutoDiscovery()
-					return@launch
-				}
-				val port = extractPortFromUrl(savedUrl)
-				val healthy =
-					withContext(Dispatchers.IO) {
-						KarolDiscoveryService.isControllerReachable(host, port)
-					}
-				if (healthy) {
-					loadControllerUrl(savedUrl)
-				} else {
-					startAutoDiscovery()
-				}
-			}
+			startStartupHealthCheck(savedUrl)
 		} else {
 			startAutoDiscovery()
 		}
@@ -201,21 +225,27 @@ class MainActivity : AppCompatActivity() {
 
 	override fun onDestroy() {
 		PlaybackStateRelay.removeListener(playbackRelayListener)
+		VlcPlaybackRelay.removeListener(vlcPlaybackRelayListener)
 		RemoteVolumeController.removeListener(volumeListener)
 		discoveryJob?.cancel()
 		healthJob?.cancel()
+		healthCheckJob?.cancel()
 		webView.destroy()
 		super.onDestroy()
 	}
 
 	private fun disconnect() {
+		healthCheckJob?.cancel()
 		DjMediaPlaybackService.stop(this)
+		VlcMediaPlaybackService.stop(this)
 		RemoteVolumeController.clear()
 		lastLoadedUrl = ""
+		pendingUrl = ""
 		isConnected = false
 		hostHealthy = false
 		getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove(KEY_URL).apply()
 		webView.loadUrl("about:blank")
+		hideHealthCheck()
 		showManualConnect()
 		updateConnectionBanner(false, reconnecting = false)
 	}
@@ -254,29 +284,36 @@ class MainActivity : AppCompatActivity() {
 
 	private fun startAutoDiscovery() {
 		discoveryJob?.cancel()
-		showStatus(getString(R.string.searching_for_karol))
+		showHealthCheckProgress(getString(R.string.searching_for_karol))
 		discoveryJob = lifecycleScope.launch {
 			var attempts = 0
 			while (isActive && !isConnected) {
 				val discovery = KarolDiscoveryService.findKarolOnLan(this@MainActivity)
 				if (discovery != null) {
-					val label =
-						if (discovery.isPlayerHost) {
-							getString(R.string.discovery_tablet_player, discovery.host, discovery.port)
-						} else {
-							getString(R.string.discovery_mac_host, discovery.host, discovery.port)
-						}
-					showStatus(label)
 					getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 						.edit()
 						.putString(KEY_URL, discovery.controllerUrl)
 						.apply()
-					loadControllerUrl(discovery.controllerUrl)
+					// After discovery, verify the host is truly reachable before loading the SPA
+					val host = extractHostFromUrl(discovery.controllerUrl) ?: discovery.host
+					val port = extractPortFromUrl(discovery.controllerUrl)
+					showHealthCheckProgress(getString(R.string.connecting_to_karol))
+					val healthy =
+						withContext(Dispatchers.IO) {
+							KarolDiscoveryService.isControllerReachable(host, port)
+						}
+					if (healthy) {
+						hideHealthCheck()
+						loadControllerUrl(discovery.controllerUrl)
+					} else {
+						// Host responded during discovery but health check failed — keep trying
+						showHealthCheckProgress(getString(R.string.searching_for_karol))
+					}
 					return@launch
 				}
 				attempts++
 				if (attempts >= 6) {
-					showManualConnect()
+					showHealthCheckError(getString(R.string.cannot_connect_karol))
 					return@launch
 				}
 				delay(2500)
@@ -295,6 +332,7 @@ class MainActivity : AppCompatActivity() {
 			useWideViewPort = true
 			cacheMode = WebSettings.LOAD_DEFAULT
 			mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+			mediaPlaybackRequiresUserGesture = false
 			userAgentString = "$userAgentString KarolController/1.0"
 		}
 
@@ -421,7 +459,9 @@ class MainActivity : AppCompatActivity() {
 
 	private fun loadControllerUrl(url: String) {
 		discoveryJob?.cancel()
+		healthCheckJob?.cancel()
 		consecutiveHealthFailures = 0
+		hideHealthCheck()
 		DjApiClient.apiBaseFromControllerUrl(url)?.let { base ->
 			RemoteVolumeController.bindApiBase(base)
 			lifecycleScope.launch {
@@ -464,6 +504,7 @@ class MainActivity : AppCompatActivity() {
 			}
 		}
 		DjMediaPlaybackService.start(this, controllerUrl)
+		VlcMediaPlaybackService.start(this, controllerUrl)
 	}
 
 	private fun startHealthMonitor() {
@@ -544,6 +585,82 @@ class MainActivity : AppCompatActivity() {
 		updateConnectionBanner(hostHealthy, reconnecting = false)
 	}
 
+	// --- Startup health check ---
+
+	private fun startStartupHealthCheck(url: String) {
+		healthCheckJob?.cancel()
+		discoveryJob?.cancel()
+		pendingUrl = url
+		showHealthCheckProgress(getString(R.string.connecting_to_karol))
+		healthCheckJob = lifecycleScope.launch {
+			val host = extractHostFromUrl(url) ?: run {
+				showHealthCheckError(getString(R.string.cannot_connect_karol))
+				return@launch
+			}
+			val port = extractPortFromUrl(url)
+			val startTime = System.currentTimeMillis()
+			while (isActive && !isConnected) {
+				// withTimeout is a secondary guard: isControllerReachable
+				// uses Socket with OS-level timeouts, but if those also
+				// stall, this per-attempt ceiling guarantees loop progress.
+				val healthy =
+					try {
+						withTimeout(6_000L) {
+							withContext(Dispatchers.IO) {
+								KarolDiscoveryService.isControllerReachable(host, port)
+							}
+						}
+					} catch (_: TimeoutCancellationException) {
+						false
+					}
+				if (healthy) {
+					hideHealthCheck()
+					loadControllerUrl(url)
+					return@launch
+				}
+				val elapsed = System.currentTimeMillis() - startTime
+				if (elapsed >= STARTUP_HEALTH_CHECK_TIMEOUT_MS) {
+					showHealthCheckError(getString(R.string.cannot_connect_karol))
+					return@launch
+				}
+				delay(STARTUP_HEALTH_CHECK_POLL_MS)
+			}
+		}
+	}
+
+	private fun showHealthCheckProgress(message: String) {
+		healthCheckPanel.visibility = View.VISIBLE
+		healthCheckProgress.visibility = View.VISIBLE
+		healthCheckText.text = message
+		healthCheckText.visibility = View.VISIBLE
+		healthCheckErrorText.visibility = View.GONE
+		healthCheckRetryButton.visibility = View.GONE
+		statusPanel.visibility = View.GONE
+		connectPanel.visibility = View.GONE
+		webView.visibility = View.GONE
+		connectionBanner.visibility = View.GONE
+	}
+
+	private fun showHealthCheckError(message: String) {
+		healthCheckPanel.visibility = View.VISIBLE
+		healthCheckProgress.visibility = View.GONE
+		healthCheckText.text = message
+		healthCheckText.visibility = View.GONE
+		healthCheckErrorText.text = message
+		healthCheckErrorText.visibility = View.VISIBLE
+		healthCheckRetryButton.visibility = View.VISIBLE
+		statusPanel.visibility = View.GONE
+		connectPanel.visibility = View.GONE
+		webView.visibility = View.GONE
+		connectionBanner.visibility = View.GONE
+	}
+
+	private fun hideHealthCheck() {
+		healthCheckPanel.visibility = View.GONE
+	}
+
+	// --- End startup health check ---
+
 	/** Keep dj-controller WebView API host aligned with the loaded tablet URL. */
 	private fun syncWebHostToPageOrigin() {
 		webView.evaluateJavascript(
@@ -580,13 +697,24 @@ class MainActivity : AppCompatActivity() {
 		return super.dispatchKeyEvent(event)
 	}
 
+	private fun clearWebViewCache() {
+		try {
+			webView.clearCache(true)
+		} catch (_: Exception) { /* best effort */ }
+		try {
+			webView.clearHistory()
+		} catch (_: Exception) { /* best effort */ }
+	}
+
 	companion object {
 		private const val PREFS_NAME = "karol_controller_prefs"
 		private const val KEY_URL = "controller_url"
 		private const val SAVED_CONNECTED = "saved_connected"
 		private const val SAVED_LAST_URL = "saved_last_url"
-		private const val HEALTH_CHECK_INTERVAL_MS = 20_000L
-		private const val HEALTH_FAILURE_THRESHOLD = 4
+		private const val HEALTH_CHECK_INTERVAL_MS = 10_000L
+		private const val HEALTH_FAILURE_THRESHOLD = 3
 		private const val MIN_RELOAD_INTERVAL_MS = 30_000L
+		private const val STARTUP_HEALTH_CHECK_TIMEOUT_MS = 15_000L
+		private const val STARTUP_HEALTH_CHECK_POLL_MS = 2_000L
 	}
 }

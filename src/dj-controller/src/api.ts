@@ -101,9 +101,26 @@ async function request<T>(
 				...(init?.headers ?? {}),
 			},
 		});
-		const data = (await res.json()) as T & { error?: string };
+		const data = (await res.json()) as T & { error?: string; ok?: boolean };
 		if (!res.ok) {
 			throw new Error(data.error || `Request failed (${res.status})`);
+		}
+		// The S8 proxy returns HTTP 200 with { ok: false, error: "..." } when the upstream
+		// (Mac Deskreen) is unreachable. Treat these as errors too so callers don't receive
+		// a mismatched object shape and crash.
+		if (data.ok === false && data.error) {
+			throw new Error(data.error);
+		}
+		if (typeof data.error === 'string' && data.error) {
+			// Some endpoints return { error: "..." } without an explicit ok:false wrapper.
+			// If the response only has an error field and nothing else of substance,
+			// treat it as a request failure.
+			const meaningfulKeys = Object.keys(data).filter(
+				(k) => k !== 'error' && k !== 'ok' && k !== 'vlcProxyTarget',
+			);
+			if (meaningfulKeys.length === 0) {
+				throw new Error(data.error);
+			}
 		}
 		return data;
 		} catch (error) {

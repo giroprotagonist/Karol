@@ -3,6 +3,7 @@ export type VlcTrack = {
   name: string;
   uri: string;
   duration?: number;
+  coverUrl?: string; // relative URL to /api/vlc-dj/cover?path=...
 };
 
 export type VlcStatus = {
@@ -27,7 +28,9 @@ export type VlcNowPlaying = {
   position: number;
   filePath?: string;
   id?: string;
-  coverArt?: string; // base64 data URI for cover.jpg
+  coverArt?: string; // base64 data URI (legacy, will be phased out)
+  coverPath?: string; // file path for the cover endpoint
+  coverUrl?: string;  // full URL to /api/vlc-dj/cover?path=...
 };
 
 export type VlcPlaylistState = {
@@ -47,6 +50,7 @@ export type LibraryTrack = {
   artist?: string;
   album?: string;
   duration?: number;
+  coverUrl?: string; // relative URL to /api/vlc-dj/cover?path=...
 };
 
 export type LibraryState = {

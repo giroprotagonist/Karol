@@ -44,6 +44,7 @@ import PlaylistLibrary from './components/PlaylistLibrary';
 import QueueList, { reorderItemsLocally } from './components/QueueList';
 import SearchResults from './components/SearchResults';
 import VlcPlayerTab from './components/VlcPlayerTab';
+import { useYouTubePreview } from './useYouTubePreview';
 import { hapticLight, isNativeAndroidController, notifyNativeConnection, publishNowPlayingToNative, registerNativeNowPlayingListener, registerNativeVolumeListener } from './nativeBridge';
 import { syncPlaybackAnchor } from './playbackClock';
 import { IconPause, IconPlay } from './components/TransportIcons';
@@ -78,6 +79,7 @@ export default function App() {
 	const [reconnecting, setReconnecting] = useState(false);
 	const [activeTab, setActiveTab] = useState<AppTab>('player');
 	const [displayTime, setDisplayTime] = useState(0);
+	const { previewVideoId, previewLoading, handlePreviewPlay, handlePreviewStop } = useYouTubePreview(host);
 	const playbackAnchor = useRef({
 		time: 0,
 		at: Date.now(),
@@ -888,6 +890,10 @@ export default function App() {
 				connected={connected}
 				busy={Boolean(busy)}
 				shuffleEnabled={shuffleEnabled}
+				previewVideoId={previewVideoId}
+				previewLoading={previewLoading}
+				onPreview={(videoId) => handlePreviewPlay(videoId)}
+				onStopPreview={handlePreviewStop}
 				onReorder={handleReorder}
 				onPlay={(id) => void runAction('play-item', () => playQueueItem(host, id))}
 				onRemove={(id) => void runAction('remove', () => removeQueueItem(host, id))}
@@ -985,6 +991,10 @@ export default function App() {
 				<SearchResults
 					results={searchResults}
 					connected={connected}
+					previewVideoId={previewVideoId}
+					previewLoading={previewLoading}
+					onPreview={(videoId) => handlePreviewPlay(videoId)}
+					onStopPreview={handlePreviewStop}
 					onQueue={(url) => void runAction('queue-search', () => queueUrl(host, url, 'queue'))}
 					onPlayNow={(url) =>
 						void runAction('play-search', () => queueUrl(host, url, 'play-now'))

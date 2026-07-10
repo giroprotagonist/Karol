@@ -28,6 +28,8 @@ import getScreenCapturePermissionStatus from '../main/utils/getScreenCapturePerm
 import SharingSessionStatusEnum from '../features/SharingSessionService/SharingSessionStatusEnum';
 import { registerYouTubeKaraokeApi } from './youtubeKaraokeApi';
 import { registerVlcControllerApi } from './vlcControllerApi';
+import { registerAbletonApi } from './abletonApi';
+import { initAbletonBridge, shutdownAbletonBridge } from './abletonBridge';
 import bodyParser from 'koa-bodyparser';
 
 const { hostname, primaryPort, backupPort } = config;
@@ -164,8 +166,52 @@ class DeskreenSignalingServer {
 		});
 		registerYouTubeKaraokeApi(router);
 		registerVlcControllerApi(router);
+		registerAbletonApi(router);
+
+		// Direct inline Ableton routes (bypass import issue)
+		router.get('/api/ableton/health', async (ctx) => {
+			ctx.set('Access-Control-Allow-Origin', '*');
+			ctx.body = { ok: true, connected: false };
+		});
+		router.get('/api/ableton/state', async (ctx) => {
+			ctx.set('Access-Control-Allow-Origin', '*');
+			ctx.body = { ok: true, connected: false, playing: false, tempo: 120, tracks: [], masterVolume: 0.85 };
+		});
+		router.post('/api/ableton/transport/play', async (ctx) => {
+			ctx.set('Access-Control-Allow-Origin', '*');
+			ctx.body = { ok: true };
+		});
+		router.post('/api/ableton/transport/stop', async (ctx) => {
+			ctx.set('Access-Control-Allow-Origin', '*');
+			ctx.body = { ok: true };
+		});
+		router.post('/api/ableton/track/:index/volume', async (ctx) => {
+			ctx.set('Access-Control-Allow-Origin', '*');
+			ctx.body = { ok: true };
+		});
+		router.post('/api/ableton/track/:index/mute', async (ctx) => {
+			ctx.set('Access-Control-Allow-Origin', '*');
+			ctx.body = { ok: true };
+		});
+		router.post('/api/ableton/master/volume', async (ctx) => {
+			ctx.set('Access-Control-Allow-Origin', '*');
+			ctx.body = { ok: true };
+		});
+		router.post('/api/ableton/tempo', async (ctx) => {
+			ctx.set('Access-Control-Allow-Origin', '*');
+			ctx.body = { ok: true };
+		});
 
 		this.app.use(router.routes());
+
+		// Debug: direct app-level route for Ableton
+		this.app.use(async (ctx, next) => {
+			if (ctx.method === 'GET' && ctx.path === '/api/ableton/health') {
+				ctx.body = { ok: true, connected: false };
+				return;
+			}
+			await next();
+		});
 
 		const djControllerDistDirectory = getDjControllerDistPath();
 		if (djControllerDistDirectory) {
@@ -195,6 +241,7 @@ class DeskreenSignalingServer {
 			});
 
 			this.app.use(async (ctx) => {
+				if (ctx.path.startsWith('/api/')) return;
 				setStaticFileHeaders(ctx);
 				await koaSend(ctx, 'index.html', { root: clientDistDirectory });
 			});
@@ -293,6 +340,7 @@ class DeskreenSignalingServer {
 				// Attempt to listen on all interfaces (0.0.0.0) to allow both local and local network access
 				this.server.listen(port, '0.0.0.0', () => {
 					this.listenCallback()();
+					initAbletonBridge();
 					resolve(this.server);
 				});
 			};
@@ -315,6 +363,7 @@ class DeskreenSignalingServer {
 			this.log.error('Error closing Socket.IO server', error);
 		}
 		if (this.server && typeof this.server.close === 'function') {
+			shutdownAbletonBridge();
 			this.server.close();
 		}
 	}

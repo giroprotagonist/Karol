@@ -44,6 +44,36 @@ class KarolNativeBridge(
 		}
 	}
 
+	fun pushVlcNowPlayingToWebView(data: VlcNowPlayingData) {
+		mainHandler.post {
+			val json =
+				org.json.JSONObject()
+					.put("title", data.title)
+					.put("artist", data.artist)
+					.put("album", data.album)
+					.put("duration", data.duration)
+					.put("position", data.position)
+					.put("state", data.state)
+					.put("filePath", data.filePath)
+					.put("id", data.id)
+					.put("coverUrl", data.coverUrl)
+					.put("isPlaying", data.isPlaying)
+					.toString()
+			webView.evaluateJavascript(
+				"window.__karolNativeVlcNowPlaying && window.__karolNativeVlcNowPlaying($json)",
+				null,
+			)
+		}
+	}
+
+	@JavascriptInterface
+	fun publishVlcNowPlaying(json: String) {
+		mainHandler.post {
+			val data = parseVlcNowPlayingJson(json) ?: return@post
+			VlcPlaybackRelay.publish(data, VlcPlaybackRelay.Source.WEBVIEW)
+		}
+	}
+
 	@JavascriptInterface
 	fun publishNowPlaying(json: String) {
 		mainHandler.post {
@@ -94,6 +124,27 @@ class KarolNativeBridge(
 				currentTimeSec = obj.optDouble("currentTime", 0.0),
 				durationSec = obj.optDouble("duration", 0.0),
 				state = obj.optInt("state", 3),
+			)
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	private fun parseVlcNowPlayingJson(json: String): VlcNowPlayingData? {
+		return try {
+			val obj = org.json.JSONObject(json)
+			val state = obj.optString("state", "stopped")
+			VlcNowPlayingData(
+				title = obj.optString("title", ""),
+				artist = obj.optString("artist", ""),
+				album = obj.optString("album", ""),
+				duration = obj.optDouble("duration", 0.0),
+				position = obj.optDouble("position", 0.0),
+				state = state,
+				filePath = obj.optString("filePath", ""),
+				id = obj.optString("id", ""),
+				coverUrl = obj.optString("coverUrl", ""),
+				isPlaying = state == "playing",
 			)
 		} catch (_: Exception) {
 			null

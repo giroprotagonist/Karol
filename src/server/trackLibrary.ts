@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { LibraryState, LibraryTrack } from '../common/VlcControllerTypes';
-import { getVlcConfig } from './vlcBridge';
+import { getVlcConfig, findCoverPath } from './vlcBridge';
 
 let cachedLibrary: LibraryTrack[] = [];
 let cachedFolder = '';
@@ -55,11 +55,16 @@ function fastMeta(filePath: string): LibraryTrack {
   // audio/ArtistName/Album/Track.m4a → artist is ArtistName
   const artistDirName = path.basename(path.dirname(path.dirname(filePath)));
   const isArtistDir = artistDirName && artistDirName !== 'audio';
+  const coverPath = findCoverPath(filePath);
+  const coverUrl = coverPath
+    ? `/api/vlc-dj/cover?path=${encodeURIComponent(filePath)}`
+    : undefined;
   return {
     path: filePath,
     title: base,
     artist: isArtistDir ? artistDirName : undefined,
     album: albumDir !== artistDirName ? albumDir : undefined,
+    coverUrl,
   };
 }
 

@@ -11,6 +11,8 @@ import { join } from 'path';
 import { is, optimizer } from '@electron-toolkit/utils';
 import icon from '../../resources/icon.png?asset';
 import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import http from 'node:http';
 
 // function createWindow(): void {
 //   // Create the browser window.
@@ -301,17 +303,11 @@ export default class DeskreenApp {
 		// @TODO: Use 'ready-to-show' event
 		//        https://github.com/electron/electron/blob/master/docs/api/browser-window.md#using-ready-to-show-event
 		this.mainWindow.on('ready-to-show', () => {
-			// this.mainWindow.webContents.on('did-finish-load', () => {
 			if (!this.mainWindow) {
 				throw new Error('"mainWindow" is not defined');
 			}
-			if (process.env.START_MINIMIZED === 'true') {
-				this.mainWindow.minimize();
-			} else {
-				this.mainWindow.show();
-				this.mainWindow.focus();
-			}
-			// });
+			// Don't show the window automatically — the server runs headless.
+			// The user can click the dock icon or menu bar to bring up the UI.
 		});
 
 		this.mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -395,18 +391,15 @@ export default class DeskreenApp {
 
 		// handle second instance attempts (e.g., clicking taskbar icon on windows)
 		app.on('second-instance', () => {
-			if (this.mainWindow) {
-				if (this.mainWindow.isMinimized()) {
-					this.mainWindow.restore();
-				}
-				this.mainWindow.focus();
-				this.mainWindow.show();
-			}
+			// Don't steal focus — the server is running headless.
+			// User can click the dock icon to show the window.
 		});
 
 		const cliLocalIp = this.parseCliLocalIp();
 		initGlobals(join(__dirname, '..'), cliLocalIp);
 		signalingServer.start();
+
+		this.ensureVlcRunning();
 
 		this.initElectronAppObject();
 	}
@@ -423,6 +416,37 @@ export default class DeskreenApp {
 			}
 		}
 		return undefined;
+	}
+
+	private ensureVlcRunning(): void {
+		const VLC_PATH = '/Applications/VLC.app/Contents/MacOS/VLC';
+		if (!existsSync(VLC_PATH)) return;
+
+		// Quick health check – if VLC is already answering HTTP, skip launch
+		const check = http.get(
+			{
+				hostname: '127.0.0.1',
+				port: 8080,
+				path: '/requests/status.json',
+				auth: ':karol',
+				timeout: 2000,
+			},
+			() => {
+				check.destroy();
+			},
+		);
+		check.on('error', () => {
+			// VLC not running – launch it detached
+			try {
+				const proc = spawn(VLC_PATH, [
+					'--extraintf', 'http',
+					'--http-password', 'karol',
+					'--http-host', '127.0.0.1',
+					'--http-port', '8080',
+				], { detached: true, stdio: 'ignore' });
+				proc.unref();
+			} catch { /* VLC may not be installed */ }
+		});
 	}
 }
 

@@ -134,18 +134,33 @@ object KarolDiscoveryService {
 	}
 
 	fun isControllerReachable(host: String, port: Int): Boolean {
+		var socket: java.net.Socket? = null
 		return try {
-			val connection =
-				(URL("http://$host:$port/api/youtube-dj/health").openConnection() as HttpURLConnection).apply {
-					connectTimeout = 2_000
-					readTimeout = 2_000
-					requestMethod = "GET"
-				}
-			val ok = connection.responseCode == HttpURLConnection.HTTP_OK
-			connection.disconnect()
-			ok
+			socket = java.net.Socket()
+			// Use Socket.connect(InetSocketAddress, timeout) which reliably enforces
+			// the OS-level TCP connect timeout.  Unlike HttpURLConnection, this
+			// does NOT get overridden by kernel TCP retransmission on unreachable hosts.
+			socket.connect(java.net.InetSocketAddress(host, port), 2_000)
+			socket.soTimeout = 3_000
+
+			val writer = socket.getOutputStream().bufferedWriter()
+			writer.write("GET /api/youtube-dj/health HTTP/1.1\r\n")
+			writer.write("Host: $host:$port\r\n")
+			writer.write("Connection: close\r\n")
+			writer.write("User-Agent: KarolController/1.0\r\n")
+			writer.write("\r\n")
+			writer.flush()
+
+			val reader = socket.getInputStream().bufferedReader()
+			val statusLine = reader.readLine() ?: return false
+			statusLine.contains(" 200 ")
 		} catch (_: Exception) {
 			false
+		} finally {
+			try {
+				socket?.close()
+			} catch (_: Exception) {
+			}
 		}
 	}
 

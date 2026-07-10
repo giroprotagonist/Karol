@@ -14,9 +14,11 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.net.wifi.WifiManager
 
 class PlayerForegroundService : Service() {
 	private var wakeLock: PowerManager.WakeLock? = null
+	private var wifiLock: WifiManager.WifiLock? = null
 	private val renewHandler = Handler(Looper.getMainLooper())
 	private var renewRunnable: Runnable? = null
 
@@ -43,6 +45,7 @@ class PlayerForegroundService : Service() {
 		super.onCreate()
 		createNotificationChannel()
 		acquireWakeLock()
+		acquireWifiLock()
 		scheduleWakeLockRenewal()
 	}
 
@@ -73,6 +76,7 @@ class PlayerForegroundService : Service() {
 	override fun onDestroy() {
 		renewRunnable?.let { renewHandler.removeCallbacks(it) }
 		releaseWakeLock()
+		releaseWifiLock()
 		super.onDestroy()
 	}
 
@@ -138,5 +142,23 @@ class PlayerForegroundService : Service() {
 			}
 		}
 		wakeLock = null
+	}
+
+	private fun acquireWifiLock() {
+		releaseWifiLock()
+		val wifiManager = getSystemService(Context.WIFI_SERVICE) as WifiManager
+		wifiLock = wifiManager.createWifiLock(
+			WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+			"KarolPlayer::WiFi",
+		).apply { acquire() }
+	}
+
+	private fun releaseWifiLock() {
+		wifiLock?.let {
+			if (it.isHeld) {
+				it.release()
+			}
+		}
+		wifiLock = null
 	}
 }

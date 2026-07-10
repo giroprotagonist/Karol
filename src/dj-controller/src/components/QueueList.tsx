@@ -32,6 +32,10 @@ type QueueListProps = {
 	currentIndex: number;
 	connected: boolean;
 	busy: boolean;
+	previewVideoId: string | null;
+	previewLoading: boolean;
+	onPreview: (videoId: string) => void;
+	onStopPreview: () => void;
 	onReorder: (fromIndex: number, toIndex: number) => Promise<void>;
 	onPlay: (id: string) => void;
 	onRemove: (id: string) => void;
@@ -68,6 +72,10 @@ type QueueRowContentProps = {
 	index: number;
 	isActive: boolean;
 	connected: boolean;
+	previewVideoId: string | null;
+	previewLoading: boolean;
+	onPreview: (videoId: string) => void;
+	onStopPreview: () => void;
 	onPlay: (id: string) => void;
 	onRemove: (id: string) => void;
 	dragHandleProps?: HTMLAttributes<HTMLButtonElement>;
@@ -79,21 +87,46 @@ function QueueRowContent({
 	index,
 	isActive,
 	connected,
+	previewVideoId,
+	previewLoading,
+	onPreview,
+	onStopPreview,
 	onPlay,
 	onRemove,
 	dragHandleProps,
 	isOverlay = false,
 }: QueueRowContentProps) {
 	const title = getQueueItemDisplayTitle(item.title, item.videoId);
+	const isPreviewing = previewVideoId === item.videoId;
 
 	return (
 		<div
-			className={`queue-item ${isActive ? 'active' : ''} ${isOverlay ? 'drag-overlay' : ''}`}
+			className={`queue-item ${isActive ? 'active' : ''} ${isPreviewing ? 'preview-active' : ''} ${isOverlay ? 'drag-overlay' : ''}`}
 		>
 			<div className="queue-leading-col">
 				<span className="queue-index">{index + 1}</span>
 				{!isOverlay && (
 					<div className="queue-leading-actions">
+						{isPreviewing ? (
+							<button
+								className={`queue-row-btn stop-preview${previewLoading ? ' preview-loading' : ''}`}
+								type="button"
+								disabled={previewLoading}
+								title={previewLoading ? 'Loading preview...' : 'Stop preview'}
+								onClick={previewLoading ? undefined : onStopPreview}
+							>
+								{previewLoading ? '◌' : '■'}
+							</button>
+						) : (
+							<button
+								className="queue-row-btn preview"
+								type="button"
+								title="Preview audio on this device"
+								onClick={() => onPreview(item.videoId)}
+							>
+								♪
+							</button>
+						)}
 						<button
 							className="queue-row-btn play"
 							type="button"
@@ -154,6 +187,10 @@ type SortableRowProps = {
 	index: number;
 	isActive: boolean;
 	connected: boolean;
+	previewVideoId: string | null;
+	previewLoading: boolean;
+	onPreview: (videoId: string) => void;
+	onStopPreview: () => void;
 	onPlay: (id: string) => void;
 	onRemove: (id: string) => void;
 };
@@ -165,6 +202,10 @@ function SortableRowInner({
 	index,
 	isActive,
 	connected,
+	previewVideoId,
+	previewLoading,
+	onPreview,
+	onStopPreview,
 	onPlay,
 	onRemove,
 }: SortableRowProps) {
@@ -210,6 +251,10 @@ function SortableRowInner({
 						index={index}
 						isActive={isActive}
 						connected={connected}
+						previewVideoId={previewVideoId}
+						previewLoading={previewLoading}
+						onPreview={onPreview}
+						onStopPreview={onStopPreview}
 						onPlay={onPlay}
 						onRemove={onRemove}
 						dragHandleProps={{ ...attributes, ...listeners }}
@@ -239,6 +284,10 @@ export default function QueueList({
 	currentIndex,
 	connected,
 	busy,
+	previewVideoId,
+	previewLoading,
+	onPreview,
+	onStopPreview,
 	onReorder,
 	onPlay,
 	onRemove,
@@ -407,6 +456,10 @@ export default function QueueList({
 									index={index}
 									isActive={index === currentIndex}
 									connected={connected}
+									previewVideoId={previewVideoId}
+									previewLoading={previewLoading}
+									onPreview={onPreview}
+									onStopPreview={onStopPreview}
 									onPlay={onPlay}
 									onRemove={onRemove}
 								/>
@@ -420,6 +473,10 @@ export default function QueueList({
 								index={activeIndex}
 								isActive={activeIndex === currentIndex}
 								connected={connected}
+								previewVideoId={previewVideoId}
+								previewLoading={previewLoading}
+								onPreview={onPreview}
+								onStopPreview={onStopPreview}
 								onPlay={onPlay}
 								onRemove={onRemove}
 								isOverlay

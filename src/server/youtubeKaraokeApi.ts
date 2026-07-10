@@ -1,5 +1,8 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
+import { execFile } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import type {
 	YouTubeSearchResult,
 	YouTubeDjNowPlaying,
@@ -485,6 +488,42 @@ export function registerYouTubeKaraokeApi(router: Router): void {
 			const message = error instanceof Error ? error.message : 'failed to set mode';
 			ctx.status = 500;
 			ctx.body = { ok: false, error: message };
+		}
+	});
+
+	// Audio preview — uses yt-dlp to extract the best-audio direct URL.
+	// Returns JSON with the URL; the frontend loads it directly in an <audio> element.
+	router.get('/api/youtube-dj/audio-stream', async (ctx: Context) => {
+		setCors(ctx);
+		const videoId = (ctx.query.videoId as string) || '';
+		if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+			ctx.status = 400;
+			ctx.body = { error: 'videoId query parameter must be an 11-char YouTube ID' };
+			return;
+		}
+		try {
+			const audioUrl = await new Promise<string>((resolve, reject) => {
+				execFile(
+					'yt-dlp',
+					['--format', 'bestaudio', '--no-warnings', '--no-check-certificate',
+					 '--get-url', `https://www.youtube.com/watch?v=${videoId}`],
+					{ timeout: 20_000 },
+					(error, stdout, _stderr) => {
+						// yt-dlp may return non-zero even with a valid URL on stdout
+						const lines = stdout.trim().split('\n');
+						const url = lines[lines.length - 1]?.trim();
+						if (url && url.startsWith('http')) {
+							resolve(url);
+							return;
+						}
+						reject(new Error(error?.message || 'yt-dlp returned no audio URL'));
+					},
+				);
+			});
+			ctx.body = { ok: true, url: audioUrl };
+		} catch (error) {
+			ctx.status = 500;
+			ctx.body = { error: error instanceof Error ? error.message : 'Failed to get audio stream' };
 		}
 	});
 }
