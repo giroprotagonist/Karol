@@ -28,9 +28,9 @@ import getScreenCapturePermissionStatus from '../main/utils/getScreenCapturePerm
 import SharingSessionStatusEnum from '../features/SharingSessionService/SharingSessionStatusEnum';
 import { registerYouTubeKaraokeApi } from './youtubeKaraokeApi';
 import { registerVlcControllerApi } from './vlcControllerApi';
-import { registerAbletonApi } from './abletonApi';
-import { initAbletonBridge, shutdownAbletonBridge } from './abletonBridge';
 import bodyParser from 'koa-bodyparser';
+import path from 'path';
+import fs from 'fs';
 
 const { hostname, primaryPort, backupPort } = config;
 
@@ -166,55 +166,51 @@ class DeskreenSignalingServer {
 		});
 		registerYouTubeKaraokeApi(router);
 		registerVlcControllerApi(router);
-		registerAbletonApi(router);
 
-		// Direct inline Ableton routes (bypass import issue)
-		router.get('/api/ableton/health', async (ctx) => {
-			ctx.set('Access-Control-Allow-Origin', '*');
-			ctx.body = { ok: true, connected: false };
+		// ── Karol-specific API routes are served by karol-api-server.js
+		//     (managed by LaunchAgent: ~/Library/LaunchAgents/com.karol-api.plist)
+		//     This includes /api/ableton/* and /api/vlc-dj/*.
+		//     The TS Electron server only serves Deskreen discovery/health
+		//     and the DJ controller + Ableton mixer SPAs.
+		//     When Ableton Live is running, the JS server handles OSC bridging.
+		// ── Proxy VLC/Ableton requests to the JS server if it's running ──
+		router.all('/api/ableton/(.*)', async (ctx) => {
+			// The karol-api-server.js handles these. If it's not running,
+			// fall through to static serving.
+			ctx.body = { ok: false, error: 'Karol API server not running', hint: 'Start karol-api-server.js via LaunchAgent' };
 		});
-		router.get('/api/ableton/state', async (ctx) => {
-			ctx.set('Access-Control-Allow-Origin', '*');
-			ctx.body = { ok: true, connected: false, playing: false, tempo: 120, tracks: [], masterVolume: 0.85 };
-		});
-		router.post('/api/ableton/transport/play', async (ctx) => {
-			ctx.set('Access-Control-Allow-Origin', '*');
-			ctx.body = { ok: true };
-		});
-		router.post('/api/ableton/transport/stop', async (ctx) => {
-			ctx.set('Access-Control-Allow-Origin', '*');
-			ctx.body = { ok: true };
-		});
-		router.post('/api/ableton/track/:index/volume', async (ctx) => {
-			ctx.set('Access-Control-Allow-Origin', '*');
-			ctx.body = { ok: true };
-		});
-		router.post('/api/ableton/track/:index/mute', async (ctx) => {
-			ctx.set('Access-Control-Allow-Origin', '*');
-			ctx.body = { ok: true };
-		});
-		router.post('/api/ableton/master/volume', async (ctx) => {
-			ctx.set('Access-Control-Allow-Origin', '*');
-			ctx.body = { ok: true };
-		});
-		router.post('/api/ableton/tempo', async (ctx) => {
-			ctx.set('Access-Control-Allow-Origin', '*');
-			ctx.body = { ok: true };
+		router.all('/api/vlc-dj/(.*)', async (ctx) => {
+			ctx.body = { ok: false, error: 'Karol API server not running', hint: 'Start karol-api-server.js via LaunchAgent' };
 		});
 
 		this.app.use(router.routes());
 
-		// Debug: direct app-level route for Ableton
+	// ── Serve Ableton mixer SPA (iPhone landscape controller) ──
+	const abletonMixerDir = path.resolve(__dirname, '..', '..', 'src', 'ableton-mixer');
+	if (fs.existsSync(abletonMixerDir)) {
 		this.app.use(async (ctx, next) => {
-			if (ctx.method === 'GET' && ctx.path === '/api/ableton/health') {
-				ctx.body = { ok: true, connected: false };
-				return;
-			}
-			await next();
+			if (!ctx.path.startsWith('/ableton-mixer')) return next();
+			setStaticFileHeaders(ctx);
+			const rel = ctx.path.slice('/ableton-mixer'.length).replace(/^\//, '') || 'index.html';
+			const filePath = path.join(abletonMixerDir, rel);
+			try {
+				if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+					const ext = path.extname(filePath);
+					ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css'
+						: ext === '.js' ? 'application/javascript' : ext === '.svg' ? 'image/svg+xml'
+						: ext === '.png' ? 'image/png' : 'application/octet-stream';
+					ctx.body = fs.createReadStream(filePath);
+					return;
+				}
+			} catch { /* fall through */ }
+			ctx.type = 'text/html';
+			ctx.body = fs.createReadStream(path.join(abletonMixerDir, 'index.html'));
 		});
+	}
 
-		const djControllerDistDirectory = getDjControllerDistPath();
-		if (djControllerDistDirectory) {
+	// ── Serve DJ Controller SPA ──
+	const djControllerDistDirectory = getDjControllerDistPath();
+	if (djControllerDistDirectory) {
 			this.app.use(async (ctx, next) => {
 				if (!ctx.path.startsWith('/dj-controller')) {
 					return next();
@@ -338,10 +334,9 @@ class DeskreenSignalingServer {
 				});
 
 				// Attempt to listen on all interfaces (0.0.0.0) to allow both local and local network access
-				this.server.listen(port, '0.0.0.0', () => {
-					this.listenCallback()();
-					initAbletonBridge();
-					resolve(this.server);
+			this.server.listen(port, '0.0.0.0', () => {
+				this.listenCallback()();
+				resolve(this.server);
 				});
 			};
 
@@ -363,7 +358,6 @@ class DeskreenSignalingServer {
 			this.log.error('Error closing Socket.IO server', error);
 		}
 		if (this.server && typeof this.server.close === 'function') {
-			shutdownAbletonBridge();
 			this.server.close();
 		}
 	}

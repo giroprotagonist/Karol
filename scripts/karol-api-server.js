@@ -15,7 +15,8 @@ const router = new Router();
 app.use(cors());
 app.use(bodyParser());
 
-const VLC_AUTH = 'Basic ' + Buffer.from(':karol').toString('base64');
+const VLC_PASSWORD = process.env.VLC_PASSWORD || 'karol';
+const VLC_AUTH = 'Basic ' + Buffer.from(':' + VLC_PASSWORD).toString('base64');
 
 function vlcGet(endpoint) {
   return new Promise((resolve, reject) => {
