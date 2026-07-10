@@ -279,16 +279,280 @@ router.delete('/api/vlc-dj/queue/:id', async (ctx) => {
   } catch (e) { ctx.body = { ok: false, error: e.message }; }
 });
 
-// ── Ableton routes ──
-router.get('/api/ableton/health', (ctx) => { ctx.body = { ok: true, connected: false }; });
-router.get('/api/ableton/state', (ctx) => { ctx.body = { ok: true, connected: false, playing: false, tempo: 120, tracks: [], masterVolume: 0.85 }; });
-router.post('/api/ableton/transport/play', (ctx) => { ctx.body = { ok: true }; });
-router.post('/api/ableton/transport/stop', (ctx) => { ctx.body = { ok: true }; });
-router.post('/api/ableton/track/:i/volume', (ctx) => { ctx.body = { ok: true }; });
-router.post('/api/ableton/track/:i/mute', (ctx) => { ctx.body = { ok: true }; });
-router.post('/api/ableton/master/volume', (ctx) => { ctx.body = { ok: true }; });
-router.post('/api/ableton/tempo', (ctx) => { ctx.body = { ok: true }; });
-router.post('/api/ableton/mix', (ctx) => { ctx.body = { ok: true }; });
+// ── Minimal OSC bundle builder (plain UDP, no npm dep) ──
+function pad4(buf) {
+  while (buf.length % 4 !== 0) buf = Buffer.concat([buf, Buffer.from([0])]);
+  return buf;
+}
+
+// ── OSC message builder (supports 0+ float args for AbletonOSC) ──
+function oscMsg(address, args) {
+  // args = array of numbers, or empty array for no-arg messages
+  const addr = pad4(Buffer.from(address + '\0'));
+  let typeTag = ',';
+  for (const a of args) { typeTag += 'f'; }
+  const tt = pad4(Buffer.from(typeTag + '\0'));
+  const argBufs = [];
+  for (const a of args) {
+    const b = Buffer.alloc(4);
+    b.writeFloatBE(a, 0);
+    argBufs.push(b);
+  }
+  return Buffer.concat([addr, tt, ...argBufs]);
+}
+
+function sendOscBundle(msg) {
+  const dgram = require('dgram');
+  const sock = dgram.createSocket('udp4');
+  // Wrap in bundle
+  const header = Buffer.from('#bundle\0');
+  const timetag = Buffer.alloc(8);
+  timetag.writeBigInt64BE(BigInt(1), 0);
+  const size = Buffer.alloc(4);
+  size.writeInt32BE(msg.length, 0);
+  const buf = Buffer.concat([header, timetag, size, msg]);
+  sock.send(buf, 0, buf.length, 11000, '127.0.0.1', () => sock.close());
+}
+
+function sendOsc(address, ...args) { sendOscBundle(oscMsg(address, args)); }
+
+// ── Ableton connection state ──
+let abletonConnected = false;
+
+function checkAbletonConnected() {
+  const { execSync } = require('child_process');
+  try {
+    const out = execSync('lsof -i :11000 -sTCP:LISTEN 2>/dev/null || lsof -i :11000 2>/dev/null', { timeout: 2000 }).toString();
+    return out.includes('Live') || out.includes('Ableton');
+  } catch {
+    return false;
+  }
+}
+
+// ── Cached state — stores the last values the user/API set ──
+const TRACK_COLORS = ['#E0533D', '#D95C14', '#E0962D', '#7CB342', '#1FAC8A',
+  '#2090C0', '#4766B8', '#6C3FAA', '#B34DA0', '#D9488B',
+  '#6B8E92', '#8C6B53', '#5C6BC0', '#26A69A', '#AB47BC',
+];
+
+function defaultTrack(idx) {
+  return {
+    index: idx,
+    name: 'Track ' + (idx + 1),
+    volume: 0.75,
+    muted: false,
+    solo: false,
+    pan: 0,
+    color: TRACK_COLORS[idx % TRACK_COLORS.length],
+    sends: [0, 0, 0, 0],
+    hasClip: false,
+    isPlaying: false,
+    meterLeft: 0,
+    meterRight: 0,
+  };
+}
+
+const cachedAbletonState = {
+  playing: false,
+  tempo: 120,
+  beatPosition: 0,
+  masterVolume: 0.85,
+  masterMeterLeft: 0,
+  masterMeterRight: 0,
+  tracks: [
+    { ...defaultTrack(0), name: 'Karol DJ', volume: 0.75 },
+    { ...defaultTrack(1), name: 'VLC Playlist', volume: 0.75 },
+  ],
+};
+
+function ensureTrack(idx) {
+  while (cachedAbletonState.tracks.length <= idx) {
+    cachedAbletonState.tracks.push(defaultTrack(cachedAbletonState.tracks.length));
+  }
+  return cachedAbletonState.tracks[idx];
+}
+
+// Poll connection every 5 seconds
+function startAbletonPoll() {
+  setInterval(() => {
+    abletonConnected = checkAbletonConnected();
+  }, 5000);
+  abletonConnected = checkAbletonConnected();
+}
+
+// ── Ableton routes (AbletonOSC Remote Script API) ──
+router.get('/api/ableton/health', (ctx) => {
+  ctx.body = { ok: true, connected: abletonConnected };
+});
+
+router.get('/api/ableton/state', (ctx) => {
+  ctx.body = {
+    ok: true,
+    connected: abletonConnected,
+    playing: cachedAbletonState.playing,
+    tempo: cachedAbletonState.tempo,
+    beatPosition: cachedAbletonState.beatPosition,
+    tracks: cachedAbletonState.tracks,
+    masterVolume: cachedAbletonState.masterVolume,
+    masterMeterLeft: cachedAbletonState.masterMeterLeft,
+    masterMeterRight: cachedAbletonState.masterMeterRight,
+  };
+});
+
+// Comprehensive mixer state for the Ableton Mixer SPA
+router.get('/api/ableton/mixer-state', (ctx) => {
+  ctx.body = {
+    ok: true,
+    connected: abletonConnected,
+    playing: cachedAbletonState.playing,
+    tempo: cachedAbletonState.tempo,
+    beatPosition: cachedAbletonState.beatPosition,
+    tracks: cachedAbletonState.tracks,
+    masterVolume: cachedAbletonState.masterVolume,
+    masterMeterLeft: cachedAbletonState.masterMeterLeft,
+    masterMeterRight: cachedAbletonState.masterMeterRight,
+  };
+});
+
+// Transport: AbletonOSC song commands take NO arguments
+router.post('/api/ableton/transport/play', (ctx) => {
+  sendOsc('/live/song/start_playing');
+  cachedAbletonState.playing = true;
+  ctx.body = { ok: true };
+});
+
+router.post('/api/ableton/transport/stop', (ctx) => {
+  sendOsc('/live/song/stop_playing');
+  cachedAbletonState.playing = false;
+  ctx.body = { ok: true };
+});
+
+// Track volume: /live/track/set/volume <track_id> <volume>
+router.post('/api/ableton/track/:i/volume', (ctx) => {
+  const idx = parseInt(ctx.params.i, 10);
+  const { volume } = ctx.request.body || {};
+  if (volume == null) { ctx.status = 400; ctx.body = { ok: false, error: 'volume required' }; return; }
+  const clamped = Math.max(0, Math.min(1, volume));
+  sendOsc('/live/track/set/volume', idx, clamped);
+  console.log('[ableton:track] Setting track', idx, 'volume to', clamped);
+  if (idx >= 0) {
+    const t = ensureTrack(idx);
+    t.volume = clamped;
+  }
+  ctx.body = { ok: true };
+});
+
+// Track mute: /live/track/set/mute <track_id> <mute>
+router.post('/api/ableton/track/:i/mute', (ctx) => {
+  const idx = parseInt(ctx.params.i, 10);
+  const { muted } = ctx.request.body || {};
+  if (muted == null) { ctx.status = 400; ctx.body = { ok: false, error: 'muted required' }; return; }
+  sendOsc('/live/track/set/mute', idx, muted ? 1 : 0);
+  console.log('[ableton:track] Setting track', idx, 'mute to', muted);
+  if (idx >= 0) {
+    const t = ensureTrack(idx);
+    t.muted = !!muted;
+  }
+  ctx.body = { ok: true };
+});
+
+// Master track in Ableton LOM is track_id = -1
+router.post('/api/ableton/master/volume', (ctx) => {
+  const { volume } = ctx.request.body || {};
+  if (volume == null) { ctx.status = 400; ctx.body = { ok: false, error: 'volume required' }; return; }
+  const clamped = Math.max(0, Math.min(1, volume));
+  sendOsc('/live/track/set/volume', -1, clamped);
+  cachedAbletonState.masterVolume = clamped;
+  console.log('[ableton:master] Master volume set to', clamped, '(' + Math.round(clamped * 100) + '%)');
+  ctx.body = { ok: true };
+});
+
+// Tempo: /live/song/set/tempo <bpm>
+router.post('/api/ableton/tempo', (ctx) => {
+  const { bpm } = ctx.request.body || {};
+  if (bpm == null) { ctx.status = 400; ctx.body = { ok: false, error: 'bpm required' }; return; }
+  const clamped = Math.max(20, Math.min(999, bpm));
+  sendOsc('/live/song/set/tempo', clamped);
+  cachedAbletonState.tempo = clamped;
+  console.log('[ableton:tempo] Tempo set to', clamped, 'BPM');
+  ctx.body = { ok: true };
+});
+
+// Bulk mix update
+router.post('/api/ableton/mix', (ctx) => {
+  const { karaokeVol, karaokeMuted, vlcVol, vlcMuted, masterVol } = ctx.request.body || {};
+  // Track 0 (Karol DJ)
+  if (karaokeVol != null) {
+    const v = Math.max(0, Math.min(1, karaokeVol));
+    sendOsc('/live/track/set/volume', 0, v);
+    ensureTrack(0).volume = v;
+  }
+  if (karaokeMuted != null) {
+    sendOsc('/live/track/set/mute', 0, karaokeMuted ? 1 : 0);
+    ensureTrack(0).muted = !!karaokeMuted;
+  }
+  // Track 1 (VLC Playlist)
+  if (vlcVol != null) {
+    const v = Math.max(0, Math.min(1, vlcVol));
+    sendOsc('/live/track/set/volume', 1, v);
+    ensureTrack(1).volume = v;
+  }
+  if (vlcMuted != null) {
+    sendOsc('/live/track/set/mute', 1, vlcMuted ? 1 : 0);
+    ensureTrack(1).muted = !!vlcMuted;
+  }
+  // Master
+  if (masterVol != null) {
+    const v = Math.max(0, Math.min(1, masterVol));
+    sendOsc('/live/track/set/volume', -1, v);
+    cachedAbletonState.masterVolume = v;
+  }
+  console.log('[ableton:mix] Bulk update - master:', cachedAbletonState.masterVolume, 'track0:', ensureTrack(0).volume, 'track1:', ensureTrack(1).volume);
+  ctx.body = { ok: true };
+});
+
+// Track solo: toggles solo state
+router.post('/api/ableton/track/:i/solo', (ctx) => {
+  const idx = parseInt(ctx.params.i, 10);
+  if (isNaN(idx) || idx < 0) { ctx.status = 400; ctx.body = { ok: false, error: 'invalid track index' }; return; }
+  const t = ensureTrack(idx);
+  const next = !t.solo;
+  sendOsc('/live/track/set/solo', idx, next ? 1 : 0);
+  t.solo = next;
+  console.log('[ableton:track] Setting track', idx, 'solo to', next);
+  ctx.body = { ok: true, solo: next };
+});
+
+// Track pan: /live/track/set/panning <track_id> <pan>  (pan is -1 to 1)
+router.post('/api/ableton/track/:i/pan', (ctx) => {
+  const idx = parseInt(ctx.params.i, 10);
+  const { pan } = ctx.request.body || {};
+  if (pan == null) { ctx.status = 400; ctx.body = { ok: false, error: 'pan required' }; return; }
+  if (isNaN(idx) || idx < 0) { ctx.status = 400; ctx.body = { ok: false, error: 'invalid track index' }; return; }
+  const clamped = Math.max(-1, Math.min(1, pan));
+  sendOsc('/live/track/set/panning', idx, clamped);
+  const t = ensureTrack(idx);
+  t.pan = clamped;
+  console.log('[ableton:track] Setting track', idx, 'pan to', clamped);
+  ctx.body = { ok: true, pan: clamped };
+});
+
+// Track send: /live/track/set/send <track_id> <send_id> <value>
+router.post('/api/ableton/track/:i/send/:sendIndex', (ctx) => {
+  const idx = parseInt(ctx.params.i, 10);
+  const sendIdx = parseInt(ctx.params.sendIndex, 10);
+  const { value } = ctx.request.body || {};
+  if (value == null) { ctx.status = 400; ctx.body = { ok: false, error: 'value required' }; return; }
+  if (isNaN(idx) || idx < 0) { ctx.status = 400; ctx.body = { ok: false, error: 'invalid track index' }; return; }
+  if (isNaN(sendIdx) || sendIdx < 0 || sendIdx > 3) { ctx.status = 400; ctx.body = { ok: false, error: 'invalid send index (0-3)' }; return; }
+  const clamped = Math.max(0, Math.min(1, value));
+  sendOsc('/live/track/set/send', idx, sendIdx, clamped);
+  const t = ensureTrack(idx);
+  if (!t.sends) t.sends = [0, 0, 0, 0];
+  t.sends[sendIdx] = clamped;
+  console.log('[ableton:track] Setting track', idx, 'send', sendIdx, 'to', clamped);
+  ctx.body = { ok: true, sendIndex: sendIdx, value: clamped };
+});
 
 // ── Hardware routes (match React SPA paths) ──
 router.get('/api/vlc-dj/hardware/mic', (ctx) => {
@@ -305,6 +569,27 @@ router.post('/api/vlc-dj/hardware/mic/mute', (ctx) => {
 
 // ── Mount router first ──
 app.use(router.routes());
+
+// ── Static: Ableton Mixer SPA (iPhone-friendly) ──
+const abletonMixerDir = path.resolve(__dirname, '..', 'src', 'ableton-mixer');
+if (fs.existsSync(abletonMixerDir)) {
+  app.use(async (ctx, next) => {
+    if (!ctx.path.startsWith('/ableton-mixer/')) { await next(); return; }
+    const relPath = ctx.path.slice('/ableton-mixer/'.length) || 'index.html';
+    const filePath = path.join(abletonMixerDir, relPath);
+    try {
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const ext = path.extname(filePath);
+        ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : ext === '.svg' ? 'image/svg+xml' : ext === '.png' ? 'image/png' : 'application/octet-stream';
+        ctx.body = fs.createReadStream(filePath);
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    ctx.type = 'text/html';
+    ctx.body = fs.createReadStream(path.join(abletonMixerDir, 'index.html'));
+  });
+  console.log('Ableton Mixer SPA: ' + abletonMixerDir);
+}
 
 // ── Static SPA (only for non-API paths) ──
 const djDistDir = path.resolve(__dirname, '..', 'src', 'dj-controller', 'dist');
@@ -330,6 +615,7 @@ const server = http.createServer(app.callback());
 server.listen(PORT, '0.0.0.0', () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
   console.log('  VLC, Ableton, Hardware mixer routes ready');
+  startAbletonPoll();
 });
 
 process.on('SIGINT', () => { server.close(() => process.exit(0)); });

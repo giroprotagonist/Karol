@@ -1,0 +1,518 @@
+/* ── Ableton Mixer SPA — Dark Theme, Touch-Optimized for iPhone SE 2 Landscape ── */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #1a1a2e;
+  --bg-surface: #22223a;
+  --bg-strip: #2a2a40;
+  --bg-master: #1e1e35;
+  --border: #3a3a55;
+  --text: #e0e0e0;
+  --text-dim: #8888aa;
+  --text-bright: #ffffff;
+  --accent: #e0533d;
+  --accent-green: #1fac8a;
+  --accent-yellow: #e0962d;
+  --mute-on: #8b0000;
+  --solo-on: #d4a017;
+  --meter-green: #1fac8a;
+  --meter-yellow: #e0962d;
+  --meter-red: #e0533d;
+  --play-on: #1fac8a;
+  --stop-color: #e0e0e0;
+  --status-on: #1fac8a;
+  --status-off: #555;
+  --fader-track: #3a3a55;
+  --fader-thumb: #666;
+  --fader-thumb-active: #999;
+  --strip-width: 72px;
+  --master-width: 88px;
+  --transport-height: 44px;
+  --send-label-height: 18px;
+  --tap-highlight: transparent;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: var(--tap-highlight);
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+/* ── Transport Bar ── */
+#transport {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--transport-height);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.transport-left, .transport-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.transport-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  justify-content: center;
+}
+
+.transport-btn {
+  width: 36px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-strip);
+  color: var(--text);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: var(--tap-highlight);
+  transition: background 0.1s;
+}
+
+.transport-btn:active {
+  background: #444;
+}
+
+.transport-btn.play.playing {
+  background: var(--play-on);
+  color: #000;
+  border-color: var(--play-on);
+}
+
+.transport-btn.stop {
+  font-size: 18px;
+}
+
+.beat-display {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-bright);
+  min-width: 48px;
+  text-align: center;
+  letter-spacing: 1px;
+}
+
+.tempo-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+#tempo-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-bright);
+  min-width: 52px;
+  text-align: right;
+}
+
+.tempo-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.tap-btn {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-strip);
+  color: var(--text-dim);
+  cursor: pointer;
+  letter-spacing: 1px;
+  -webkit-tap-highlight-color: var(--tap-highlight);
+}
+
+.tap-btn:active, .tap-btn.tapping {
+  background: var(--accent-yellow);
+  color: #000;
+}
+
+.status-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--status-off);
+  transition: background 0.3s;
+}
+
+.status-dot.connected {
+  background: var(--status-on);
+  box-shadow: 0 0 6px var(--status-on);
+}
+
+/* ── Mixer Area ── */
+#mixer {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+}
+
+.scroll-container {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 0 2px;
+  align-items: stretch;
+}
+
+.scroll-container::-webkit-scrollbar { display: none; }
+
+/* ── Channel Strip ── */
+.channel-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--strip-width);
+  min-width: var(--strip-width);
+  background: var(--bg-strip);
+  border-right: 1px solid var(--border);
+  padding: 4px 6px 2px;
+  gap: 2px;
+  position: relative;
+}
+
+.channel-strip.master {
+  width: var(--master-width);
+  min-width: var(--master-width);
+  background: var(--bg-master);
+  border-right: none;
+  border-left: 2px solid var(--border);
+}
+
+/* Track color bar at top of strip */
+.track-color-bar {
+  width: 100%;
+  height: 3px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+/* Track name */
+.track-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-bright);
+  text-align: center;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+  padding: 2px 0 0;
+  flex-shrink: 0;
+}
+
+.track-name.master-name {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* Clip indicator */
+.clip-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--border);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.clip-indicator.playing {
+  background: var(--accent-green);
+  animation: clip-pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes clip-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.4; }
+}
+
+/* Meter */
+.meter-row {
+  display: flex;
+  gap: 1px;
+  width: 100%;
+  height: 4px;
+  flex-shrink: 0;
+}
+
+.meter-bar {
+  flex: 1;
+  height: 100%;
+  background: var(--fader-track);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--meter-green);
+  transition: width 0.15s ease-out;
+}
+
+.meter-fill.hot { background: var(--meter-yellow); }
+.meter-fill.clip { background: var(--meter-red); }
+
+/* Pan slider */
+.pan-container {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.pan-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 14px;
+  background: transparent;
+  margin: 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.pan-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--fader-track);
+  border-radius: 2px;
+}
+
+.pan-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--fader-thumb);
+  border: 2px solid var(--text-dim);
+  margin-top: -6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+
+/* Volume fader */
+.fader-container {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60px;
+  position: relative;
+}
+
+.volume-fader {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 180px;
+  height: 100%;
+  background: transparent;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  cursor: pointer;
+  touch-action: none;
+  margin: 0;
+}
+
+.volume-fader::-webkit-slider-runnable-track {
+  width: 8px;
+  background: linear-gradient(to top, var(--meter-green), var(--meter-yellow) 80%, var(--meter-red));
+  border-radius: 4px;
+}
+
+.volume-fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 4px;
+  background: #555;
+  border: 2px solid #777;
+  margin-left: -15px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+
+.volume-fader::-webkit-slider-thumb:active {
+  background: #888;
+  border-color: #aaa;
+}
+
+/* Volume readout */
+.volume-readout {
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  text-align: center;
+  flex-shrink: 0;
+  padding: 1px 0;
+}
+
+/* Mute/Solo buttons row */
+.mute-solo-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  flex-shrink: 0;
+  padding-bottom: 2px;
+}
+
+.mute-btn, .solo-btn {
+  flex: 1;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: var(--tap-highlight);
+  transition: background 0.1s, color 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+}
+
+.mute-btn {
+  background: var(--bg-surface);
+  color: var(--text-dim);
+}
+
+.mute-btn.muted {
+  background: var(--mute-on);
+  color: #fff;
+  border-color: var(--mute-on);
+}
+
+.solo-btn {
+  background: var(--bg-surface);
+  color: var(--text-dim);
+}
+
+.solo-btn.soloed {
+  background: var(--solo-on);
+  color: #000;
+  border-color: var(--solo-on);
+}
+
+/* Send knobs */
+.sends-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.send-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+}
+
+.send-label-mini {
+  font-size: 7px;
+  color: var(--text-dim);
+  width: 20px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.send-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.send-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--fader-track);
+  border-radius: 2px;
+}
+
+.send-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fader-thumb);
+  border: 1px solid var(--text-dim);
+  margin-top: -6px;
+}
+
+/* ── Send labels row (bottom) ── */
+#send-labels {
+  display: none;
+  height: var(--send-label-height);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 8px;
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+/* ── Master strip distinct styling ── */
+.channel-strip.master .mute-solo-row { padding-bottom: 4px; }
+.channel-strip.master .volume-fader::-webkit-slider-runnable-track {
+  background: linear-gradient(to top, #1fac8a, #e0962d 80%, #e0533d);
+}
+.channel-strip.master .volume-fader::-webkit-slider-thumb {
+  border-color: var(--accent);
+}
+
+/* ── Landscape-specific adjustments ── */
+@media (orientation: landscape) {
+  #send-labels { display: flex; }
+  .channel-strip { gap: 1px; }
+}

@@ -26,9 +26,19 @@ export default function AbletonMixerStrip({ host, connected, pollIntervalMs = DE
   const [loading, setLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const debounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const lastAdjustRef = useRef<Record<string, number>>({});
 
   // ── Labels for our 2 configured tracks ─────────────────────────────
   const TRACK_LABELS = ['Karaoke / DJ', 'VLC Playlist'];
+
+  function wasRecentlyAdjusted(key: string): boolean {
+    const ts = lastAdjustRef.current[key];
+    return !!ts && (Date.now() - ts) < 2000;
+  }
+
+  function markAdjusted(key: string) {
+    lastAdjustRef.current[key] = Date.now();
+  }
 
   // ── Poll ───────────────────────────────────────────────────────────
   const poll = useCallback(async () => {
@@ -38,14 +48,21 @@ export default function AbletonMixerStrip({ host, connected, pollIntervalMs = DE
       if (res.ok) {
         const data: AbletonState = await res.json();
         setState(data);
+        console.log('[ableton:poll] Received state:', JSON.stringify({ masterVolume: data.masterVolume, tempo: data.tempo, trackVols: data.tracks.map((t: { volume: number }) => t.volume) }));
         if (data.connected) {
-          setLocalTempo(data.tempo);
-          setLocalMaster(data.masterVolume);
+          if (!wasRecentlyAdjusted('tempo')) {
+            setLocalTempo(data.tempo);
+          }
+          if (!wasRecentlyAdjusted('master')) {
+            setLocalMaster(data.masterVolume);
+          }
           if (data.tracks.length > 0) {
-            const vols = data.tracks.map((t) => t.volume);
-            const mts = data.tracks.map((t) => t.muted);
+            const vols = data.tracks.map((t: { volume: number }) => t.volume);
+            const mts = data.tracks.map((t: { muted: boolean }) => t.muted);
             while (vols.length < 2) vols.push(0.75);
             while (mts.length < 2) mts.push(false);
+            if (!wasRecentlyAdjusted('vol-0')) vols[0] = trackLevels[0];
+            if (!wasRecentlyAdjusted('vol-1')) vols[1] = trackLevels[1];
             setTrackLevels(vols.slice(0, 2));
             setTrackMutes(mts.slice(0, 2));
           }
@@ -54,7 +71,7 @@ export default function AbletonMixerStrip({ host, connected, pollIntervalMs = DE
     } catch {
       setState((prev) => ({ ...prev, connected: false }));
     }
-  }, [host]);
+  }, [host, trackLevels]);
 
   useEffect(() => {
     if (connected) {
@@ -91,9 +108,11 @@ export default function AbletonMixerStrip({ host, connected, pollIntervalMs = DE
         return next;
       });
       const key = `vol-${idx}`;
+      markAdjusted(key);
+      console.log('[ableton:ui] Track', idx, 'volume adjusted to', Math.round(level * 100) + '%');
       if (debounceRef.current[key]) clearTimeout(debounceRef.current[key]);
       debounceRef.current[key] = setTimeout(() => {
-        send(`${host}/api/ableton/track/${idx}/volume?level=${level}`);
+        send(`${host}/api/ableton/track/${idx}/volume`, { volume: level });
       }, 80);
     },
     [host, send],
@@ -117,10 +136,12 @@ export default function AbletonMixerStrip({ host, connected, pollIntervalMs = DE
   const handleMasterVolume = useCallback(
     (level: number) => {
       setLocalMaster(level);
+      markAdjusted('master');
+      console.log('[ableton:ui] Master volume adjusted to', Math.round(level * 100) + '%');
       const key = 'master';
       if (debounceRef.current[key]) clearTimeout(debounceRef.current[key]);
       debounceRef.current[key] = setTimeout(() => {
-        send(`${host}/api/ableton/master/volume?level=${level}`);
+        send(`${host}/api/ableton/master/volume`, { volume: level });
       }, 80);
     },
     [host, send],
@@ -130,10 +151,12 @@ export default function AbletonMixerStrip({ host, connected, pollIntervalMs = DE
   const handleTempo = useCallback(
     (bpm: number) => {
       setLocalTempo(bpm);
+      markAdjusted('tempo');
+      console.log('[ableton:ui] Tempo adjusted to', bpm, 'BPM');
       const key = 'tempo';
       if (debounceRef.current[key]) clearTimeout(debounceRef.current[key]);
       debounceRef.current[key] = setTimeout(() => {
-        send(`${host}/api/ableton/tempo?bpm=${bpm}`);
+        send(`${host}/api/ableton/tempo`, { bpm });
       }, 200);
     },
     [host, send],

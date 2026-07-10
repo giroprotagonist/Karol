@@ -473,6 +473,7 @@
 	window.__deskreenYtResetForNavigation = function () {
 		window.__deskreenTheaterDone = false;
 		window.__karolEndedFired = false;
+		window.__karolQualityCapped = false;
 		window.__deskreenYtReleaseMonoPipeline();
 	};
 
@@ -596,6 +597,17 @@
 				} else {
 					v.muted = wasMuted;
 				}
+				// Delayed re-check: YouTube's player may override mute/volume
+				// asynchronously after our initial restoration.
+				setTimeout(function () {
+					if (v.paused || v.ended) return;
+					if (v.muted) {
+						console.log('[DeskreenDelayedCheck] video still muted after play — fixing');
+						v.muted = false;
+						window.__deskreenYtReapplyVolume();
+						resumeMonoAudioContext();
+					}
+				}, 1500);
 			}).catch(function(e) {
 				window.__deskreenYtPlayRejected = Date.now();
 				window.__deskreenYtPlayError = String(e);
@@ -998,6 +1010,151 @@
 	bindEndedListener();
 	bindMonoPipelineEarly();
 	startAdGuard();
+
+	// Auto-recovery: periodically check that playing video isn't silently muted.
+	// YouTube's player can override mute/volume state asynchronously after our
+	// EnsurePlaying unmute — this catches that race and corrects it.
+	var autoRecoveryTimer = null;
+	function startAutoRecovery() {
+		if (!isPlayerMode()) return;
+		autoRecoveryTimer = setInterval(function () {
+			if (!location.pathname.includes('/watch')) return;
+			var v = document.querySelector('video');
+			if (!v) return;
+			var isAlive = !v.paused && !v.ended && v.readyState >= 2;
+			if (!isAlive) return;
+			var needsFix = v.muted;
+			if (!needsFix) {
+				var vol = Number.isFinite(v.volume) ? v.volume : 1;
+				needsFix = vol < 0.01;
+			}
+			if (!needsFix) return;
+			console.log('[DeskreenAutoRecovery] video playing but muted/zero-volume — fixing (muted=' + v.muted + ' vol=' + v.volume + ')');
+			v.muted = false;
+			var lvl = getDesiredOutputLevel();
+			if (lvl < 0.01) lvl = 1;
+			v.volume = lvl;
+			if (isPlayerMode()) {
+				if (!(monoPipeline && monoPipeline.video === v)) {
+					attachMonoPipeline(v);
+				}
+				window.__deskreenYtReapplyVolume();
+				resumeMonoAudioContext();
+			}
+		}, 2000);
+	}
+	startAutoRecovery();
+
+	// Quality guard: cap resolution at 1080p, detect stalls, recover from freezes
+	function startQualityGuard() {
+		if (!isPlayerMode()) return;
+
+		// Helper: log to both WebView console and Android logcat
+		function karolLog(msg) {
+			console.log(msg);
+			try {
+				if (window.KarolPlayer && KarolPlayer.log) {
+					KarolPlayer.log(msg);
+				}
+			} catch (e) {}
+		}
+
+		// --- 1. Quality cap at hd1080 ---
+		function applyQualityCap() {
+			try {
+				var player = document.querySelector('#movie_player') ||
+					document.querySelector('.html5-video-player');
+				if (!player) return;
+				if (window.__karolQualityCapped) return;
+				if (typeof player.setPlaybackQualityRange === 'function') {
+					player.setPlaybackQualityRange('small', 'hd1080');
+					window.__karolQualityCapped = true;
+					karolLog('[Karol] Quality capped: small→hd1080');
+				} else if (typeof player.setPlaybackQuality === 'function') {
+					player.setPlaybackQuality('hd1080');
+					window.__karolQualityCapped = true;
+					karolLog('[Karol] Quality forced: hd1080');
+				}
+				if (typeof player.getPlaybackQuality === 'function') {
+					karolLog('[Karol] Current quality: ' + player.getPlaybackQuality());
+				}
+			} catch (e) {
+				karolLog('[Karol] Quality cap error: ' + e);
+			}
+		}
+
+		// --- 2. Stall detection (buffering >5s → drop to hd720) ---
+		var bufferingStart = 0;
+		function onVideoWaiting() {
+			if (bufferingStart) return;
+			bufferingStart = Date.now();
+		}
+		function onVideoPlaying() {
+			if (!bufferingStart) return;
+			var stallMs = Date.now() - bufferingStart;
+			bufferingStart = 0;
+			if (stallMs > 5000) {
+				karolLog('[Karol] Stall detected: ' + stallMs + 'ms, lowering quality');
+				try {
+					var player = document.querySelector('#movie_player');
+					if (player && typeof player.setPlaybackQuality === 'function') {
+						player.setPlaybackQuality('hd720');
+					}
+				} catch (e) {}
+			}
+		}
+
+		// --- 3. Freeze recovery (currentTime stuck while playing) ---
+		var lastTime = -1;
+		var sameCount = 0;
+		function checkFreeze() {
+			var v = document.querySelector('video');
+			if (!v) return;
+			if (v.paused || v.ended) {
+				sameCount = 0;
+				lastTime = -1;
+				return;
+			}
+			var now = v.currentTime;
+			if (lastTime === now && lastTime > 0 && Number.isFinite(now)) {
+				sameCount++;
+				if (sameCount >= 3) {
+					karolLog('[Karol] Video frozen at ' + now + 's, seeking to refresh');
+					try { v.currentTime = now + 0.1; } catch (e) {}
+					sameCount = 0;
+				}
+			} else {
+				sameCount = 0;
+			}
+			lastTime = now;
+		}
+
+		// --- Bind/unbind video events ---
+		var boundVideo = null;
+		function bindVideoEvents() {
+			var v = document.querySelector('video');
+			if (!v || v === boundVideo) return;
+			if (boundVideo) {
+				boundVideo.removeEventListener('waiting', onVideoWaiting);
+				boundVideo.removeEventListener('playing', onVideoPlaying);
+			}
+			boundVideo = v;
+			v.addEventListener('waiting', onVideoWaiting);
+			v.addEventListener('playing', onVideoPlaying);
+		}
+
+		// Periodic maintenance + initial bind
+		setInterval(function () {
+			if (!location.pathname.includes('/watch')) return;
+			applyQualityCap();
+			bindVideoEvents();
+			checkFreeze();
+		}, 2000);
+		applyQualityCap();
+		bindVideoEvents();
+	}
+	startQualityGuard();
+
 	var endedMo = new MutationObserver(function () {
 		if (location.pathname.includes('/watch')) {
 			bindEndedListener();

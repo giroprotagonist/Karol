@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-title" content="Ableton Mix">
+  <link rel="apple-touch-icon" sizes="180x180" href="/ableton-mixer/icon-180.png">
+  <link rel="icon" type="image/svg+xml" href="/ableton-mixer/icon.svg">
+  <title>Ableton Mixer</title>
+  <link rel="stylesheet" href="/ableton-mixer/mixer.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Transport Bar -->
+    <header id="transport">
+      <div class="transport-left">
+        <button id="btn-stop" class="transport-btn stop" aria-label="Stop">■</button>
+        <button id="btn-play" class="transport-btn play" aria-label="Play">▶</button>
+      </div>
+      <div class="transport-center">
+        <div class="beat-display">
+          <span id="beat-position">1.1.1</span>
+        </div>
+        <div class="tempo-display">
+          <span id="tempo-value">120.00</span>
+          <span class="tempo-label">BPM</span>
+          <button id="btn-tap-tempo" class="tap-btn" aria-label="Tap Tempo">TAP</button>
+        </div>
+      </div>
+      <div class="transport-right">
+        <span id="connection-status" class="status-dot" title="Ableton disconnected"></span>
+      </div>
+    </header>
+
+    <!-- Mixer Area -->
+    <main id="mixer">
+      <div class="scroll-container" id="channel-strips">
+        <!-- Dynamically populated by mixer.js -->
+      </div>
+    </main>
+
+    <!-- Send labels row -->
+    <div id="send-labels">
+      <span>SND A</span><span>SND B</span><span>SND C</span><span>SND D</span>
+    </div>
+  </div>
+
+  <script src="/ableton-mixer/mixer.js"></script>
+</body>
+</html>

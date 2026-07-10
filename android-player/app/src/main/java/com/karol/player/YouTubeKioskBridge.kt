@@ -529,6 +529,11 @@ class YouTubeKioskBridge(
 			}
 		webView.webChromeClient =
 			object : WebChromeClient() {
+				override fun onConsoleMessage(msg: android.webkit.ConsoleMessage): Boolean {
+					Log.d("KarolWebView", "[${msg.messageLevel()}] ${msg.message()}")
+					return true
+				}
+
 				override fun onShowCustomView(
 					view: android.view.View?,
 					callback: CustomViewCallback?,
