@@ -56,7 +56,8 @@
     "deploy": "bash scripts/deploy.sh",
     "test:karol": "bash scripts/verify-karol-e2e.sh",
     "test:karol:controller": "bash scripts/verify-karol-controller.sh",
-    "test:karol:all": "bash scripts/verify-karol-e2e.sh && bash scripts/verify-karol-controller.sh"
+    "test:karol:all": "bash scripts/verify-karol-e2e.sh && bash scripts/verify-karol-controller.sh",
+    "test": "cd src/dj-controller && npm test"
   },
   "dependencies": {
     "@blueprintjs/core": "^6.3.4",

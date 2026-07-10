@@ -36,6 +36,15 @@ jobs:
       - name: Typecheck dj-controller
         run: npm run typecheck
 
+      - name: Run dj-controller unit tests (vitest)
+        run: cd src/dj-controller && npx vitest run
+
+      - name: Run Android unit tests (player)
+        run: cd android-player && ./gradlew test --no-daemon
+
+      - name: Run Android unit tests (controller)
+        run: cd android-controller && ./gradlew test --no-daemon
+
       - name: Build dj-controller bundle
         run: npm run buildDjController
 
