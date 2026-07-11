@@ -41,8 +41,15 @@ object KarolDiscoveryService {
 		try {
 			val mdns = KarolMdnsBrowser.findPlayerHost(context)
 			if (mdns != null && isControllerReachable(mdns.host, mdns.port)) {
-				Log.i(TAG, "found player via mDNS at ${mdns.host}:${mdns.port}")
-				return mdns
+				// mDNS hardcodes isPlayerHost=true — verify the actual role
+				val role = withContext(Dispatchers.IO) {
+					checkHostRole(mdns.host, mdns.port)
+				}
+				if (role == "dj-host") {
+					Log.i(TAG, "found host via mDNS at ${mdns.host}:${mdns.port}")
+					return mdns.copy(isPlayerHost = false)
+				}
+				Log.i(TAG, "mDNS returned player at ${mdns.host}:${mdns.port}, falling through to subnet scan for host")
 			}
 			return scanSubnet(context)
 		} finally {
@@ -187,5 +194,22 @@ object KarolDiscoveryService {
 				ip shr 24 and 0xff,
 			)
 		return "${octets[0]}.${octets[1]}.${octets[2]}"
+	}
+
+	/** Returns the role string ("dj-host", "dj-player", or "") from the host's /api/discover.json */
+	fun checkHostRole(host: String, port: Int): String {
+		return try {
+			val url = URL("http://$host:$port/api/discover.json")
+			val connection = (url.openConnection() as HttpURLConnection).apply {
+				connectTimeout = 3000
+				readTimeout = 3000
+			}
+			val body = connection.inputStream.bufferedReader().use { it.readText() }
+			connection.disconnect()
+			val role = JSONObject(body).optString("role", "")
+			role
+		} catch (e: Exception) {
+			""
+		}
 	}
 }

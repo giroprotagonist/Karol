@@ -614,6 +614,19 @@ class MainActivity : AppCompatActivity() {
 						false
 					}
 				if (healthy) {
+					// After health check passes, verify this is the Mac host (dj-host),
+					// not the tablet player (dj-player).  The player answers on :3131 but
+					// has no VLC endpoints — connecting to it means an empty playlist.
+					val role = withContext(Dispatchers.IO) {
+						KarolDiscoveryService.checkHostRole(host, port)
+					}
+					if (role == "dj-player") {
+						// Wrong device — clear the stale URL and rediscover the Mac
+						getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+							.edit().remove(KEY_URL).apply()
+						startAutoDiscovery()
+						return@launch
+					}
 					hideHealthCheck()
 					loadControllerUrl(url)
 					return@launch
@@ -716,5 +729,8 @@ class MainActivity : AppCompatActivity() {
 		private const val MIN_RELOAD_INTERVAL_MS = 30_000L
 		private const val STARTUP_HEALTH_CHECK_TIMEOUT_MS = 15_000L
 		private const val STARTUP_HEALTH_CHECK_POLL_MS = 2_000L
+		// If auto-discovery can't find the Mac, fall back to this URL.
+		// Set via DHCP reservation so it never changes.
+		private const val DEFAULT_HOST_URL = "http://192.168.68.50:3131/dj-controller/"
 	}
 }

@@ -1230,24 +1230,45 @@ server.listen(PORT, '0.0.0.0', () => {
   // load the .m3u playlist via HTTP API — this is instant for VLC
   // (parses the file natively) vs sequential enqueue (35+ seconds).
   const plFile = writeVlcPlaylistFile();
+  const expectedTrackCount = plFile
+    ? fs.readFileSync(plFile, 'utf-8').split('\n').filter(l => l && l[0] !== '#').length
+    : 0;
+  console.log('[vlc-restore] Expecting ' + expectedTrackCount + ' tracks');
+
   ensureVlcRunning().then(async () => {
     if (plFile) {
       // Clear any stale playlist, then load the .m3u file
       await vlcGet('/requests/status.json?command=pl_empty');
       await vlcGet('/requests/status.json?command=in_play&input=file://' + encodeURIComponent(plFile));
-      // VLC parses .m3u asynchronously — poll until tracks appear
+      // VLC parses .m3u asynchronously — poll until all tracks appear
       console.log('[vlc-restore] Waiting for VLC to parse playlist...');
-      for (let attempt = 0; attempt < 15; attempt++) {
+      let lastItemCount = 0;
+      for (let attempt = 0; attempt < 25; attempt++) {
         await new Promise(r => setTimeout(r, 1000));
         const pl = await vlcGet('/requests/playlist.json');
         const items = (pl && pl.children && pl.children[0] && pl.children[0].children) || [];
-        if (items.length > 0) {
+        if (items.length !== lastItemCount) {
+          console.log('[vlc-restore] Items visible: ' + items.length + '/' + expectedTrackCount);
+          lastItemCount = items.length;
+        }
+        if (items.length >= expectedTrackCount || (items.length >= 10 && items.length === lastItemCount && attempt > 5)) {
           await vlcGet('/requests/status.json?command=pl_pause');
           console.log('[vlc-restore] Tracks loaded: ' + items.length + ', paused');
+          // ── Audio cue: announce readiness via macOS 'say' ──
+          const { exec } = require('child_process');
+          exec('say "Karol server is running. ' + items.length + ' tracks loaded."', (err) => {
+            if (err) {
+              console.warn('[announce] say failed: ' + err.message);
+              // Retry once after a short delay
+              setTimeout(() => {
+                exec('say "Karol ready"', () => {});
+              }, 2000);
+            }
+          });
           return;
         }
       }
-      console.warn('[vlc-restore] Playlist still empty after polling — may need manual reload');
+      console.warn('[vlc-restore] Playlist still incomplete after polling — may need manual reload');
     }
   });
 });
