@@ -227,7 +227,8 @@ class PlayerPreferences(context: Context) {
 
 	fun getMacProxyBaseUrl(): String {
 		val ip = getMacHostIp()
-		return "http://$ip:3131"
+		// ip already contains port (e.g., 192.168.68.51:3131)
+		return "http://$ip"
 	}
 
 	fun getVolumeLevel(): Double =

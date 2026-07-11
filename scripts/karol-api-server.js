@@ -10,10 +10,63 @@ const path = require('path');
 const os = require('os');
 
 const PORT = 3131;
+const PLAYER_HOST = process.env.PLAYER_HOST || (() => {
+  try { return require('fs').readFileSync('/tmp/karol-player-host.txt', 'utf8').trim(); }
+  catch { return '192.168.68.60'; }
+})();
+const PLAYER_PORT = parseInt(process.env.PLAYER_PORT || (() => {
+  try { return require('fs').readFileSync('/tmp/karol-player-port.txt', 'utf8').trim(); }
+  catch { return '3131'; }
+})(), 10);
+
+// ── Kill Deskreen CE if it's squatting on port 3131 ──
+(function resolvePortConflict() {
+  const { execSync } = require('child_process');
+  try {
+    const result = execSync('lsof -iTCP:' + PORT + ' -sTCP:LISTEN -t 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (result) {
+      const pids = result.split('\n').filter(Boolean);
+      for (const pidStr of pids) {
+        const pid = parseInt(pidStr, 10);
+        if (!pid) continue;
+        let comm = '';
+        try { comm = execSync('ps -p ' + pid + ' -o comm= 2>/dev/null', { encoding: 'utf8' }).trim(); } catch {}
+        console.log('[startup] Port ' + PORT + ' in use by PID ' + pid + ' (' + (comm || 'unknown') + '), killing...');
+        try { process.kill(pid, 'SIGTERM'); } catch (e) {
+          console.log('[startup] SIGTERM failed for PID ' + pid + ', trying SIGKILL...');
+          try { process.kill(pid, 'SIGKILL'); } catch {}
+        }
+      }
+      // Wait for port to free (up to 5 seconds)
+      let freed = false;
+      for (let i = 0; i < 50; i++) {
+        try {
+          const check = execSync('lsof -iTCP:' + PORT + ' -sTCP:LISTEN -t 2>/dev/null', { encoding: 'utf8' }).trim();
+          if (!check) { freed = true; break; }
+        } catch {}
+        const { execSync: es } = require('child_process');
+        try { es('sleep 0.1'); } catch {}
+      }
+      if (freed) {
+        console.log('[startup] Port ' + PORT + ' freed successfully');
+      } else {
+        console.warn('[startup] WARNING: Port ' + PORT + ' may still be in use');
+      }
+    }
+  } catch {}
+})();
+
 const app = new Koa();
 const router = new Router();
 app.use(cors());
 app.use(bodyParser());
+
+// Request logging
+app.use(async (ctx, next) => {
+  await next();
+  const rt = ctx.response.get('X-Response-Time');
+  console.log(`${new Date().toISOString()} ${ctx.ip} ${ctx.method} ${ctx.url} - ${ctx.status}`);
+});
 
 const VLC_PASSWORD = process.env.VLC_PASSWORD || 'karol';
 const VLC_AUTH = 'Basic ' + Buffer.from(':' + VLC_PASSWORD).toString('base64');
@@ -41,6 +94,180 @@ function findCoverPath(filePath) {
   }
   return null;
 }
+
+// ── YouTube DJ proxy middleware ───────────────────────────────────────
+
+// ── YouTube response cache (serve stale on S8 unreachable) ──
+const youtubeCache = new Map(); // path -> { body, status, type, timestamp }
+const YOUTUBE_CACHE_TTL = 30000; // 30 seconds stale-data window
+
+const CACHEABLE_PATHS = new Set([
+  '/api/youtube-dj/health',
+  '/api/youtube-dj/now-playing',
+]);
+
+function getCachedYoutube(path) {
+  const entry = youtubeCache.get(path);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > YOUTUBE_CACHE_TTL) {
+    youtubeCache.delete(path);
+    return null;
+  }
+  return entry;
+}
+
+function setCachedYoutube(path, status, body, type) {
+  youtubeCache.set(path, { status, body, type, timestamp: Date.now() });
+}
+
+function proxyYouTubeToPlayer(ctx) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (status, body, isCached) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectTimer);
+      try { socket && socket.removeAllListeners('error'); } catch {}
+      try { resStream && resStream.removeAllListeners('error'); } catch {}
+      ctx.status = status;
+      if (typeof body === 'object') ctx.type = 'application/json';
+      ctx.body = body;
+      resolve();
+      // On success, cache the response for cacheable GET endpoints
+      if (!isCached && status >= 200 && status < 300 && ctx.method === 'GET' && CACHEABLE_PATHS.has(ctx.path)) {
+        setCachedYoutube(ctx.path, status, body, ctx.response && ctx.response.type);
+      }
+    };
+
+    const reqBody = ctx.request.body && Object.keys(ctx.request.body).length > 0
+      ? JSON.stringify(ctx.request.body)
+      : null;
+
+    const reqPath = ctx.path + (ctx.querystring ? '?' + ctx.querystring : '');
+
+    const reqOpts = {
+      hostname: PLAYER_HOST,
+      port: PLAYER_PORT,
+      path: reqPath,
+      method: ctx.method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      timeout: 30000,
+      family: 4,
+    };
+    if (reqBody) reqOpts.headers['Content-Length'] = Buffer.byteLength(reqBody);
+
+    const req = http.request(reqOpts);
+    let socket = null;
+    let resStream = null;
+
+    req.on('socket', (sock) => {
+      socket = sock;
+      socket.on('error', (err) => {
+        console.error(`[youtube-dj proxy] Socket error for ${ctx.method} ${ctx.path}: ${err.message}`);
+        try { req.destroy(); } catch {}
+        settle(502, { ok: false, error: 'Player unreachable', details: err.message });
+      });
+    });
+
+    req.on('response', (res) => {
+      resStream = res;
+      let data = '';
+      res.on('error', (err) => {
+        console.error(`[youtube-dj proxy] Response error for ${ctx.method} ${ctx.path}: ${err.message}`);
+        try { req.destroy(); } catch {}
+        settle(502, { ok: false, error: 'Player response error', details: err.message });
+      });
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.headers['content-type']) ctx.type = res.headers['content-type'];
+        try { settle(res.statusCode, JSON.parse(data)); }
+        catch { settle(res.statusCode, data); }
+      });
+    });
+
+    const connectTimer = setTimeout(() => {
+      try { req.destroy(); } catch {}
+      console.error(`[youtube-dj proxy] Connect timeout for ${ctx.method} ${ctx.path}`);
+      // Try serving from cache before returning 502
+      const cached = getCachedYoutube(ctx.path);
+      if (cached) {
+        console.log(`[youtube-dj proxy] Serving stale cache for ${ctx.path}`);
+        settle(cached.status, cached.body, true);
+      } else {
+        settle(502, { ok: false, error: 'Player connection timeout' });
+      }
+    }, 10000);
+
+    req.on('error', (err) => {
+      console.error(`[youtube-dj proxy] Error proxying ${ctx.method} ${ctx.path}: ${err.message}`);
+      // Try serving from cache before returning 502
+      const cached = getCachedYoutube(ctx.path);
+      if (cached) {
+        console.log(`[youtube-dj proxy] Serving stale cache for ${ctx.path}`);
+        settle(cached.status, cached.body, true);
+      } else {
+        settle(502, { ok: false, error: 'Player unreachable', details: err.message });
+      }
+    });
+
+    req.on('timeout', () => {
+      try { req.destroy(); } catch {}
+      console.error(`[youtube-dj proxy] Request timeout for ${ctx.method} ${ctx.path}`);
+      const cached = getCachedYoutube(ctx.path);
+      if (cached) {
+        console.log(`[youtube-dj proxy] Serving stale cache for ${ctx.path}`);
+        settle(cached.status, cached.body, true);
+      } else {
+        settle(502, { ok: false, error: 'Player request timeout' });
+      }
+    });
+
+    if (reqBody) req.write(reqBody);
+    req.end();
+  });
+}
+
+// Track whether the S8 player was recently unreachable (fast-fail cache mode)
+let playerRecentlyDown = false;
+let playerDownSince = 0;
+const PLAYER_DOWN_COOLDOWN = 15000; // After 15s of failures, try again
+
+app.use(async (ctx, next) => {
+  if (ctx.path.startsWith('/api/youtube-dj/')) {
+    // Fast-fail: if player was recently down and we have a fresh cache, serve it immediately
+    if (playerRecentlyDown && ctx.method === 'GET' && CACHEABLE_PATHS.has(ctx.path)) {
+      const cached = getCachedYoutube(ctx.path);
+      if (cached) {
+        const age = Date.now() - cached.timestamp;
+        // If cache is fresh enough and player was recently down, skip the proxy attempt
+        if (age < PLAYER_DOWN_COOLDOWN + YOUTUBE_CACHE_TTL) {
+          console.log(`[youtube-dj proxy] Fast-fail cache for ${ctx.path} (player down since ${Math.round((Date.now() - playerDownSince) / 1000)}s ago)`);
+          ctx.status = cached.status;
+          ctx.type = 'application/json';
+          ctx.body = cached.body;
+          return;
+        }
+      }
+      // Cooldown expired, try the player again
+      playerRecentlyDown = false;
+    }
+    await proxyYouTubeToPlayer(ctx);
+    // Track if the proxy failed (502)
+    if (ctx.status === 502) {
+      if (!playerRecentlyDown) {
+        playerRecentlyDown = true;
+        playerDownSince = Date.now();
+      }
+    } else {
+      playerRecentlyDown = false;
+    }
+    return;
+  }
+  await next();
+});
 
 // ── VLC routes ──
 router.get('/api/vlc-dj/health', async (ctx) => {
@@ -821,7 +1048,22 @@ router.post('/api/vlc-dj/hardware/mic/mute', (ctx) => {
   ctx.body = { ok: true };
 });
 
-// ── Mount router first ──
+// ── Discovery endpoint (required by Android controller health check) ──
+router.get('/api/discover.json', (ctx) => {
+  ctx.body = {
+    name: 'Karol API Server',
+    role: 'dj-host',
+    ready: true,
+    host: '192.168.68.51',
+    port: 3131,
+    shareUrl: null,
+    djControllerUrl: 'http://192.168.68.51:3131/dj-controller/',
+    youtubeDjHealthUrl: 'http://192.168.68.51:3131/api/youtube-dj/health',
+    vlcDjHealthUrl: 'http://192.168.68.51:3131/api/vlc-dj/status',
+  };
+});
+
+// ── Mount router ──
 app.use(router.routes());
 
 // ── Static: Ableton Mixer SPA (iPhone-friendly) ──
@@ -850,11 +1092,16 @@ const djDistDir = path.resolve(__dirname, '..', 'src', 'dj-controller', 'dist');
 if (fs.existsSync(djDistDir)) {
   app.use(async (ctx, next) => {
     if (ctx.path.startsWith('/api/')) { await next(); return; }
-    let filePath = path.join(djDistDir, ctx.path.slice(1) || 'index.html');
+    // Strip /dj-controller prefix before resolving to dist filesystem
+    let relative = ctx.path;
+    if (relative.startsWith('/dj-controller/')) relative = relative.slice('/dj-controller/'.length);
+    else if (relative.startsWith('/dj-controller')) relative = relative.slice('/dj-controller'.length);
+    if (!relative || relative === '/') relative = 'index.html';
+    let filePath = path.join(djDistDir, relative);
     try {
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath);
-        ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : 'application/octet-stream';
+        ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : ext === '.svg' ? 'image/svg+xml' : ext === '.png' ? 'image/png' : 'application/octet-stream';
         ctx.body = fs.createReadStream(filePath);
         return;
       }
@@ -868,6 +1115,7 @@ if (fs.existsSync(djDistDir)) {
 const server = http.createServer(app.callback());
 server.listen(PORT, '0.0.0.0', () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
+  console.log('  YouTube DJ proxy → ' + PLAYER_HOST + ':' + PLAYER_PORT);
   console.log('  VLC, Ableton, Hardware mixer routes ready');
   startAbletonPoll();
 });
