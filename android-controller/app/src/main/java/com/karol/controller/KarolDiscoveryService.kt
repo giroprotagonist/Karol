@@ -82,13 +82,16 @@ object KarolDiscoveryService {
 						}
 						.awaitAll()
 						.filterNotNull()
+				// Prefer the dj-host (has VLC + YouTube) over a dj-player (YouTube only).
+				// The host runs on the Mac and proxies YouTube DJ from the player tablet
+				// while also serving VLC DJ endpoints that the player lacks.
+				val host = results.firstOrNull { !it.isPlayerHost }
+				if (host != null) {
+					return@coroutineScope host
+				}
 				val player = results.firstOrNull { it.isPlayerHost }
 				if (player != null) {
 					return@coroutineScope player
-				}
-				val any = results.firstOrNull()
-				if (any != null) {
-					return@coroutineScope any
 				}
 			}
 			null
@@ -144,7 +147,10 @@ object KarolDiscoveryService {
 			socket.soTimeout = 3_000
 
 			val writer = socket.getOutputStream().bufferedWriter()
-			writer.write("GET /api/youtube-dj/health HTTP/1.1\r\n")
+			// Use /api/discover.json for the health check — it is served directly
+			// by the Karol host without proxying to the player tablet (unlike
+			// /api/youtube-dj/health which fails when the tablet is asleep).
+			writer.write("GET /api/discover.json HTTP/1.1\r\n")
 			writer.write("Host: $host:$port\r\n")
 			writer.write("Connection: close\r\n")
 			writer.write("User-Agent: KarolController/1.0\r\n")

@@ -1086,11 +1086,9 @@ export default function App() {
 			</div>
 			) : null}
 
-			{activeTab === 'vlc' ? (
-			<div className="tab-panel">
+			<div className="tab-panel" style={{ display: activeTab === 'vlc' ? 'block' : 'none' }}>
 			<VlcPlayerTab host={host} connected={connected} />
 			</div>
-			) : null}
 
 			{showMiniPlayer && connected && currentTitle ? (
 				<div className="sticky-mini-player" role="region" aria-label="Now playing">

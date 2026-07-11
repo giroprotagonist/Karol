@@ -19,42 +19,11 @@ const PLAYER_PORT = parseInt(process.env.PLAYER_PORT || (() => {
   catch { return '3131'; }
 })(), 10);
 
-// ── Kill Deskreen CE if it's squatting on port 3131 ──
-(function resolvePortConflict() {
-  const { execSync } = require('child_process');
-  try {
-    const result = execSync('lsof -iTCP:' + PORT + ' -sTCP:LISTEN -t 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (result) {
-      const pids = result.split('\n').filter(Boolean);
-      for (const pidStr of pids) {
-        const pid = parseInt(pidStr, 10);
-        if (!pid) continue;
-        let comm = '';
-        try { comm = execSync('ps -p ' + pid + ' -o comm= 2>/dev/null', { encoding: 'utf8' }).trim(); } catch {}
-        console.log('[startup] Port ' + PORT + ' in use by PID ' + pid + ' (' + (comm || 'unknown') + '), killing...');
-        try { process.kill(pid, 'SIGTERM'); } catch (e) {
-          console.log('[startup] SIGTERM failed for PID ' + pid + ', trying SIGKILL...');
-          try { process.kill(pid, 'SIGKILL'); } catch {}
-        }
-      }
-      // Wait for port to free (up to 5 seconds)
-      let freed = false;
-      for (let i = 0; i < 50; i++) {
-        try {
-          const check = execSync('lsof -iTCP:' + PORT + ' -sTCP:LISTEN -t 2>/dev/null', { encoding: 'utf8' }).trim();
-          if (!check) { freed = true; break; }
-        } catch {}
-        const { execSync: es } = require('child_process');
-        try { es('sleep 0.1'); } catch {}
-      }
-      if (freed) {
-        console.log('[startup] Port ' + PORT + ' freed successfully');
-      } else {
-        console.warn('[startup] WARNING: Port ' + PORT + ' may still be in use');
-      }
-    }
-  } catch {}
-})();
+// ── Port conflict: try to listen directly. If the port is occupied
+// by a stale instance, we exit so launchd can restart us cleanly.
+// We avoid execSync / lsof because macOS TCC sandboxing in ~/Documents
+// can hang those calls indefinitely. ──
+
 
 const app = new Koa();
 const router = new Router();
@@ -983,7 +952,7 @@ router.get('/api/audio/devices', (ctx) => {
           umcPresent = true;
           umcSampleRate = d.coreaudio_device_srate || 0;
         }
-        if (name === 'BlackHole 16ch') blackholePresent = true;
+        if (name === 'BlackHole 2ch') blackholePresent = true;
         if (name === 'Karol') karolAggregate = true;
         if (d.coreaudio_default_audio_output_device === 'spaudio_yes') defaultOutput = name;
       }
@@ -994,7 +963,7 @@ router.get('/api/audio/devices', (ctx) => {
     ok: true,
     devices: {
       umc404hd: { present: umcPresent, sampleRate: umcSampleRate, type: 'USB audio interface', inputs: 4, outputs: 4 },
-      blackhole16ch: { present: blackholePresent, type: 'Virtual audio driver' },
+      blackhole: { present: blackholePresent, type: 'Virtual audio driver' },
       karolAggregate: { present: karolAggregate, type: 'Multi-Output Device' },
     },
     defaultOutput,
@@ -1015,7 +984,7 @@ router.get('/api/ableton/template', (ctx) => {
           index: 0,
           name: 'Karol DJ',
           type: 'Audio',
-          input: { device: 'BlackHole 16ch', channels: '1-2' },
+          input: { device: 'BlackHole 2ch', channels: '1-2' },
           output: 'Master',
           description: 'Karaoke mic / DJ audio input from BlackHole channels 1-2',
           recommendedPlugins: ['EQ Eight (HPF at 80Hz)', 'Compressor (light, 2:1)', 'Reverb (Send A)'],
@@ -1024,7 +993,7 @@ router.get('/api/ableton/template', (ctx) => {
           index: 1,
           name: 'VLC Playlist',
           type: 'Audio',
-          input: { device: 'BlackHole 16ch', channels: '3-4' },
+          input: { device: 'BlackHole 2ch', channels: '3-4' },
           output: 'Master',
           description: 'Background music from VLC via BlackHole channels 3-4',
           recommendedPlugins: ['EQ Eight (slight smile curve)', 'Compressor (gentle)'],
@@ -1035,7 +1004,7 @@ router.get('/api/ableton/template', (ctx) => {
         { index: 1, label: 'B - Delay', type: 'Delay', preset: 'Stereo 1/4' },
       ],
       master: {
-        output: { device: 'Karol', description: 'Multi-Output Device (UMC404HD + BlackHole 16ch)' },
+        output: { device: 'Karol', description: 'Multi-Output Device (UMC404HD + BlackHole 2ch)' },
         recommendedPlugins: ['Limiter (ceiling -0.3dB)'],
       },
       audioSettings: {
@@ -1127,22 +1096,28 @@ if (fs.existsSync(djDistDir)) {
 }
 
 // ── VLC auto-start: ensure VLC is running with HTTP interface ──
+// Polls the HTTP interface after launch so we don't try to talk to VLC
+// before it's actually ready (race condition on fresh boot).
+async function isVlcHttpReady() {
+  return new Promise((resolve) => {
+    const req = http.get({
+      hostname: '127.0.0.1', port: 8080,
+      path: '/requests/status.json',
+      timeout: 2000,
+      headers: { Authorization: VLC_AUTH },
+    }, (res) => { res.resume(); resolve(true); });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
 async function ensureVlcRunning() {
   const { spawn } = require('child_process');
   // Quick check: is VLC's HTTP port already responding?
-  try {
-    await new Promise((resolve, reject) => {
-      const req = http.get({ hostname: '127.0.0.1', port: 8080, path: '/requests/status.xml', timeout: 3000,
-        headers: { Authorization: VLC_AUTH } }, (res) => {
-        resolve(res.statusCode);
-      });
-      req.on('error', () => reject(new Error('not running')));
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    });
+  const alreadyRunning = await isVlcHttpReady();
+  if (alreadyRunning) {
     console.log('[vlc-auto] VLC HTTP interface already running on :8080');
     return;
-  } catch {
-    // VLC not running — launch it
   }
 
   console.log('[vlc-auto] Starting VLC with HTTP interface...');
@@ -1154,7 +1129,6 @@ async function ensureVlcRunning() {
     '--http-port', '8080',
     '--play-and-exit',
     '--no-video-title-show',
-    '--quiet',
   ], {
     stdio: 'ignore',
     detached: true,
@@ -1163,9 +1137,34 @@ async function ensureVlcRunning() {
   vlc.on('error', (err) => {
     console.warn('[vlc-auto] Failed to start VLC: ' + err.message);
   });
-  // Give VLC a moment to start up
-  await new Promise(r => setTimeout(r, 3000));
-  console.log('[vlc-auto] VLC launched');
+
+  // Poll VLC HTTP interface until it responds (up to 30 seconds)
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    if (await isVlcHttpReady()) {
+      console.log('[vlc-auto] VLC HTTP interface ready after ' + (i + 1) + 's');
+      return;
+    }
+  }
+  console.warn('[vlc-auto] VLC HTTP interface did not become ready within 30s');
+}
+
+// ── VLC playlist auto-restore: write all tracks to a .m3u file so VLC
+// loads them when launched. This replaces sequential HTTP enqueue (35s+)
+// with instant file-based loading. ──
+function writeVlcPlaylistFile() {
+  const playlistFile = '/tmp/karol-vlc-playlist.m3u';
+  console.log('[vlc-restore] Scanning library...');
+  const tracks = scanLibraryFolders();
+  if (!tracks.length) {
+    console.log('[vlc-restore] No tracks found, skipping');
+    try { require('fs').unlinkSync(playlistFile); } catch {}
+    return null;
+  }
+  const m3u = '#EXTM3U\n' + tracks.map(t => t.path).join('\n') + '\n';
+  require('fs').writeFileSync(playlistFile, m3u, 'utf-8');
+  console.log('[vlc-restore] Wrote ' + tracks.length + ' tracks to ' + playlistFile);
+  return playlistFile;
 }
 
 // ── mDNS broadcaster (Bonjour) — advertises _karol-dj._tcp so the
@@ -1201,14 +1200,56 @@ function stopMdnsBroadcaster() {
   }
 }
 
+// ── BlackHole sample rate fix: ensures 44.1 kHz to match UMC404HD ──
+// CoreAudio may reset BlackHole to 48 kHz after reboot; this Swift binary sets it.
+function alignBlackHoleSampleRate() {
+  const { execSync } = require('child_process');
+  const binPath = path.resolve(__dirname, '..', 'scripts', 'blackhole-44100');
+  if (!fs.existsSync(binPath)) {
+    console.log('[blackhole-sr] Swift binary not found at ' + binPath + ' (run: swiftc -o scripts/blackhole-44100 scripts/blackhole-44100.swift)');
+    return;
+  }
+  try {
+    const out = execSync(binPath, { timeout: 3000 }).toString();
+    console.log('[blackhole-sr] ' + out.trim());
+  } catch (e) {
+    const stderr = e.stderr ? e.stderr.toString() : e.message;
+    console.warn('[blackhole-sr] Failed: ' + stderr.trim());
+  }
+}
+
 const server = http.createServer(app.callback());
 server.listen(PORT, '0.0.0.0', () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
   console.log('  YouTube DJ proxy → ' + PLAYER_HOST + ':' + PLAYER_PORT);
   console.log('  VLC, Ableton, Hardware mixer routes ready');
+  alignBlackHoleSampleRate();
   startAbletonPoll();
   startMdnsBroadcaster(getLanIp());
-  ensureVlcRunning();
+  // Write playlist file first, then launch VLC. After VLC is ready,
+  // load the .m3u playlist via HTTP API — this is instant for VLC
+  // (parses the file natively) vs sequential enqueue (35+ seconds).
+  const plFile = writeVlcPlaylistFile();
+  ensureVlcRunning().then(async () => {
+    if (plFile) {
+      // Clear any stale playlist, then load the .m3u file
+      await vlcGet('/requests/status.json?command=pl_empty');
+      await vlcGet('/requests/status.json?command=in_play&input=file://' + encodeURIComponent(plFile));
+      // VLC parses .m3u asynchronously — poll until tracks appear
+      console.log('[vlc-restore] Waiting for VLC to parse playlist...');
+      for (let attempt = 0; attempt < 15; attempt++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const pl = await vlcGet('/requests/playlist.json');
+        const items = (pl && pl.children && pl.children[0] && pl.children[0].children) || [];
+        if (items.length > 0) {
+          await vlcGet('/requests/status.json?command=pl_pause');
+          console.log('[vlc-restore] Tracks loaded: ' + items.length + ', paused');
+          return;
+        }
+      }
+      console.warn('[vlc-restore] Playlist still empty after polling — may need manual reload');
+    }
+  });
 });
 
 process.on('SIGINT', () => { stopMdnsBroadcaster(); server.close(() => process.exit(0)); });
