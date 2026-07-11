@@ -44,6 +44,7 @@
 			android:name=".MainActivity"
 			android:configChanges="orientation|screenSize|keyboardHidden"
 			android:exported="true"
+			android:keepScreenOn="true"
 			android:launchMode="singleTask"
 			android:screenOrientation="sensorLandscape"
 			android:theme="@style/Theme.KarolPlayer.Fullscreen">

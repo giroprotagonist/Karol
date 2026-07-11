@@ -68,6 +68,19 @@ app.use(async (ctx, next) => {
   console.log(`${new Date().toISOString()} ${ctx.ip} ${ctx.method} ${ctx.url} - ${ctx.status}`);
 });
 
+// ── Get the LAN IP of the Mac (first non-internal IPv4 on en0/wlan0/etc) ──
+function getLanIp() {
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    if (/^(en|wl|eth|wlan)/i.test(name)) {
+      for (const addr of nets[name]) {
+        if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
+
 const VLC_PASSWORD = process.env.VLC_PASSWORD || 'karol';
 const VLC_AUTH = 'Basic ' + Buffer.from(':' + VLC_PASSWORD).toString('base64');
 
@@ -1050,16 +1063,17 @@ router.post('/api/vlc-dj/hardware/mic/mute', (ctx) => {
 
 // ── Discovery endpoint (required by Android controller health check) ──
 router.get('/api/discover.json', (ctx) => {
+  const lanIp = getLanIp();
   ctx.body = {
     name: 'Karol API Server',
     role: 'dj-host',
     ready: true,
-    host: '192.168.68.51',
-    port: 3131,
+    host: lanIp,
+    port: PORT,
     shareUrl: null,
-    djControllerUrl: 'http://192.168.68.51:3131/dj-controller/',
-    youtubeDjHealthUrl: 'http://192.168.68.51:3131/api/youtube-dj/health',
-    vlcDjHealthUrl: 'http://192.168.68.51:3131/api/vlc-dj/status',
+    djControllerUrl: `http://${lanIp}:${PORT}/dj-controller/`,
+    youtubeDjHealthUrl: `http://${lanIp}:${PORT}/api/youtube-dj/health`,
+    vlcDjHealthUrl: `http://${lanIp}:${PORT}/api/vlc-dj/status`,
   };
 });
 
@@ -1112,13 +1126,90 @@ if (fs.existsSync(djDistDir)) {
   console.log('SPA: ' + djDistDir);
 }
 
+// ── VLC auto-start: ensure VLC is running with HTTP interface ──
+async function ensureVlcRunning() {
+  const { spawn } = require('child_process');
+  // Quick check: is VLC's HTTP port already responding?
+  try {
+    await new Promise((resolve, reject) => {
+      const req = http.get({ hostname: '127.0.0.1', port: 8080, path: '/requests/status.xml', timeout: 3000,
+        headers: { Authorization: VLC_AUTH } }, (res) => {
+        resolve(res.statusCode);
+      });
+      req.on('error', () => reject(new Error('not running')));
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    });
+    console.log('[vlc-auto] VLC HTTP interface already running on :8080');
+    return;
+  } catch {
+    // VLC not running — launch it
+  }
+
+  console.log('[vlc-auto] Starting VLC with HTTP interface...');
+  const vlcPath = '/Applications/VLC.app/Contents/MacOS/VLC';
+  const vlc = spawn(vlcPath, [
+    '--extraintf', 'http',
+    '--http-password', VLC_PASSWORD,
+    '--http-host', '127.0.0.1',
+    '--http-port', '8080',
+    '--play-and-exit',
+    '--no-video-title-show',
+    '--quiet',
+  ], {
+    stdio: 'ignore',
+    detached: true,
+  });
+  vlc.unref();
+  vlc.on('error', (err) => {
+    console.warn('[vlc-auto] Failed to start VLC: ' + err.message);
+  });
+  // Give VLC a moment to start up
+  await new Promise(r => setTimeout(r, 3000));
+  console.log('[vlc-auto] VLC launched');
+}
+
+// ── mDNS broadcaster (Bonjour) — advertises _karol-dj._tcp so the
+// S24 controller finds the server without needing a hardcoded IP ──
+let mdnsProc = null;
+function startMdnsBroadcaster(lanIp) {
+  const { spawn } = require('child_process');
+  // dns-sd -R registers a service on the local mDNS responder.
+  // The controller resolves host/port from the SRV record, no TXT needed.
+  mdnsProc = spawn('dns-sd', [
+    '-R', 'Karol API Server',
+    '_karol-dj._tcp',
+    'local',
+    String(PORT),
+  ], {
+    stdio: 'ignore',
+    detached: false,
+  });
+  mdnsProc.on('error', (err) => {
+    console.warn('[mDNS] Failed to start broadcaster: ' + err.message);
+    mdnsProc = null;
+  });
+  mdnsProc.on('exit', () => { mdnsProc = null; });
+  // Don't wait for it — koa startup doesn't block
+  mdnsProc.unref();
+  console.log('[mDNS] Broadcasting ' + lanIp + ':' + PORT + ' as _karol-dj._tcp');
+}
+
+function stopMdnsBroadcaster() {
+  if (mdnsProc) {
+    try { mdnsProc.kill('SIGTERM'); } catch {}
+    mdnsProc = null;
+  }
+}
+
 const server = http.createServer(app.callback());
 server.listen(PORT, '0.0.0.0', () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
   console.log('  YouTube DJ proxy → ' + PLAYER_HOST + ':' + PLAYER_PORT);
   console.log('  VLC, Ableton, Hardware mixer routes ready');
   startAbletonPoll();
+  startMdnsBroadcaster(getLanIp());
+  ensureVlcRunning();
 });
 
-process.on('SIGINT', () => { server.close(() => process.exit(0)); });
-process.on('SIGTERM', () => { server.close(() => process.exit(0)); });
+process.on('SIGINT', () => { stopMdnsBroadcaster(); server.close(() => process.exit(0)); });
+process.on('SIGTERM', () => { stopMdnsBroadcaster(); server.close(() => process.exit(0)); });
