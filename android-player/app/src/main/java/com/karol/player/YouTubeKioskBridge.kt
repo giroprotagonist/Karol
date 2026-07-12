@@ -23,6 +23,7 @@ interface YouTubePlayerController {
 	fun loadVideo(videoId: String)
 	fun play()
 	fun pause()
+	fun pauseAndReset()
 	fun seek(seconds: Double)
 	fun setVolume(level: Double)
 	fun getSnapshot(): PlayerSnapshot?
@@ -593,6 +594,16 @@ class YouTubeKioskBridge(
 
 	override fun pause() {
 		evalJs("window.__deskreenYtPause && window.__deskreenYtPause()")
+	}
+
+	override fun pauseAndReset() {
+		Log.i("YKB", "pauseAndReset: killing YouTube playback + navigating to about:blank")
+		evalJs("window.__deskreenYtPause && window.__deskreenYtPause()")
+		lastVideoId = ""
+		mainHandler.post {
+			webView.stopLoading()
+			webView.loadUrl("about:blank")
+		}
 	}
 
 	override fun seek(seconds: Double) {

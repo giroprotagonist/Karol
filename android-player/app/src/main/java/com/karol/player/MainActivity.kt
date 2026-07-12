@@ -765,6 +765,10 @@ class MainActivity : AppCompatActivity() {
 	 */
 	private fun tryLoadVideoOrFallback(videoId: String) {
 		Log.i("MainActivity", "tryLoadVideoOrFallback: $videoId")
+		// STOP the current player before loading the new video.
+		// Without this, the old ExoPlayer or WebView YouTube keeps running
+		// in the background while the new video loads, causing audio overlap.
+		stopCurrentPlayback()
 		showVideoLoading()
 		// First, try local download
 		videoDownloadManager.download(videoId,
@@ -786,6 +790,24 @@ class MainActivity : AppCompatActivity() {
 				}
 			}
 		)
+	}
+
+	/**
+	 * Stop whatever player is currently running — ExoPlayer or WebView YouTube.
+	 * Called before loading a new video to prevent background audio overlap.
+	 */
+	private fun stopCurrentPlayback() {
+		if (localPlaybackActive) {
+			Log.i("MainActivity", "stopCurrentPlayback: stopping ExoPlayer ($currentLocalVideoId)")
+			exoPlayer?.stop()
+			localPlaybackActive = false
+			currentLocalVideoId = null
+			playerView.visibility = View.GONE
+		} else {
+			// WebView YouTube is active — tell it to stop
+			Log.i("MainActivity", "stopCurrentPlayback: pausing WebView YouTube")
+			bridge?.pauseAndReset()
+		}
 	}
 
 	private fun showVideoLoading() {
