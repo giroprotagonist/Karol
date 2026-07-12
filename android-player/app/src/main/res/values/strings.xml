@@ -54,4 +54,7 @@
 	<string name="sign_in_overlay_timeout">Sign-in timed out — tap to retry</string>
 	<string name="sign_in_overlay_cancel">Cancel</string>
 	<string name="sign_in_device_account">Try device Google account</string>
+	<string name="playlist_title">Queue</string>
+	<string name="playlist_empty">No tracks in the queue.\nAdd songs from the controller.</string>
+	<string name="cc_off">Turn off captions</string>
 </resources>

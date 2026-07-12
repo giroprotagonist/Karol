@@ -67,6 +67,7 @@ dependencies {
 	implementation("io.ktor:ktor-server-status-pages:2.3.12")
 	implementation("com.google.zxing:core:3.5.3")
 	implementation("com.squareup.okhttp3:okhttp:4.12.0")
+	implementation("androidx.recyclerview:recyclerview:1.3.2")
 
 	testImplementation("junit:junit:4.13.2")
 	testImplementation("org.robolectric:robolectric:4.14.1")

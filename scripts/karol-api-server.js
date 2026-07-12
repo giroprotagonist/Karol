@@ -53,6 +53,13 @@ function getLanIp() {
 const VLC_PASSWORD = process.env.VLC_PASSWORD || 'karol';
 const VLC_AUTH = 'Basic ' + Buffer.from(':' + VLC_PASSWORD).toString('base64');
 
+// VLC runtime health — updated by ensureVlcRunning on startup and
+// after each vlcGet call. The /api/vlc-dj/health endpoint reads this
+// instead of returning a hardcoded true.
+let vlcAvailable = false;
+let vlcRejections = 0;
+const VLC_MAX_REJECTIONS = 5;
+
 function vlcGet(endpoint) {
   return new Promise((resolve, reject) => {
     http.get({
@@ -253,7 +260,20 @@ app.use(async (ctx, next) => {
 
 // ── VLC routes ──
 router.get('/api/vlc-dj/health', async (ctx) => {
-  ctx.body = { ok: true, vlcAvailable: true, hardwareAvailable: true };
+  // Actually probe VLC's HTTP interface instead of returning a hardcoded true.
+  // Also check the consecutive-failure counter so a single transient error
+  // doesn't flip vlcAvailable to false.
+  try {
+    await vlcGet('/requests/status.json');
+    vlcRejections = 0;
+    vlcAvailable = true;
+  } catch {
+    vlcRejections++;
+    if (vlcRejections >= VLC_MAX_REJECTIONS) {
+      vlcAvailable = false;
+    }
+  }
+  ctx.body = { ok: true, vlcAvailable, hardwareAvailable: true };
 });
 
 router.get('/api/vlc-dj/now-playing', async (ctx) => {
@@ -1085,6 +1105,10 @@ if (fs.existsSync(djDistDir)) {
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath);
         ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : ext === '.svg' ? 'image/svg+xml' : ext === '.png' ? 'image/png' : 'application/octet-stream';
+        // Prevent Android WebView from serving stale SPA builds
+        ctx.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        ctx.set('Pragma', 'no-cache');
+        ctx.set('Expires', '0');
         ctx.body = fs.createReadStream(filePath);
         return;
       }
@@ -1117,7 +1141,8 @@ async function ensureVlcRunning() {
   const alreadyRunning = await isVlcHttpReady();
   if (alreadyRunning) {
     console.log('[vlc-auto] VLC HTTP interface already running on :8080');
-    return;
+    vlcAvailable = true;
+    return true;
   }
 
   console.log('[vlc-auto] Starting VLC with HTTP interface...');
@@ -1136,6 +1161,7 @@ async function ensureVlcRunning() {
   vlc.unref();
   vlc.on('error', (err) => {
     console.warn('[vlc-auto] Failed to start VLC: ' + err.message);
+    vlcAvailable = false;
   });
 
   // Poll VLC HTTP interface until it responds (up to 30 seconds)
@@ -1143,10 +1169,13 @@ async function ensureVlcRunning() {
     await new Promise(r => setTimeout(r, 1000));
     if (await isVlcHttpReady()) {
       console.log('[vlc-auto] VLC HTTP interface ready after ' + (i + 1) + 's');
-      return;
+      vlcAvailable = true;
+      return true;
     }
   }
   console.warn('[vlc-auto] VLC HTTP interface did not become ready within 30s');
+  vlcAvailable = false;
+  return false;
 }
 
 // ── VLC playlist auto-restore: write all tracks to a .m3u file so VLC
@@ -1218,6 +1247,82 @@ function alignBlackHoleSampleRate() {
   }
 }
 
+// ── Audio chain verification: confirms the Karol aggregate device,
+// BlackHole, and UMC404HD are present and Karol is the default output.
+// Runs once at startup; results are logged for diagnosis but the server
+// stays up regardless — the user can fix audio config later. ──
+function verifyAudioChain() {
+  const { execSync } = require('child_process');
+  try {
+    const text = execSync('system_profiler SPAudioDataType', { timeout: 5000, encoding: 'utf8' });
+    const hasKarol = /^\s*Karol:\s*$/m.test(text);
+    const hasBlackHole = /BlackHole\s*2ch/i.test(text);
+    const hasUMC = /UMC404/i.test(text);
+    const isDefault = /^\s*Default Output Device:\s*Yes\s*$/m.test(text);
+
+    if (hasKarol) {
+      console.log('[audio-check] Karol aggregate device: present');
+    } else {
+      console.warn('[audio-check] Karol aggregate device: MISSING');
+    }
+    if (hasBlackHole) {
+      console.log('[audio-check] BlackHole 2ch: present');
+    } else {
+      console.warn('[audio-check] BlackHole 2ch: MISSING');
+    }
+    if (hasUMC) {
+      console.log('[audio-check] UMC404HD: present');
+    } else {
+      console.warn('[audio-check] UMC404HD: MISSING');
+    }
+    if (isDefault) {
+      console.log('[audio-check] Karol is default output: yes');
+    } else {
+      // The default check matches AFTER Karol's block — verify more carefully
+      const afterKarol = text.split(/^\s*Karol:\s*$/m)[1] || '';
+      const defaultInBlock = /^\s*Default Output Device:\s*Yes\s*$/m.test(afterKarol.split(/^\S/m)[0] || afterKarol);
+      if (defaultInBlock) {
+        console.log('[audio-check] Karol is default output: yes (block match)');
+      } else {
+        console.warn('[audio-check] Karol is default output: NO');
+      }
+    }
+    return { hasKarol, hasBlackHole, hasUMC };
+  } catch (e) {
+    console.warn('[audio-check] Failed: ' + e.message);
+    return { hasKarol: false, hasBlackHole: false, hasUMC: false };
+  }
+}
+
+// ── Ableton auto-launch: opens the Karol template if Ableton isn't
+// already running. Fire-and-forget — the audio announcement doesn't wait. ──
+function launchAbletonIfNotRunning() {
+  const { execSync } = require('child_process');
+  const template = path.join(os.homedir(), 'Music', 'Ableton', 'User Library', 'Templates', 'Karol Live Set.als');
+  if (!fs.existsSync(template)) {
+    console.warn('[ableton] Template not found: ' + template);
+    return;
+  }
+  try {
+    const pgrep = execSync('pgrep -x "Live"', { timeout: 2000, encoding: 'utf8' }).trim();
+    if (pgrep) {
+      console.log('[ableton] Already running (pid ' + pgrep.split('\n')[0] + ') — skipping launch');
+      return;
+    }
+  } catch { /* pgrep returns non-zero when no match — that means it's not running */ }
+
+  console.log('[ableton] Launching with Karol template...');
+  const { spawn } = require('child_process');
+  const ableton = spawn('open', [
+    '-a', 'Ableton Live 11 Suite',
+    template,
+  ], { stdio: 'ignore', detached: true });
+  ableton.unref();
+  ableton.on('error', (err) => {
+    console.warn('[ableton] Failed: ' + err.message);
+  });
+}
+
 const server = http.createServer(app.callback());
 server.listen(PORT, '0.0.0.0', () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
@@ -1226,6 +1331,8 @@ server.listen(PORT, '0.0.0.0', () => {
   alignBlackHoleSampleRate();
   startAbletonPoll();
   startMdnsBroadcaster(getLanIp());
+  // ── Audio chain verification ──
+  const audioStatus = verifyAudioChain();
   // Write playlist file first, then launch VLC. After VLC is ready,
   // load the .m3u playlist via HTTP API — this is instant for VLC
   // (parses the file natively) vs sequential enqueue (35+ seconds).
@@ -1233,10 +1340,14 @@ server.listen(PORT, '0.0.0.0', () => {
   const expectedTrackCount = plFile
     ? fs.readFileSync(plFile, 'utf-8').split('\n').filter(l => l && l[0] !== '#').length
     : 0;
-  console.log('[vlc-restore] Expecting ' + expectedTrackCount + ' tracks');
+      console.log('[vlc-restore] Expecting ' + expectedTrackCount + ' tracks');
 
-  ensureVlcRunning().then(async () => {
-    if (plFile) {
+  // Fire-and-forget Ableton launch — doesn't block VLC restore or announcement
+  launchAbletonIfNotRunning();
+
+  ensureVlcRunning().then(async (vlcOk) => {
+    let tracksLoaded = 0;
+    if (vlcOk && plFile) {
       // Clear any stale playlist, then load the .m3u file
       await vlcGet('/requests/status.json?command=pl_empty');
       await vlcGet('/requests/status.json?command=in_play&input=file://' + encodeURIComponent(plFile));
@@ -1253,25 +1364,59 @@ server.listen(PORT, '0.0.0.0', () => {
         }
         if (items.length >= expectedTrackCount || (items.length >= 10 && items.length === lastItemCount && attempt > 5)) {
           await vlcGet('/requests/status.json?command=pl_pause');
-          console.log('[vlc-restore] Tracks loaded: ' + items.length + ', paused');
-          // ── Audio cue: announce readiness via macOS 'say' ──
-          const { exec } = require('child_process');
-          exec('say "Karol server is running. ' + items.length + ' tracks loaded."', (err) => {
-            if (err) {
-              console.warn('[announce] say failed: ' + err.message);
-              // Retry once after a short delay
-              setTimeout(() => {
-                exec('say "Karol ready"', () => {});
-              }, 2000);
-            }
-          });
-          return;
+          tracksLoaded = items.length;
+          console.log('[vlc-restore] Tracks loaded: ' + tracksLoaded + ', paused');
+          break;
         }
       }
-      console.warn('[vlc-restore] Playlist still incomplete after polling — may need manual reload');
+      if (!tracksLoaded) {
+        console.warn('[vlc-restore] Playlist still incomplete after polling — may need manual reload');
+      }
     }
+
+    // ── Audio cue: announce readiness via macOS 'say' ──
+    // Build a status message reflecting what actually came up.
+    const parts = [];
+    if (vlcOk && tracksLoaded) {
+      parts.push(tracksLoaded + ' tracks loaded');
+    } else if (vlcOk) {
+      parts.push('VLC running, playlist loading');
+    } else {
+      parts.push('VLC not available');
+    }
+    if (!audioStatus.hasKarol) parts.push('aggregate device missing');
+    if (!audioStatus.hasBlackHole) parts.push('BlackHole missing');
+    if (!audioStatus.hasUMC) parts.push('interface missing');
+
+    const announcement = 'Karol server is running. ' + parts.join('. ') + '.';
+    const { exec } = require('child_process');
+    exec('say "' + announcement.replace(/"/g, "'") + '"', (err) => {
+      if (err) {
+        console.warn('[announce] say failed: ' + err.message);
+        setTimeout(() => { exec('say "Karol ready"', () => {}); }, 2000);
+      } else {
+        console.log('[announce] ' + announcement);
+      }
+    });
   });
 });
 
 process.on('SIGINT', () => { stopMdnsBroadcaster(); server.close(() => process.exit(0)); });
 process.on('SIGTERM', () => { stopMdnsBroadcaster(); server.close(() => process.exit(0)); });
+
+// Crash guards — log and stay alive, don't let a single unhandled error kill the server.
+// launchd/crontab restart on exit, but preventing the crash in the first place avoids
+// unnecessary downtime and produces cleaner logs for diagnosis.
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[crash-guard] Unhandled Promise Rejection:', reason);
+  if (reason && reason.stack) console.error(reason.stack);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[crash-guard] Uncaught Exception (' + err.name + '):', err.message);
+  if (err.stack) console.error(err.stack);
+  // Don't exit — let the event loop keep running. Only exit on truly
+  // unrecoverable errors (e.g., EADDRINUSE handled at listen time).
+});
+process.on('uncaughtExceptionMonitor', (err, origin) => {
+  console.error('[crash-guard] Uncaught Exception (' + origin + '):', err.message);
+});

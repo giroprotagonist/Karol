@@ -16,6 +16,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import org.json.JSONArray
 import org.json.JSONObject
 
 interface YouTubePlayerController {
@@ -27,6 +28,9 @@ interface YouTubePlayerController {
 	fun getSnapshot(): PlayerSnapshot?
 	fun needsVideoLoad(videoId: String): Boolean
 	fun getLastKnownPlaybackTime(): Double
+	fun listCaptions(): JSONArray
+	fun setCaption(index: Int)
+	fun setCaptionOff()
 	val isReady: Boolean
 }
 
@@ -43,8 +47,6 @@ class YouTubeKioskBridge(
 	private var lastEndedFireVideoId: String = ""
 	private var pendingVideoId: String = ""
 	private var isNavigating = false
-	private var customView: android.view.View? = null
-	private var customViewCallback: WebChromeClient.CustomViewCallback? = null
 	private var onEndedListener: (() -> Unit)? = null
 	private var onInterstitialListener: ((String) -> Unit)? = null
 	private var onUnexpectedVideoIdListener: ((String) -> Unit)? = null
@@ -62,13 +64,14 @@ class YouTubeKioskBridge(
 	private var navigationWatchdogRetries = 0
 	private var navigationRetryUrl: String = ""
 	private var premiumCheckDone = false
+	private var signInDetectedOnce = false
 	private var lastKnownPlaybackTime: Double = 0.0
 	private var errorRetryCount = 0
-	private var lastCustomViewToggle: Long = 0
 	private var lastKnownDuration: Double = 0.0
 	private var lastKnownCurrentTime: Double = 0.0
 	var allowHomeLanding = false
 		private set
+	// SurfaceView rejected — YouTube always uses in-page HTML5 player
 
 	private var signInMode = false
 	private var signInPollRunnable: Runnable? = null
@@ -90,9 +93,13 @@ class YouTubeKioskBridge(
 		private set
 
 	init {
-		layoutScript =
-			context.assets.open("youtubeWatchLayout.js").bufferedReader().use { it.readText() }
 		YouTubeSessionHelper.configure(webView)
+		layoutScript = try {
+			context.assets.open("youtubeWatchLayout.js").bufferedReader().use { it.readText() }
+		} catch (e: Exception) {
+			Log.e(TAG, "Failed to load youtubeWatchLayout.js from assets", e)
+			""
+		}
 		configureWebView()
 		startPolling()
 	}
@@ -102,8 +109,7 @@ class YouTubeKioskBridge(
 		allowHomeLanding = true
 		userNavigatedAway = false
 		mainHandler.post {
-			hideCustomView()
-			webView.visibility = android.view.View.VISIBLE
+		webView.visibility = android.view.View.VISIBLE
 			webView.loadUrl(YouTubeSessionHelper.signInUrl())
 			onFinished?.invoke()
 		}
@@ -148,8 +154,7 @@ class YouTubeKioskBridge(
 
 		onSignInProgressListener?.invoke(SignInStep.OPENING_GOOGLE)
 		mainHandler.post {
-			hideCustomView()
-			webView.visibility = android.view.View.VISIBLE
+		webView.visibility = android.view.View.VISIBLE
 			webView.loadUrl(YouTubeSessionHelper.signInUrl())
 		}
 
@@ -240,10 +245,48 @@ class YouTubeKioskBridge(
 		onYouTubeSignedInListener = listener
 	}
 
-	fun isInCustomView(): Boolean = customView != null
+	fun isInCustomView(): Boolean = false
 
-	fun exitFullscreen() {
-		hideCustomView()
+	fun enterFullscreen() {
+		Log.i(TAG, "enterFullscreen: triggering YouTube in-page fullscreen")
+		evalJs(
+			"" +
+				"(function(){" +
+				"var btn = document.querySelector('.ytp-fullscreen-button');" +
+				"if (btn) { btn.click(); return 'clicked'; }" +
+				"var player = document.querySelector('#movie_player');" +
+				"if (player && typeof player.toggleFullscreen === 'function') {" +
+				"player.toggleFullscreen(); return 'api';" +
+				"}" +
+				"return 'none';" +
+				"})()",
+		)
+	}
+
+	fun exitYouTubeFullscreen() {
+		Log.i(TAG, "exitYouTubeFullscreen: exiting YouTube in-page fullscreen")
+		evalJs(
+			"" +
+				"(function(){" +
+				"var exitBtn = document.querySelector('.ytp-fullscreen-button[aria-label*=\"Exit\"]') ||" +
+				"document.querySelector('.ytp-fullscreen-button[title*=\"Exit\"]');" +
+				"if (exitBtn) { exitBtn.click(); return 'exitClicked'; }" +
+				"var allBtns = document.querySelectorAll('.ytp-fullscreen-button');" +
+				"if (allBtns.length > 0) { allBtns[0].click(); return 'clicked'; }" +
+				"var player = document.querySelector('#movie_player');" +
+				"if (player && typeof player.toggleFullscreen === 'function') {" +
+				"player.toggleFullscreen(); return 'api';" +
+				"}" +
+				"if (document.fullscreenElement) {" +
+				"document.exitFullscreen().catch(function(){});" +
+				"return 'browser';" +
+				"}" +
+				"return 'none';" +
+				"})()",
+		)
+	}
+
+	fun requestImmersiveMode() {
 		onRequestImmersiveMode?.invoke()
 	}
 
@@ -289,7 +332,6 @@ class YouTubeKioskBridge(
 		allowHomeLanding = true
 		userNavigatedAway = false
 		mainHandler.post {
-			hideCustomView()
 			webView.loadUrl("https://www.youtube.com/")
 		}
 	}
@@ -300,7 +342,6 @@ class YouTubeKioskBridge(
 		allowHomeLanding = false
 		activeProgrammaticGeneration = 0
 		pause()
-		exitFullscreen()
 	}
 
 	@SuppressLint("SetJavaScriptEnabled")
@@ -325,107 +366,7 @@ class YouTubeKioskBridge(
 					request: WebResourceRequest?,
 				): Boolean {
 					val url = request?.url?.toString() ?: return false
-					if (isAllowedUrl(url)) {
-						return false
-					}
-					// During sign-in mode, never fire recovery — doing so
-					// destroys Google's auth redirect chain mid-sign-in.
-					if (signInMode) {
-						Log.d(TAG, "signInMode: allowing blocked URL to proceed: $url")
-						return false
-					}
-					// YouTube's player JS fires programmatic navigations during normal
-					// playback (autoplay suggestions, end-screen links, internal state
-					// transitions).  Blocking every non-watch URL and force-reloading
-					// the current video causes random restarts.
-					// Only recover if the current page is actually lost — i.e. a main-
-					// frame navigation away from /watch has already completed.
-					val isMainFrame = request?.isForMainFrame ?: false
-					val currentUrl = webView.url ?: ""
-				if (!currentUrl.contains("/watch") || isMainFrame) {
-						Log.w(TAG, "recovering from blocked navigation: $url (mainFrame=$isMainFrame)")
-						if (lastVideoId.isNotBlank() && currentUrl != "about:blank") {
-							userNavigatedAway = false
-							mainHandler.post { loadVideo(lastVideoId) }
-						}
-					} else {
-						Log.d(TAG, "ignoring blocked sub-navigation on video page: $url")
-					}
-					return true
-				}
-
-				override fun onReceivedError(
-					view: WebView?,
-					request: WebResourceRequest?,
-					error: android.webkit.WebResourceError?,
-				) {
-					super.onReceivedError(view, request, error)
-					val url = request?.url?.toString() ?: return
-					// During sign-in mode, any main-frame error is fatal
-					if (signInMode && request.isForMainFrame) {
-						Log.w(TAG, "signInMode: page error for $url, aborting sign-in")
-						val cb = signInOnComplete
-						if (cb != null) {
-							mainHandler.post { exitSignInMode(false, cb) }
-						}
-						return
-					}
-				if (!url.contains("/watch") || !request.isForMainFrame) {
-						return
-					}
-					if (lastVideoId.isBlank()) {
-						return
-					}
-					onLoadingStateChanged?.invoke(false)
-					Log.w(TAG, "video page error, retrying: $url")
-					mainHandler.postDelayed({
-						if (lastVideoId.isBlank()) {
-							return@postDelayed
-						}
-						if (errorRetryCount == 0) {
-							errorRetryCount++
-							softRecoverPlayback(lastKnownPlaybackTime)
-						} else {
-							errorRetryCount = 0
-							loadVideo(lastVideoId)
-						}
-					}, 1200)
-				}
-
-				override fun doUpdateVisitedHistory(
-					view: WebView?,
-					url: String?,
-					isReload: Boolean,
-				) {
-					super.doUpdateVisitedHistory(view, url, isReload)
-					val normalized = url ?: return
-					noteCurrentUrl(normalized)
-					notifyInterstitialIfNeeded(normalized)
-					if (normalized.contains("/watch")) {
-						injectLayoutScriptIfWatch()
-					}
-					if (activeProgrammaticGeneration > 0 && normalized.contains("/watch")) {
-						mainHandler.postDelayed({ activeProgrammaticGeneration = 0 }, 800)
-						return
-					}
-					// YouTube is a SPA — pushState fires for internal routing that may
-					// land on non-allowed URLs (channels, home, etc.) without the user
-					// actually navigating away from the watch page.  Only mark
-					// userNavigatedAway when the current URL genuinely leaves /watch.
-					if (!normalized.contains("/watch") && !normalized.contains("/embed/") &&
-						webView.url?.contains("/watch") != true) {
-						userNavigatedAway = true
-					}
-				}
-
-				override fun onPageCommitVisible(
-					view: WebView?,
-					url: String?,
-				) {
-					super.onPageCommitVisible(view, url)
-					if (url?.contains("/watch") == true || url?.contains("/embed/") == true) {
-						injectLayoutScriptIfWatch()
-					}
+					return !isAllowedUrl(url)
 				}
 
 				override fun onPageFinished(
@@ -433,88 +374,23 @@ class YouTubeKioskBridge(
 					url: String?,
 				) {
 					super.onPageFinished(view, url)
+					if (url == null) return
 					isReady = true
-					url?.let {
-						noteCurrentUrl(it)
-						notifyInterstitialIfNeeded(it)
-						// Auto-dismiss YouTube consent dialog
-						if (it.contains("consent.youtube")) {
-							webView.evaluateJavascript(
-								"(function(){" +
-								"var btns=document.querySelectorAll('button');" +
-								"for(var i=0;i<btns.length;i++){" +
-								"var t=(btns[i].textContent||'').trim().toLowerCase();" +
-								"var a=(btns[i].getAttribute('aria-label')||'').toLowerCase();" +
-								"if(t.includes('accept')||t.includes('agree')||t.includes('allow')||" +
-								"a.includes('accept')||a.includes('agree')){" +
-								"btns[i].click();break;" +
-								"}}" +
-								// Fallback: submit form
-								"if(!document.querySelector('button[clicked]')){" +
-								"var f=document.querySelector('form');if(f)f.submit();" +
-								"}})()",
-								null,
-							)
-							// Also try again after a short delay
-							mainHandler.postDelayed({
-								webView.evaluateJavascript(
-									"(function(){" +
-									"var btns=document.querySelectorAll('button');" +
-									"for(var i=0;i<btns.length;i++){" +
-									"var t=(btns[i].textContent||'').trim().toLowerCase();" +
-									"if(t.includes('accept')||t.includes('agree')){" +
-									"btns[i].click();return;" +
-									"}}})()",
-									null,
-								)
-							}, 1000)
-						}
-						// --- Sign-in mode page detection ---
-						if (signInMode) {
-							// Success: youtube.com loaded with auth cookies present
-							if (it.contains("youtube.com") &&
-								!it.contains("accounts.google") &&
-								YouTubeSessionHelper.isSignedIn()
-							) {
-								Log.i(TAG, "signInMode: youtube.com landed with cookies, completing sign-in")
-								val cb = signInOnComplete
-								if (cb != null) {
-									onSignInProgressListener?.invoke(SignInStep.COOKIES_DETECTED)
-									mainHandler.post { exitSignInMode(true, cb) }
-								}
-							}
-							// Google sign-in page consent/challenge auto-dismiss
-							if (it.contains("accounts.google.com")) {
-								dismissGoogleSignInPrompts()
-							}
-							// Scan for Google "blocked" error page
-							scanForGoogleBlockedPage()
-						}
-					}
-					if (
-						!signInMode &&
-						!premiumCheckDone &&
-						url?.contains("youtube.com") == true &&
-						!url.contains("accounts.google") &&
-						YouTubeSessionHelper.isSignedIn()
-					) {
-						premiumCheckDone = true
-						onYouTubeSignedInListener?.invoke()
-						verifyYouTubePremium { premium ->
-							val app = context.applicationContext as? PlayerApp
-							if (app != null) {
-								YouTubeSessionHelper.markPremiumVerified(app.preferences, premium)
-							}
-						}
-					}
-					if (url?.contains("/watch") == true || url?.contains("/embed/") == true) {
-						isNavigating = false
-						clearNavigationWatchdog()
-						allowHomeLanding = false
+					onLoadingStateChanged?.invoke(false)
+					noteCurrentUrl(url)
+					notifyInterstitialIfNeeded(url)
+
+					if (url.contains("/watch")) {
+						injectLayoutScriptIfWatch()
 						injectExpectedVideoId()
-						scheduleLayoutRefresh()
 						applyVolumeAndPlay()
-						onLoadingStateChanged?.invoke(false)
+						scheduleLayoutRefresh()
+					}
+
+					// Detect YouTube sign-in once per session
+					if (!signInDetectedOnce && YouTubeSessionHelper.isSignedIn()) {
+						signInDetectedOnce = true
+						onYouTubeSignedInListener?.invoke()
 					}
 				}
 
@@ -527,6 +403,7 @@ class YouTubeKioskBridge(
 					return true
 				}
 			}
+
 		webView.webChromeClient =
 			object : WebChromeClient() {
 				override fun onConsoleMessage(msg: android.webkit.ConsoleMessage): Boolean {
@@ -534,45 +411,18 @@ class YouTubeKioskBridge(
 					return true
 				}
 
-				override fun onShowCustomView(
-					view: android.view.View?,
-					callback: CustomViewCallback?,
-				) {
-					if (view == null) {
-						callback?.onCustomViewHidden()
-						return
-					}
-					if (customView != null) {
-						callback?.onCustomViewHidden()
-						return
-					}
-					// Debounce: ignore toggles within 1000ms to prevent SurfaceView flicker between songs
-					val now = System.currentTimeMillis()
-					if (now - lastCustomViewToggle < 1000) {
-						callback?.onCustomViewHidden()
-						return
-					}
-					lastCustomViewToggle = now
-					customView = view
-					customViewCallback = callback
-					webView.visibility = android.view.View.GONE
-					rootLayout.addView(
-						view,
-						FrameLayout.LayoutParams(
-							FrameLayout.LayoutParams.MATCH_PARENT,
-							FrameLayout.LayoutParams.MATCH_PARENT,
-						),
-					)
-				}
+			override fun onShowCustomView(
+				view: android.view.View?,
+				callback: CustomViewCallback?,
+			) {
+				// Reject YouTube's native SurfaceView so the in-page HTML5
+				// player renders inside the WebView (visible in windowed mode).
+				callback?.onCustomViewHidden()
+			}
 
-				override fun onHideCustomView() {
-					val now = System.currentTimeMillis()
-					if (now - lastCustomViewToggle < 1000) {
-						return
-					}
-					lastCustomViewToggle = now
-					hideCustomView()
-				}
+			override fun onHideCustomView() {
+				// No-op: custom view is never accepted
+			}
 			}
 	}
 
@@ -581,7 +431,7 @@ class YouTubeKioskBridge(
 			return true
 		}
 		if (url.contains("/embed/")) {
-			return true
+			return false
 		}
 		val uri =
 			try {
@@ -639,13 +489,13 @@ class YouTubeKioskBridge(
 		programmaticNavGeneration++
 		activeProgrammaticGeneration = programmaticNavGeneration
 		mainHandler.post {
-			hideCustomView()
 			evalJs("window.__deskreenYtPause && window.__deskreenYtPause()")
 			// Exit fullscreen before navigating to prevent SurfaceView linger from previous video
 			evalJs("(function(){" +
 				"if(document.exitFullscreen)document.exitFullscreen().catch(function(){});" +
 				"if(document.webkitExitFullscreen)document.webkitExitFullscreen();" +
 				"})()", null)
+			// Load custom IFrame player page from assets — bypasses YouTube's hostile SPA.
 			val url = "https://www.youtube.com/watch?v=${videoId}"
 			noteCurrentUrl(url)
 			navigationRetryUrl = url
@@ -708,8 +558,8 @@ class YouTubeKioskBridge(
 
 	private fun applyVolumeAndPlay() {
 		setVolume(lastVolumeLevel)
-		// Dispatch a simulated touch to satisfy WebView's user-gesture requirement,
-		// then trigger play and request fullscreen in close succession.
+		// Simulated touch gesture for user-gesture requirement,
+		// then trigger play.
 		mainHandler.postDelayed({
 			val wv = webView
 			if (wv.width > 0 && wv.height > 0) {
@@ -732,17 +582,6 @@ class YouTubeKioskBridge(
 					"window.__deskreenYtEnsurePlaying && window.__deskreenYtEnsurePlaying()",
 			)
 		}, 200)
-		// Request fullscreen shortly after user gesture. YouTube native fullscreen
-		// triggers onShowCustomView → video renders on a native SurfaceView,
-		// bypassing WebView compositing entirely for edge-to-edge video.
-		mainHandler.postDelayed({
-			evalJs(
-				"(function(){" +
-				"var v=document.querySelector('video');" +
-				"if(v&&v.requestFullscreen){v.requestFullscreen().catch(function(){});}" +
-				"})()",
-			)
-		}, 500)
 	}
 
 	private fun noteCurrentUrl(url: String) {
@@ -750,26 +589,9 @@ class YouTubeKioskBridge(
 	}
 
 	override fun needsVideoLoad(videoId: String): Boolean {
-		if (videoId.isBlank()) {
-			return false
-		}
-		if (lastVideoId == videoId && lastKnownPlaybackTime > 1.0 && isReady) {
-			return false
-		}
-		if (lastVideoId == videoId && isReady && !userNavigatedAway) {
-			return false
-		}
-		if (lastVideoId != videoId) {
-			return true
-		}
-		if (!isReady || userNavigatedAway) {
-			return true
-		}
-		val url = lastKnownUrl
-		if (url.isBlank() || url == "about:blank") {
-			return true
-		}
-		return !url.contains("/watch")
+		if (videoId.isBlank()) return false
+		if (lastVideoId == videoId && isReady && lastKnownPlaybackTime > 0.5) return false
+		return true
 	}
 
 	private fun injectExpectedVideoId() {
@@ -899,6 +721,67 @@ class YouTubeKioskBridge(
 
 	override fun getLastKnownPlaybackTime(): Double = lastKnownPlaybackTime
 
+	// --- Caption / subtitle support ---
+	private var pendingCaptionJs: String? = null
+	private var captionCallbackId = 0
+
+	override fun listCaptions(): JSONArray {
+		// Synchronous via evaluateJavascript on the main thread
+		val result = java.util.concurrent.CountDownLatch(1)
+		val arr = JSONArray()
+		mainHandler.post {
+			webView.evaluateJavascript(
+				"(function(){" +
+					"var fn=window.__karolListCaptions;" +
+					"if(typeof fn!=='function')return JSON.stringify({err:'no function'});" +
+					"var r=fn();" +
+					"return JSON.stringify(r);" +
+					"})()",
+			) { json ->
+				Log.i(TAG, "listCaptions raw: $json")
+				try {
+					if (json != null && json != "null" && json != "\"null\"") {
+						// Unwrap JSON.stringify double-encoding
+						val inner = json.removeSurrounding("\"")
+							.replace("\\\"", "\"")
+						val tracks = JSONArray(inner)
+						for (i in 0 until tracks.length()) {
+							arr.put(tracks.get(i))
+						}
+						Log.i(TAG, "listCaptions parsed: ${tracks.length()} tracks")
+					} else {
+						Log.i(TAG, "listCaptions: null/empty result")
+					}
+				} catch (e: Exception) {
+					Log.w(TAG, "listCaptions parse err: $e  raw: $json")
+				}
+				result.countDown()
+			}
+		}
+		try { result.await(1000, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: Exception) {
+			Log.w(TAG, "listCaptions timed out")
+		}
+		return arr
+	}
+
+	override fun setCaption(index: Int) {
+		mainHandler.post {
+			webView.evaluateJavascript(
+				"window.__karolSetCaption ? window.__karolSetCaption($index) : null",
+				null,
+			)
+		}
+	}
+
+	override fun setCaptionOff() {
+		mainHandler.post {
+			webView.evaluateJavascript(
+				"window.__karolCaptionOff ? window.__karolCaptionOff() : null",
+				null,
+			)
+		}
+	}
+
 	fun destroy() {
 		pollRunnable?.let { mainHandler.removeCallbacks(it) }
 		signInPollRunnable?.let { mainHandler.removeCallbacks(it) }
@@ -917,16 +800,6 @@ class YouTubeKioskBridge(
 		) {
 			onInterstitialListener?.invoke(url)
 		}
-	}
-
-	private fun hideCustomView() {
-		val view = customView ?: return
-		rootLayout.removeView(view)
-		customView = null
-		customViewCallback?.onCustomViewHidden()
-		customViewCallback = null
-		webView.visibility = android.view.View.VISIBLE
-		onRequestImmersiveMode?.invoke()
 	}
 
 	private var layoutScriptInjectedForUrl: String = ""
@@ -1057,7 +930,67 @@ class YouTubeKioskBridge(
 				softRecoverPlayback(lastKnownPlaybackTime)
 			}
 		}
+
+		// --- Floating controls bridge ---
+		@JavascriptInterface
+		fun controlsPlay() {
+			mainHandler.post { play() }
+		}
+
+		@JavascriptInterface
+		fun controlsPause() {
+			mainHandler.post { pause() }
+		}
+
+		@JavascriptInterface
+		fun controlsSeek(seconds: Double) {
+			mainHandler.post { seek(seconds) }
+		}
+
+		@JavascriptInterface
+		fun controlsSeekRelative(delta: Double) {
+			mainHandler.post {
+				val video = getVideoElementJs()
+				webView.evaluateJavascript(video) { result ->
+					try {
+						val ct = result?.replace("\"", "")?.toDoubleOrNull() ?: 0.0
+						seek(maxOf(0.0, ct + delta))
+					} catch (_: Exception) {}
+				}
+			}
+		}
+
+		@JavascriptInterface
+		fun controlsSkipNext() {
+			mainHandler.post {
+				onEndedListener?.invoke()
+			}
+		}
+
+		@JavascriptInterface
+		fun controlsSkipPrev() {
+			mainHandler.post {
+				// Implemented by external caller
+			}
+		}
+
+		@JavascriptInterface
+		fun controlsOpenCaptions() {
+			mainHandler.post {
+				// Toggle CC picker — handled by MainActivity
+			}
+		}
+
+		@JavascriptInterface
+		fun controlsOpenPlaylist() {
+			mainHandler.post {
+				// Toggle playlist drawer — handled by MainActivity
+			}
+		}
 	}
+
+	private fun getVideoElementJs(): String =
+		"document.querySelector('video') ? document.querySelector('video').currentTime : 0"
 
 	// --- Sign-in mode helpers ---
 

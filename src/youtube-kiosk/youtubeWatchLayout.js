@@ -50,6 +50,11 @@
 
 	var HIDE = [
 		'#masthead-container',
+		'#masthead',
+		'ytd-masthead',
+		'#header',
+		'ytd-page-manager',
+		'#guide-inner-content',
 		'#comments',
 		'#related',
 		'#secondary',
@@ -92,78 +97,14 @@
 		'ytd-banner-promo-renderer',
 	].join(',');
 
-	function viewportHeightPx() {
-		var vv = window.visualViewport;
-		if (vv && vv.height > 0) {
-			return Math.round(vv.height) + 'px';
-		}
-		return window.innerHeight + 'px';
-	}
-
-	function syncViewportHeight() {
-		document.documentElement.style.setProperty('--karol-vh', viewportHeightPx());
-	}
-
-	function ensureViewportMeta() {
-		if (!isPlayerMode()) {
-			return;
-		}
-		var meta = document.querySelector('meta[name="viewport"]');
-		if (!meta) {
-			meta = document.createElement('meta');
-			meta.setAttribute('name', 'viewport');
-			document.head.appendChild(meta);
-		}
-		meta.setAttribute(
-			'content',
-			'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover',
-		);
-	}
-
-	function injectKioskCss() {
-		syncViewportHeight();
-		var existing = document.getElementById('karol-yt-kiosk-css');
-		var vh = 'var(--karol-vh, 100vh)';
-		var playerShell = isPlayerMode()
-			? 'ytd-watch-flexy,#columns,#primary,#player,#player-container-id,' +
-				'#player-container,#full-bleed-container.ytd-watch-flexy,ytd-player,' +
-				'#primary-inner,#player-container-outer,#player-container-inner,' +
-				'ytd-page-manager,#page-manager,#content,#header,ytd-masthead{' +
-				'margin:0!important;padding:0!important;top:0!important;' +
-				'transform:none!important;min-height:0!important}' +
-				'ytd-watch-flexy #primary-inner{padding-top:0!important;margin-top:0!important}' +
-				'ytd-watch-flexy[theater] #primary.ytd-watch-flexy,' +
-				'ytd-watch-flexy[full-bleed-player] #primary.ytd-watch-flexy{' +
-				'margin-top:0!important;padding-top:0!important}'
-			: '';
-		var css =
-			':root{--karol-vh:100vh}' +
-			'html,body,ytd-app{margin:0!important;padding:0!important;overflow:hidden!important;background:transparent!important}' +
-			'#movie_player,.html5-video-player{background:transparent!important}' +
-			'#movie_player,.html5-video-player{width:100%!important;height:' +
-			vh +
-			'!important;max-height:' +
-			vh +
-			'!important}' +
-			'ytd-watch-flexy[theater] #full-bleed-container.ytd-watch-flexy,' +
-			'ytd-watch-flexy[full-bleed-player] #full-bleed-container.ytd-watch-flexy{height:' +
-			vh +
-			'!important;max-height:none!important;margin-top:0!important;padding-top:0!important}' +
-			'ytd-watch-flexy[theater] video,ytd-watch-flexy[full-bleed-player] video,' +
-			'.html5-video-player video{position:relative!important;top:0!important;left:0!important;' +
-			'margin:0!important;padding:0!important;width:100%!important;height:' +
-			vh +
-			'!important;object-fit:contain!important}' +
-			playerShell;
-		if (existing) {
-			existing.textContent = css;
-			return;
-		}
+	(function injectMinimalCss() {
 		var style = document.createElement('style');
 		style.id = 'karol-yt-kiosk-css';
-		style.textContent = css;
+		style.textContent =
+			'html,body,ytd-app{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}' +
+			'#movie_player,.html5-video-player{background:#000!important}';
 		document.head.appendChild(style);
-	}
+	})();
 
 	function hidePanels() {
 		try {
@@ -171,6 +112,31 @@
 				el.style.setProperty('display', 'none', 'important');
 				el.style.setProperty('visibility', 'hidden', 'important');
 			});
+			// Traverse YouTube shadow roots to hide masthead/header
+			try {
+				var mastheadEl = document.querySelector('ytd-masthead') || document.querySelector('ytd-app');
+				if (mastheadEl && mastheadEl.shadowRoot) {
+					var shadowHide = mastheadEl.shadowRoot.querySelectorAll(
+						'#container,#masthead-container,#header,ytd-masthead,#background,' +
+						'#guide-inner-content,#start,#header-bar'
+					);
+					shadowHide.forEach(function (el) {
+						el.style.setProperty('display', 'none', 'important');
+						el.style.setProperty('visibility', 'hidden', 'important');
+					});
+				}
+			} catch (e) { /* ignore shadow DOM errors */ }
+			// Brute-force: find any top-level element at the very top with small height
+			try {
+				var all = document.querySelectorAll('body > *, ytd-app > *');
+				for (var i = 0; i < all.length; i++) {
+					var r = all[i].getBoundingClientRect();
+					if (r.top <= 2 && r.height > 10 && r.height < 100 && r.width > 100) {
+						all[i].style.setProperty('display', 'none', 'important');
+						all[i].style.setProperty('visibility', 'hidden', 'important');
+					}
+				}
+			} catch (e) { /* ignore */ }
 		} catch (e) {
 			/* ignore */
 		}
@@ -394,81 +360,14 @@
 		return false;
 	};
 
-	var fixVideoLayerPending = false;
-	var fixVideoLayerLastAt = 0;
-	function fixVideoLayerImpl() {
-		var v = document.querySelector('video');
-		if (!v) {
-			return false;
-		}
-		var now = Date.now();
-		if (now - fixVideoLayerLastAt < 400) {
-			return false;
-		}
-		fixVideoLayerLastAt = now;		if (isPlayerMode()) {
-			syncViewportHeight();
-		}
-		var vh = viewportHeightPx();
-		v.style.setProperty('opacity', '1', 'important');
-		v.style.setProperty('visibility', 'visible', 'important');
-		v.style.removeProperty('transform');
-		v.style.setProperty('top', '0', 'important');
-		v.style.setProperty('left', '0', 'important');
-		v.style.setProperty('margin-top', '0', 'important');
-		v.style.setProperty('margin-left', '0', 'important');
-		v.style.setProperty('padding', '0', 'important');
-		v.style.setProperty('width', '100%', 'important');
-		v.style.setProperty('height', vh, 'important');
-		v.style.setProperty('max-height', vh, 'important');
-		v.style.setProperty('object-fit', 'contain', 'important');
-		v.style.setProperty('object-position', 'center top', 'important');
-
-		var player =
-			document.querySelector('#movie_player') ||
-			document.querySelector('.html5-video-player');
-		if (player && isPlayerMode()) {
-		 player.style.setProperty('margin-top', '0', 'important');
-			player.style.setProperty('padding-top', '0', 'important');
-			player.style.setProperty('top', '0', 'important');
-			player.style.setProperty('height', vh, 'important');
-		}
-
-		if (isPlayerMode()) {
-			var rect = v.getBoundingClientRect();
-			if (rect.top > 1) {
-				v.style.setProperty('margin-top', '-' + Math.round(rect.top) + 'px', 'important');
-			}
-		}
-		var rect = v.getBoundingClientRect();
-		return v.videoWidth > 0 && v.readyState >= 2 && rect.height > 0;
-	}
-
-	window.__deskreenYtFixVideoLayer = function () {
-		if (fixVideoLayerPending) {
-			return false;
-		}
-		fixVideoLayerPending = true;
-		requestAnimationFrame(function () {
-			fixVideoLayerPending = false;
-			fixVideoLayerImpl();
-		});
-		return true;
-	};
-
 	window.__deskreenYtApplyLayout = function () {
 		if (!location.pathname.includes('/watch')) {
 			return;
 		}
-		ensureViewportMeta();
-		injectKioskCss();
 		hidePanels();
 		window.__deskreenYtEnableTheaterOnce();
-		window.__deskreenYtFixVideoLayer();
-		window.__deskreenYtReapplyVolume();		(function () {
-			var flexy = document.querySelector('ytd-watch-flexy');
-			var v = document.querySelector('video');
-			var rect = v ? v.getBoundingClientRect() : null;
-		})();	};
+		window.__deskreenYtReapplyVolume();
+	};
 
 	window.__deskreenYtResetForNavigation = function () {
 		window.__deskreenTheaterDone = false;
@@ -780,23 +679,6 @@
 	};
 	window.addEventListener('popstate', onUrlChange);
 
-	if (window.visualViewport) {
-		window.visualViewport.addEventListener('resize', function () {
-			if (!location.pathname.includes('/watch')) {
-				return;
-			}
-			syncViewportHeight();
-			window.__deskreenYtFixVideoLayer();
-		});
-	}
-	window.addEventListener('resize', function () {
-		if (!location.pathname.includes('/watch')) {
-			return;
-		}
-		syncViewportHeight();
-		window.__deskreenYtFixVideoLayer();
-	});
-
 	var mo = new MutationObserver(function () {
 		if (location.pathname.includes('/watch')) {
 			hidePanels();
@@ -808,7 +690,6 @@
 		mo.observe(document.body, { childList: true, subtree: true });
 	}
 
-	injectKioskCss();
 	window.__deskreenYtApplyLayout();
 
 	function startAdGuard() {
@@ -1164,6 +1045,121 @@
 	if (document.body) {
 		endedMo.observe(document.body, { childList: true, subtree: true });
 	}
+
+	// --- Caption / subtitle API exposed to Android bridge ---
+
+	// Extract caption tracks from ytInitialPlayerResponse (available before player JS boots).
+	function getCaptionTracksFromPageData() {
+		var ytData = window.ytInitialPlayerResponse;
+		if (!ytData) {
+			try {
+				if (window.ytcfg && window.ytcfg.data_) {
+					ytData = window.ytcfg.data_.PLAYER_DATA;
+				}
+			} catch (e) {}
+		}
+		if (!ytData || !ytData.captions) return null;
+		var renderer = ytData.captions.playerCaptionsTracklistRenderer;
+		if (!renderer || !renderer.captionTracks) return null;
+		var out = [];
+		for (var i = 0; i < renderer.captionTracks.length; i++) {
+			var ct = renderer.captionTracks[i];
+			var label = '';
+			if (ct.name) {
+				if (typeof ct.name === 'string') {
+					label = ct.name;
+				} else if (ct.name.simpleText) {
+					label = ct.name.simpleText;
+				} else if (ct.name.runs && ct.name.runs.length) {
+					label = ct.name.runs.map(function (r) { return r.text || ''; }).join('');
+				}
+			}
+			out.push({
+				index: i,
+				label: label || ct.languageCode || '',
+				lang: ct.languageCode || '',
+				kind: ct.kind || '',
+				isTranslatable: ct.isTranslatable || false
+			});
+		}
+		return out;
+	}
+
+	function getCaptionTracksFromPlayer() {
+		var player = document.querySelector('#movie_player');
+		if (!player || typeof player.getAvailableCaptionTracks !== 'function') return null;
+		var raw = player.getAvailableCaptionTracks();
+		if (!raw || !raw.length) return null;
+		var out = [];
+		for (var i = 0; i < raw.length; i++) {
+			var t = raw[i];
+			var label = (t.name && t.name.simpleText) ? t.name.simpleText : (t.name || '');
+			out.push({
+				index: i,
+				label: label,
+				lang: t.languageCode || '',
+				kind: t.kind || '',
+				isTranslatable: t.isTranslatable || false
+			});
+		}
+		return out;
+	}
+
+	window.__karolListCaptions = function () {
+		try {
+			var tracks = getCaptionTracksFromPlayer();
+			if (!tracks || !tracks.length) {
+				tracks = getCaptionTracksFromPageData();
+			}
+			return tracks || [];
+		} catch (e) {
+			return [];
+		}
+	};
+
+	window.__karolSetCaption = function (index) {
+		try {
+			// Determine language code from available tracks (player or page data)
+			var tracks = getCaptionTracksFromPlayer() || getCaptionTracksFromPageData();
+			if (!tracks || !tracks[index]) return false;
+			var langCode = tracks[index].lang;
+			if (!langCode) return false;
+
+			var player = document.querySelector('#movie_player');
+			if (player && typeof player.setOption === 'function') {
+				player.setOption('captions', 'track', {});
+				player.setOption('captions', 'track', { languageCode: langCode });
+				return true;
+			}
+			// Fallback: click the CC button then select from YouTube's caption menu
+			var ccBtn = document.querySelector('.ytp-subtitles-button');
+			if (ccBtn) {
+				ccBtn.click();
+				// After a short delay, try to click the specific track in the popup
+				setTimeout(function () {
+					var items = document.querySelectorAll('.ytp-menuitem[role="menuitemradio"]');
+					if (items && items[index]) {
+						items[index].click();
+					}
+				}, 400);
+				return true;
+			}
+			return false;
+		} catch (e) {
+			return false;
+		}
+	};
+
+	window.__karolCaptionOff = function () {
+		try {
+			var player = document.querySelector('#movie_player');
+			if (player && typeof player.setOption === 'function') {
+				player.setOption('captions', 'track', {});
+			}
+			var btn = document.querySelector('.ytp-subtitles-button');
+			if (btn) { btn.click(); }
+		} catch (e) {}
+	};
 
 	return true;
 })();

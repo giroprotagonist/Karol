@@ -1086,7 +1086,7 @@ export default function App() {
 			</div>
 			) : null}
 
-			<div className="tab-panel" style={{ display: activeTab === 'vlc' ? 'block' : 'none' }}>
+			<div className="tab-panel" style={{ display: activeTab === 'vlc' ? 'flex' : 'none' }}>
 			<VlcPlayerTab host={host} connected={connected} />
 			</div>
 

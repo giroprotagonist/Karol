@@ -33,7 +33,6 @@ export default function VlcTransportCard({
   const volume = status?.volume ?? 128;
   const volumePercent = Math.round((volume / 256) * 100);
   const progress = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
-  const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
 
   const coverSrc =
@@ -41,27 +40,22 @@ export default function VlcTransportCard({
       ? `${host}${nowPlaying.coverUrl}`
       : nowPlaying?.coverArt || null;
 
-  // Reset load state when cover source changes
+  // Reset error state when cover source changes
   const pendingCoverKey = nowPlaying?.filePath ?? nowPlaying?.id ?? '';
   const [lastCoverKey, setLastCoverKey] = useState('');
   if (pendingCoverKey !== lastCoverKey) {
     setLastCoverKey(pendingCoverKey);
-    setImgLoaded(false);
     setImgError(false);
   }
 
   return (
     <div className="card vlc-transport-card">
       {coverSrc && !imgError ? (
-        <div className={`vlc-artwork ${imgLoaded ? 'loaded' : 'loading'}`}>
-          {!imgLoaded && (
-            <i className="fas fa-music vlc-artwork-placeholder" />
-          )}
+        <div className="vlc-artwork">
           <img
             src={coverSrc}
             alt=""
-            className={`vlc-artwork-img ${imgLoaded ? 'visible' : 'hidden'}`}
-            onLoad={() => setImgLoaded(true)}
+            style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: 'var(--radius)' }}
             onError={() => setImgError(true)}
           />
         </div>

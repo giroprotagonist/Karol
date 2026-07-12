@@ -699,6 +699,33 @@ class DjHttpServer(
 								.put("macHostIp", preferences.getMacHostIp()),
 						)
 					}
+					// Caption / subtitle endpoints
+					get("/api/youtube-dj/captions/list") {
+						val captionsJson = youtubeBridge.listCaptions()
+						call.respondJson(
+							JSONObject()
+								.put("ok", true)
+								.put("captions", captionsJson),
+						)
+					}
+					post("/api/youtube-dj/captions/set") {
+						val body = JSONObject(call.receiveText())
+						val index = body.optInt("index", -1)
+						if (index < 0) {
+							call.respondText(
+								JSONObject().put("error", "index is required").toString(),
+								ContentType.Application.Json,
+								HttpStatusCode.BadRequest,
+							)
+							return@post
+						}
+						youtubeBridge.setCaption(index)
+						call.respondJson(JSONObject().put("ok", true))
+					}
+					post("/api/youtube-dj/captions/off") {
+						youtubeBridge.setCaptionOff()
+						call.respondJson(JSONObject().put("ok", true))
+					}
 					// Proxy routes – forward to the Mac Deskreen host (192.168.68.51:3131)
 					route("/api/vlc-dj") {
 						get("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }

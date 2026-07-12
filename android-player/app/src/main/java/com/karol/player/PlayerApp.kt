@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import org.json.JSONArray
 
 class PlayerApp : Application() {
 	val appScope = CoroutineScope(SupervisorJob())
@@ -72,8 +73,19 @@ class PlayerApp : Application() {
 					override fun needsVideoLoad(videoId: String): Boolean =
 						youtubeBridge?.needsVideoLoad(videoId) ?: true
 
-					override fun getLastKnownPlaybackTime(): Double =
-						youtubeBridge?.getLastKnownPlaybackTime() ?: 0.0
+				override fun getLastKnownPlaybackTime(): Double =
+					youtubeBridge?.getLastKnownPlaybackTime() ?: 0.0
+
+				override fun listCaptions(): JSONArray =
+					youtubeBridge?.listCaptions() ?: JSONArray()
+
+				override fun setCaption(index: Int) {
+					youtubeBridge?.setCaption(index)
+				}
+
+				override fun setCaptionOff() {
+					youtubeBridge?.setCaptionOff()
+				}
 
 					override val isReady: Boolean
 						get() = youtubeBridge?.isReady == true
