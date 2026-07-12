@@ -10,32 +10,35 @@
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 header{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
 header h1{font-size:1.2rem;font-weight:700}
-.stats-row{display:flex;gap:16px;font-size:0.82rem;color:var(--text2)}
+.stats-row{display:flex;gap:16px;font-size:0.82rem;color:var(--text2);flex-wrap:wrap}
 .stats-row .val{color:var(--accent);font-weight:600}
 nav.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--bg2);padding:0 24px}
 nav.tabs button{padding:10px 20px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text2);font-size:0.85rem;cursor:pointer;font-weight:500;transition:all .15s}
 nav.tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
 nav.tabs button:hover{color:var(--text)}
 main{padding:20px 24px;max-width:1400px;margin:0 auto}
-.toolbar{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.toolbar{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center}
 .toolbar input{flex:1;min-width:200px;max-width:400px;padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.9rem;outline:none}
 .toolbar input:focus{border-color:var(--accent)}
 .toolbar select{padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.9rem;cursor:pointer}
 .video-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color .2s}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color .2s;position:relative}
 .card:hover{border-color:var(--accent)}
-.card-img{width:100%;aspect-ratio:16/9;background:var(--bg3);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.card.not-downloaded{opacity:.55}
+.card.not-downloaded:hover{opacity:.85}
+.card-img{width:100%;aspect-ratio:16/9;background:var(--bg3);display:flex;align-items:center;justify-content:center;overflow:hidden;}
 .card-img img{width:100%;height:100%;object-fit:cover}
 .card-placeholder{color:var(--text2);font-size:2rem}
+.card-badge-row{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:4px;align-items:flex-end}
 .card-body{padding:12px}
 .card-title{font-size:0.9rem;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:8px}
 .card-meta{display:flex;flex-wrap:wrap;gap:6px;font-size:0.75rem;color:var(--text2)}
-.badge{padding:2px 8px;border-radius:12px;font-weight:600;font-size:0.7rem}
+.badge{padding:2px 8px;border-radius:12px;font-weight:600;font-size:0.7rem;white-space:nowrap}
 .badge-sub{background:rgba(139,92,246,.15);color:var(--accent)}
 .badge-no-sub{background:rgba(245,158,11,.15);color:var(--amber)}
-.badge-active{background:rgba(16,185,129,.15);color:var(--green);border:1px solid rgba(16,185,129,.3)}
-.badge-downloaded{background:rgba(16,185,129,.1);color:var(--green)}
-.badge-partial{background:rgba(245,158,11,.12);color:var(--amber)}
+.badge-downloaded{background:rgba(16,185,129,.15);color:var(--green)}
+.badge-missing{background:rgba(239,68,68,.12);color:var(--red)}
+.badge-playlist{background:rgba(59,130,246,.12);color:#60a5fa;max-width:140px;overflow:hidden;text-overflow:ellipsis}
 .empty{text-align:center;padding:60px 20px;color:var(--text2)}
 .empty p{margin-top:8px;font-size:0.9rem}
 .loading{text-align:center;padding:40px;color:var(--text2)}
@@ -44,37 +47,51 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 .playlist-table th{color:var(--text2);font-weight:600;font-size:0.78rem;text-transform:uppercase;letter-spacing:.04em}
 .playlist-table tr:hover{background:var(--bg3)}
 .playlist-table td.name{font-weight:600}
+.playlist-table td.actions button{padding:4px 12px;border-radius:12px;border:1px solid var(--accent);background:rgba(139,92,246,.08);color:var(--accent);font-size:0.75rem;cursor:pointer}
+.playlist-table td.actions button:hover{background:rgba(139,92,246,.2)}
 .progress-bar{width:120px;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px}
 .progress-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s}
 .progress-bar-fill.done{background:var(--green)}
 .hidden{display:none!important}
+.summary-banner{padding:12px 16px;border-radius:var(--radius);background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.15);margin-bottom:16px;display:flex;gap:20px;flex-wrap:wrap;font-size:0.82rem;color:var(--text2)}
+.summary-banner strong{color:var(--accent)}
 </style>
 </head>
 <body>
 <header>
 <h1>Karol Library</h1>
 <div class="stats-row" id="stats">
-<span>Videos: <span class="val" id="statCount">-</span></span>
+<span>Tracked: <span class="val" id="statTracked">-</span></span>
+<span>Downloaded: <span class="val" id="statDl">-</span></span>
 <span>Size: <span class="val" id="statSize">-</span></span>
-<span>Archived: <span class="val" id="statArch">-</span></span>
+<span>Playlists: <span class="val" id="statPl">-</span></span>
 </div>
 </header>
 <nav class="tabs">
-<button id="tabLocal" class="active" onclick="switchTab('local')">Local Files</button>
+<button id="tabVideos" class="active" onclick="switchTab('videos')">All Videos</button>
 <button id="tabPlaylists" onclick="switchTab('playlists')">Playlists</button>
 </nav>
 <main>
-<!-- LOCAL FILES TAB -->
-<div id="panelLocal">
+<!-- ALL VIDEOS TAB (merged: downloaded + tracked-from-playlists) -->
+<div id="panelVideos">
+<div class="summary-banner" id="summary"></div>
 <div class="toolbar">
-<input type="text" id="searchInput" placeholder="Search by title..." oninput="renderLocal()">
-<select id="subFilter" onchange="renderLocal()">
+<input type="text" id="searchInput" placeholder="Search by title..." oninput="renderVideos()">
+<select id="playlistFilter" onchange="renderVideos()">
+<option value="">All playlists</option>
+</select>
+<select id="downloadFilter" onchange="renderVideos()">
+<option value="">All status</option>
+<option value="downloaded">Downloaded</option>
+<option value="missing">Not downloaded</option>
+</select>
+<select id="subFilter" onchange="renderVideos()">
 <option value="">All videos</option>
 <option value="has-subs">Has subtitles</option>
 <option value="no-subs">No subtitles</option>
 </select>
-<select id="sortSelect" onchange="renderLocal()">
-<option value="recent">Largest files</option>
+<select id="sortSelect" onchange="renderVideos()">
+<option value="downloaded-first">Downloaded first</option>
 <option value="title">Title A-Z</option>
 <option value="duration">Duration</option>
 </select>
@@ -86,7 +103,7 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 <div id="panelPlaylists" class="hidden">
 <div class="toolbar">
 <button id="syncAllBtn" onclick="syncAllPlaylists()" style="padding:8px 16px;border-radius:var(--radius);border:1px solid var(--accent);background:rgba(139,92,246,.08);color:var(--accent);font-size:0.85rem;cursor:pointer;font-weight:600">Sync All Now</button>
-<span style="font-size:0.82rem;color:var(--text2);margin-left:8px" id="refreshNote">Auto-refreshes every 30s</span>
+<span style="font-size:0.82rem;color:var(--text2);margin-left:8px">Auto-refreshes every 30s</span>
 </div>
 <table class="playlist-table">
 <thead><tr><th>Playlist</th><th>Tracks</th><th>Downloaded</th><th>Status</th><th>Actions</th></tr></thead>
@@ -95,75 +112,179 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 </div>
 </main>
 <script>
-var videos=[], stats={}, playlists=[], activePlaylistId='';
+var allVideos=[];    // merged: all tracked videoIds with download status
+var stats={};
+var playlists=[];
+var activePlaylistId='';
+var localMap={};     // videoId -> metadata for downloaded videos
 var API=window.location.origin+'/api/library';
 var YTAPI=window.location.origin+'/api/youtube-dj';
 
-function loadLocal(){
-  Promise.all([fetch(API+'/list'),fetch(API+'/scan')])
-  .then(function(r){return Promise.all([r[0].json(),r[1].json()])})
-  .then(function(d){
-    videos=d[0].videos||[]; stats=d[1];
-    document.getElementById('statCount').textContent=stats.totalVideos||0;
-    document.getElementById('statSize').textContent=stats.totalSizeFormatted||'0 MB';
-    document.getElementById('statArch').textContent=stats.archiveEntries||0;
-    renderLocal();
-  }).catch(function(){document.getElementById('grid').innerHTML='<div class="empty"><p>Could not load library. Is the server running?</p></div>'});
-}
+function loadAll(){
+  // Fetch local library + playlist config in parallel, then merge
+  Promise.all([
+    fetch(API+'/list').then(function(r){return r.json()}),
+    fetch(API+'/scan').then(function(r){return r.json()}),
+    fetch(YTAPI+'/playlist').then(function(r){return r.json()}).catch(function(){return {config:{playlists:[]}}})
+  ]).then(function(d){
+    var localList=d[0].videos||[]; stats=d[1];
+    var cfg=(d[2].config)||{}; playlists=cfg.playlists||[]; activePlaylistId=cfg.activePlaylistId||'';
 
-function loadPlaylists(){
-  fetch(YTAPI+'/playlist')
-  .then(function(r){return r.json()})
-  .then(function(d){
-    var cfg=d.config||{}; playlists=cfg.playlists||[]; activePlaylistId=cfg.activePlaylistId||'';
+    // Build localMap: videoId -> metadata
+    localMap={};
+    for(var i=0;i<localList.length;i++){
+      var v=localList[i];
+      localMap[v.videoId]=v;
+    }
+
+    // Build playlistMap: playlistId -> playlist info
+    var plMap={};
+    for(var i=0;i<playlists.length;i++){
+      plMap[playlists[i].playlistId]=playlists[i];
+    }
+
+    // Build merged allVideos: every videoId tracked by any playlist
+    var seen={};
+    var merged=[];
+    for(var i=0;i<playlists.length;i++){
+      var pl=playlists[i];
+      var ids=pl.syncedVideoIds||[];
+      for(var j=0;j<ids.length;j++){
+        var vid=ids[j];
+        if(seen[vid]){
+          // Add this playlist to existing entry
+          var existing=merged[seen[vid]-1];
+          if(existing){
+            existing.playlists=existing.playlists||[];
+            existing.playlists.push({id:pl.playlistId,name:pl.name||pl.playlistId});
+          }
+          continue;
+        }
+        seen[vid]=merged.length+1;
+        var local=localMap[vid];
+        merged.push({
+          videoId:vid,
+          title:local?local.title:vid,
+          duration:local?local.duration:0,
+          size:local?local.size:0,
+          subtitles:local?local.subtitles:[],
+          thumbnail:local?local.thumbnail:'',
+          downloaded:!!local,
+          playlists:[{id:pl.playlistId,name:pl.name||pl.playlistId}]
+        });
+      }
+    }
+    allVideos=merged;
+
+    // Update stats
+    var dlCount=merged.filter(function(v){return v.downloaded}).length;
+    document.getElementById('statTracked').textContent=merged.length;
+    document.getElementById('statDl').textContent=dlCount;
+    document.getElementById('statSize').textContent=stats.totalSizeFormatted||'0 MB';
+    document.getElementById('statPl').textContent=playlists.length;
+
+    // Populate playlist filter
+    var pf=document.getElementById('playlistFilter');
+    pf.innerHTML='<option value="">All playlists ('+merged.length+' videos)</option>';
+    for(var i=0;i<playlists.length;i++){
+      pf.innerHTML+='<option value="'+esc(playlists[i].playlistId)+'">'+esc(playlists[i].name||playlists[i].playlistId)+'</option>';
+    }
+
+    renderVideos();
     renderPlaylists();
-  }).catch(function(){document.getElementById('playlistBody').innerHTML='<tr><td colspan="5" class="loading">Could not load playlists. Is the S8 connected?</td></tr>'});
+  }).catch(function(){
+    document.getElementById('grid').innerHTML='<div class="empty"><p>Could not load library. Is the server running?</p></div>';
+    document.getElementById('playlistBody').innerHTML='<tr><td colspan="5" class="loading">Could not load playlists.</td></tr>';
+  });
 }
 
 function switchTab(tab){
-  document.getElementById('tabLocal').className=tab==='local'?'active':'';
+  document.getElementById('tabVideos').className=tab==='videos'?'active':'';
   document.getElementById('tabPlaylists').className=tab==='playlists'?'active':'';
-  document.getElementById('panelLocal').className=tab==='local'?'':'hidden';
+  document.getElementById('panelVideos').className=tab==='videos'?'':'hidden';
   document.getElementById('panelPlaylists').className=tab==='playlists'?'':'hidden';
 }
 
-function renderLocal(){
+function renderVideos(){
   var q=(document.getElementById('searchInput').value||'').toLowerCase();
+  var plF=document.getElementById('playlistFilter').value;
+  var dlF=document.getElementById('downloadFilter').value;
   var subF=document.getElementById('subFilter').value;
   var sort=document.getElementById('sortSelect').value;
-  var filtered=videos.slice();
+
+  var filtered=allVideos.slice();
   if(q) filtered=filtered.filter(function(v){return v.title.toLowerCase().indexOf(q)!==-1});
+  if(plF) filtered=filtered.filter(function(v){return (v.playlists||[]).some(function(p){return p.id===plF})});
+  if(dlF==='downloaded') filtered=filtered.filter(function(v){return v.downloaded});
+  if(dlF==='missing') filtered=filtered.filter(function(v){return !v.downloaded});
   if(subF==='has-subs') filtered=filtered.filter(function(v){return (v.subtitles||[]).length>0});
   if(subF==='no-subs') filtered=filtered.filter(function(v){return (v.subtitles||[]).length===0});
   if(sort==='title') filtered.sort(function(a,b){return a.title.localeCompare(b.title)});
   else if(sort==='duration') filtered.sort(function(a,b){return b.duration-a.duration});
+  else filtered.sort(function(a,b){return (b.downloaded?1:0)-(a.downloaded?1:0)});
+
+  // Update summary
+  var dlInView=filtered.filter(function(v){return v.downloaded}).length;
+  document.getElementById('summary').innerHTML='Showing <strong>'+filtered.length+'</strong> videos (<strong>'+dlInView+'</strong> downloaded, <strong>'+(filtered.length-dlInView)+'</strong> pending)';
+
   var grid=document.getElementById('grid');
-  if(filtered.length===0){grid.innerHTML='<div class="empty"><p>No videos found</p></div>';return}
+  if(filtered.length===0){grid.innerHTML='<div class="empty"><p>No videos match</p></div>';return}
+
   grid.innerHTML=filtered.map(function(v){
     var dur=fmtDur(v.duration), size=fmtSize(v.size), subs=v.subtitles||[];
-    var subBadges=subs.length?subs.map(function(l){return '<span class="badge badge-sub">'+esc(l)+'</span>'}).join(''):'<span class="badge badge-no-sub">no subs</span>';
-    return '<div class="card"><div class="card-img">'+(v.thumbnail?'<img src="'+esc(v.thumbnail)+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<span class=card-placeholder>&#x1F3A5;</span>\'">':'<span class="card-placeholder">&#x1F3A5;</span>')+'</div><div class="card-body"><div class="card-title">'+esc(v.title)+'</div><div class="card-meta"><span>'+dur+'</span><span>'+size+'</span>'+subBadges+'</div></div></div>';
+    var subBadges='';
+    if(v.downloaded){
+      subBadges=subs.length?subs.map(function(l){return '<span class="badge badge-sub">'+esc(l)+'</span>'}).join(''):'<span class="badge badge-no-sub">no subs</span>';
+    }
+    var plBadges=(v.playlists||[]).map(function(p){
+      var isActive=p.id===activePlaylistId;
+      return '<span class="badge badge-playlist'+(isActive?' badge-active':'')+'">'+esc(p.name)+'</span>';
+    }).join('');
+    var dlBadge=v.downloaded?'<span class="badge badge-downloaded">downloaded</span>':'<span class="badge badge-missing">not downloaded</span>';
+    var cardClass=v.downloaded?'card':'card not-downloaded';
+    var imgHtml='';
+    if(v.thumbnail){
+      imgHtml='<img src="'+esc(v.thumbnail)+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<span class=card-placeholder>&#x1F3A5;</span>\'">';
+    } else {
+      imgHtml='<span class="card-placeholder">'+(v.downloaded?'&#x1F3A5;':'&#x1F4E5;')+'</span>';
+    }
+    var metaHtml;
+    if(v.downloaded){
+      metaHtml = '<span>'+dur+'</span><span>'+size+'</span>'+subBadges;
+    } else {
+      metaHtml = '<span>Not yet downloaded</span>';
+    }
+    return '<div class="'+cardClass+'">'+
+      '<div class="card-badge-row">'+dlBadge+plBadges+'</div>'+
+      '<div class="card-img">'+imgHtml+'</div>'+
+      '<div class="card-body">'+
+        '<div class="card-title">'+esc(v.title)+'</div>'+
+        '<div class="card-meta">'+metaHtml+'</div>'+
+      '</div></div>';
   }).join('');
 }
 
 function renderPlaylists(){
   var body=document.getElementById('playlistBody');
   if(playlists.length===0){body.innerHTML='<tr><td colspan="5" class="loading">No playlists saved yet. Add one from the Karol app.</td></tr>';return}
-  var totalArchive=stats.archiveEntries||0;
+  // Count actual downloaded per playlist using localMap
+  var localIds=Object.keys(localMap);
   body.innerHTML=playlists.map(function(p){
     var isActive=p.playlistId===activePlaylistId;
     var count=p.videoCount||0;
-    var dlCount=Math.min(totalArchive,count);
+    var syncedIds=p.syncedVideoIds||[];
+    var dlCount=0;
+    for(var i=0;i<syncedIds.length;i++){if(localMap[syncedIds[i]]) dlCount++;}
     var pct=count>0?Math.round(dlCount/count*100):0;
     var done=pct>=100;
     var barClass=done?'progress-bar-fill done':'progress-bar-fill';
     var dlBadge='';
     if(done&&count>0) dlBadge='<span class="badge badge-downloaded">done</span>';
-    else if(dlCount>0) dlBadge='<span class="badge badge-partial">'+pct+'%</span>';
+    else if(dlCount>0) dlBadge='<span class="badge badge-downloaded">'+dlCount+'/'+count+'</span>';
     var actionBtn='';
     if(isActive) actionBtn='<span class="badge badge-active">Active</span>';
-    else if(!done&&count>0) actionBtn='<button onclick="downloadPl(\''+p.playlistId+'\')" style="padding:4px 12px;border-radius:12px;border:1px solid var(--accent);background:rgba(139,92,246,.08);color:var(--accent);font-size:0.75rem;cursor:pointer">Download</button>';
-    return '<tr><td class="name">'+esc(p.name||p.playlistId)+(isActive?' <span class="badge badge-active">Show</span>':'')+'</td><td>'+count+'</td><td>'+(count>0?'<span class="progress-bar"><span class="'+barClass+'" style="width:'+pct+'%"></span></span>'+dlCount+'/'+count:'-')+'</td><td>'+dlBadge+'</td><td>'+actionBtn+'</td></tr>';
+    else if(!done&&count>0) actionBtn='<button onclick="downloadPl(\''+p.playlistId+'\')">Download</button>';
+    return '<tr><td class="name">'+esc(p.name||p.playlistId)+(isActive?' <span class="badge badge-active">Show</span>':'')+'</td><td>'+count+'</td><td>'+(count>0?'<span class="progress-bar"><span class="'+barClass+'" style="width:'+pct+'%"></span></span>'+dlCount+'/'+count:'-')+'</td><td>'+dlBadge+'</td><td class="actions">'+actionBtn+'</td></tr>';
   }).join('');
 }
 
@@ -173,9 +294,7 @@ function downloadPl(pid){
   fetch(window.location.origin+'/api/library/download-playlist',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({playlistUrl:pl.playlistUrl||'https://www.youtube.com/playlist?list='+pid})
-  }).then(function(){
-    loadLocal(); setTimeout(loadPlaylists,2000);
-  }).catch(function(){});
+  }).then(function(){loadAll()}).catch(function(){});
 }
 
 function syncAllPlaylists(){
@@ -186,7 +305,7 @@ function syncAllPlaylists(){
   .then(function(){
     document.getElementById('syncAllBtn').textContent='Sync All Now';
     document.getElementById('syncAllBtn').disabled=false;
-    loadPlaylists();
+    loadAll();
   }).catch(function(){
     document.getElementById('syncAllBtn').textContent='Sync All Now';
     document.getElementById('syncAllBtn').disabled=false;
@@ -197,8 +316,8 @@ function fmtDur(s){if(!s)return'0:00';var m=Math.floor(s/60),sec=Math.floor(s%60
 function fmtSize(b){if(!b)return'0 KB';if(b<1048576)return Math.round(b/1024)+' KB';return (b/1048576).toFixed(1)+' MB'}
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
 
-loadLocal(); loadPlaylists();
-setInterval(function(){loadLocal(); loadPlaylists();},30000);
+loadAll();
+setInterval(loadAll,30000);
 </script>
 </body>
 </html>
