@@ -265,6 +265,7 @@ app.use(async (ctx, next) => {
 // ═══════════════════════════════════════════════════════════════
 
 const LIBRARY_DIR = path.resolve(__dirname, '..', '.deskreen', 'library');
+const DOWNLOADS_DIR = path.resolve(__dirname, '..', '.deskreen', 'youtube-downloads');
 const ARCHIVE_PATH = path.resolve(__dirname, '..', '.deskreen', 'youtube-download-archive.txt');
 const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
 
@@ -1278,26 +1279,99 @@ router.get('/api/library/thumb/:videoId', async (ctx) => {
 router.get('/api/library/list', async (ctx) => {
   const videos = [];
   try {
-    if (!fs.existsSync(LIBRARY_DIR)) { ctx.body = { ok: true, videos: [] }; return; }
-    for (const f of fs.readdirSync(LIBRARY_DIR)) {
-      if (!f.endsWith('.mp4')) continue;
-      const videoId = f.replace('.mp4', '').replace(/\.f\d+$/, ''); // strip format suffix
-      const meta = getVideoMetadata(videoId);
-      const mp4Path = getVideoPath(videoId);
-      const size = fs.existsSync(mp4Path) ? fs.statSync(mp4Path).size : 0;
-      const subs = getSubtitleFiles(videoId).filter(s => validateVttFile(s.path));
+    // Parse the download archive — source of truth for what's been downloaded
+    const downloadedVideoIds = new Set();
+    if (fs.existsSync(ARCHIVE_PATH)) {
+      const lines = fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n').filter(Boolean);
+      for (const line of lines) {
+        const vid = line.trim().replace(/^youtube\s+/i, '').trim();
+        if (vid && vid.length >= 10) downloadedVideoIds.add(vid);
+      }
+    }
+
+    // Single-pass scan: build videoId -> {size, subs, meta} map
+    // by scanning both directories once
+    const fileMap = {}; // videoId -> { size: 0, subs: Set, meta: null }
+
+    function ensure(vid) {
+      if (!fileMap[vid]) fileMap[vid] = { size: 0, subs: [], meta: null };
+      return fileMap[vid];
+    }
+
+    for (const dir of [LIBRARY_DIR, DOWNLOADS_DIR]) {
+      if (!fs.existsSync(dir)) continue;
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        // Try to extract videoId from filename
+        // Library: <videoId>.mp4 / <videoId>.info.json / <videoId>.<lang>.vtt
+        // YouTube-downloads: title-based.mp4 / title-based.<lang>.vtt
+        // VTT files sometimes embed videoId: title.lang-videoId.vtt
+        let videoIdFromFile = null;
+
+        // Check all known videoIds against filename
+        // For library dir: strip extension to get videoId
+        // For downloads dir: check if any known videoId appears in filename
+        const extMatch = f.match(/\.(mp4|info\.json|vtt|webp|jpg)$/);
+        if (!extMatch) continue;
+
+        const base = f.slice(0, -extMatch[0].length);
+
+        if (dir === LIBRARY_DIR) {
+          // Library files are named by videoId
+          const vid = base.replace(/\.f\d+$/, ''); // strip format suffix
+          if (downloadedVideoIds.has(vid)) videoIdFromFile = vid;
+        } else {
+          // YouTube-downloads: check if any downloaded videoId appears in filename
+          // or in VTT embedded suffix like lang-VIDEOID.vtt
+          for (const vid of downloadedVideoIds) {
+            if (f.includes(vid)) {
+              videoIdFromFile = vid;
+              break;
+            }
+          }
+          // VTT-specific: extract from <title>.<lang>-<VIDEOID>.vtt pattern
+          if (!videoIdFromFile && extMatch[1] === 'vtt') {
+            const m = base.match(/[.-]([A-Za-z0-9_-]{10,12})$/);
+            if (m && downloadedVideoIds.has(m[1])) videoIdFromFile = m[1];
+          }
+        }
+
+        if (!videoIdFromFile) continue;
+
+        const entry = ensure(videoIdFromFile);
+
+        if (extMatch[1] === 'mp4') {
+          try { entry.size = fs.statSync(path.join(dir, f)).size; } catch (e) {}
+        } else if (extMatch[1] === 'info.json') {
+          try { entry.meta = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (e) {}
+        } else if (extMatch[1] === 'vtt') {
+          // Extract language code
+          const parts = base.split('.');
+          for (const p of parts) {
+            if (/^[a-z]{2,3}(-[A-Z][a-z]{3})?$/i.test(p) && p !== 'live_chat') {
+              entry.subs.push(p);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Build result from archive entries
+    for (const videoId of downloadedVideoIds) {
+      const f = fileMap[videoId] || { size: 0, subs: [], meta: null };
       videos.push({
         videoId,
-        title: meta?.title || videoId,
-        duration: meta?.duration || 0,
-        size,
-        subtitles: subs.map(s => s.lang),
-        thumbnail: meta?.thumbnail || '',
-        upload_date: meta?.upload_date || '',
+        title: f.meta?.title || videoId,
+        duration: f.meta?.duration || 0,
+        size: f.size,
+        subtitles: f.subs,
+        thumbnail: f.meta?.thumbnail || '',
+        upload_date: f.meta?.upload_date || '',
         cached: true,
       });
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) { console.error('[library/list]', e.message); }
   // Sort by most recent first (largest file usually = full recording)
   videos.sort((a, b) => b.size - a.size);
   ctx.body = { ok: true, count: videos.length, videos };
@@ -1306,28 +1380,32 @@ router.get('/api/library/list', async (ctx) => {
 // Scan summary
 router.get('/api/library/scan', async (ctx) => {
   try {
-    if (!fs.existsSync(LIBRARY_DIR)) {
-      ctx.body = { ok: true, totalVideos: 0, totalSize: 0, subtitleLanguages: [] };
-      return;
-    }
-    const files = fs.readdirSync(LIBRARY_DIR);
-    const mp4s = files.filter(f => f.endsWith('.mp4'));
+    // Count mp4s across both directories
+    let totalMp4Files = 0;
     let totalSize = 0;
-    for (const f of mp4s) {
-      totalSize += fs.statSync(path.join(LIBRARY_DIR, f)).size;
-    }
     const langSet = new Set();
-    for (const f of files) {
-      if (f.endsWith('.vtt')) {
-        const parts = f.split('.');
-        if (parts.length >= 3) langSet.add(parts[parts.length - 2]);
+
+    for (const dir of [LIBRARY_DIR, DOWNLOADS_DIR]) {
+      if (!fs.existsSync(dir)) continue;
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        if (f.endsWith('.mp4')) {
+          totalMp4Files++;
+          totalSize += fs.statSync(path.join(dir, f)).size;
+        }
+        if (f.endsWith('.vtt')) {
+          const parts = f.split('.');
+          if (parts.length >= 3) langSet.add(parts[parts.length - 2]);
+        }
       }
     }
+
     const archiveCount = fs.existsSync(ARCHIVE_PATH)
       ? fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n').filter(Boolean).length : 0;
     ctx.body = {
       ok: true,
-      totalVideos: mp4s.length,
+      totalVideos: archiveCount,
+      totalMp4Files,
       totalSize,
       totalSizeFormatted: (totalSize / 1024 / 1024).toFixed(0) + ' MB',
       subtitleLanguages: Array.from(langSet),
