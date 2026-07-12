@@ -645,8 +645,8 @@ function switchView(view){
   localStorage.setItem('karolView',view);
   document.getElementById('btnGridView').classList.toggle('active',view==='grid');
   document.getElementById('btnListView').classList.toggle('active',view==='list');
-  document.getElementById('grid').style.display=view==='grid'?'':'none';
-  document.getElementById('listView').style.display=view==='list'?'':'none';
+  document.getElementById('grid').style.display=view==='grid'?'grid':'none';
+  document.getElementById('listView').style.display=view==='list'?'table':'none';
   renderVideos();
 }
 // Restore saved view preference
