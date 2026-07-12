@@ -5,19 +5,23 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Karol Library</title>
 <style>
-:root{--bg:#0a0a0f;--bg2:#12121a;--bg3:#1a1a26;--text:#e4e4ec;--text2:#8888a0;--accent:#8b5cf6;--green:#10b981;--amber:#f59e0b;--border:#222233;--radius:8px}
+:root{--bg:#0a0a0f;--bg2:#12121a;--bg3:#1a1a26;--text:#e4e4ec;--text2:#8888a0;--accent:#8b5cf6;--green:#10b981;--amber:#f59e0b;--red:#f87171;--border:#222233;--radius:8px}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 header{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
 header h1{font-size:1.2rem;font-weight:700}
 .stats-row{display:flex;gap:16px;font-size:0.82rem;color:var(--text2)}
 .stats-row .val{color:var(--accent);font-weight:600}
+nav.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--bg2);padding:0 24px}
+nav.tabs button{padding:10px 20px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text2);font-size:0.85rem;cursor:pointer;font-weight:500;transition:all .15s}
+nav.tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
+nav.tabs button:hover{color:var(--text)}
 main{padding:20px 24px;max-width:1400px;margin:0 auto}
 .toolbar{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
 .toolbar input{flex:1;min-width:200px;max-width:400px;padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.9rem;outline:none}
 .toolbar input:focus{border-color:var(--accent)}
 .toolbar select{padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.9rem;cursor:pointer}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.video-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color .2s}
 .card:hover{border-color:var(--accent)}
 .card-img{width:100%;aspect-ratio:16/9;background:var(--bg3);display:flex;align-items:center;justify-content:center;overflow:hidden}
@@ -29,55 +33,101 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 .badge{padding:2px 8px;border-radius:12px;font-weight:600;font-size:0.7rem}
 .badge-sub{background:rgba(139,92,246,.15);color:var(--accent)}
 .badge-no-sub{background:rgba(245,158,11,.15);color:var(--amber)}
+.badge-active{background:rgba(16,185,129,.15);color:var(--green);border:1px solid rgba(16,185,129,.3)}
+.badge-downloaded{background:rgba(16,185,129,.1);color:var(--green)}
+.badge-partial{background:rgba(245,158,11,.12);color:var(--amber)}
 .empty{text-align:center;padding:60px 20px;color:var(--text2)}
 .empty p{margin-top:8px;font-size:0.9rem}
 .loading{text-align:center;padding:40px;color:var(--text2)}
+.playlist-table{width:100%;border-collapse:collapse}
+.playlist-table th,.playlist-table td{padding:12px 16px;text-align:left;font-size:0.85rem;border-bottom:1px solid var(--border)}
+.playlist-table th{color:var(--text2);font-weight:600;font-size:0.78rem;text-transform:uppercase;letter-spacing:.04em}
+.playlist-table tr:hover{background:var(--bg3)}
+.playlist-table td.name{font-weight:600}
+.progress-bar{width:120px;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px}
+.progress-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s}
+.progress-bar-fill.done{background:var(--green)}
+.hidden{display:none!important}
 </style>
 </head>
 <body>
 <header>
-<h1>Karol Video Library</h1>
+<h1>Karol Library</h1>
 <div class="stats-row" id="stats">
 <span>Videos: <span class="val" id="statCount">-</span></span>
 <span>Size: <span class="val" id="statSize">-</span></span>
 <span>Archived: <span class="val" id="statArch">-</span></span>
 </div>
 </header>
+<nav class="tabs">
+<button id="tabLocal" class="active" onclick="switchTab('local')">Local Files</button>
+<button id="tabPlaylists" onclick="switchTab('playlists')">Playlists</button>
+</nav>
 <main>
+<!-- LOCAL FILES TAB -->
+<div id="panelLocal">
 <div class="toolbar">
-<input type="text" id="searchInput" placeholder="Search by title..." oninput="render()">
-<select id="subFilter" onchange="render()">
+<input type="text" id="searchInput" placeholder="Search by title..." oninput="renderLocal()">
+<select id="subFilter" onchange="renderLocal()">
 <option value="">All videos</option>
 <option value="has-subs">Has subtitles</option>
 <option value="no-subs">No subtitles</option>
 </select>
-<select id="sortSelect" onchange="render()">
+<select id="sortSelect" onchange="renderLocal()">
 <option value="recent">Largest files</option>
 <option value="title">Title A-Z</option>
 <option value="duration">Duration</option>
 </select>
 </div>
-<div class="grid" id="grid"><div class="loading">Loading library...</div></div>
+<div class="video-grid" id="grid"><div class="loading">Loading library...</div></div>
+</div>
+
+<!-- PLAYLISTS TAB -->
+<div id="panelPlaylists" class="hidden">
+<div class="toolbar">
+<button id="syncAllBtn" onclick="syncAllPlaylists()" style="padding:8px 16px;border-radius:var(--radius);border:1px solid var(--accent);background:rgba(139,92,246,.08);color:var(--accent);font-size:0.85rem;cursor:pointer;font-weight:600">Sync All Now</button>
+<span style="font-size:0.82rem;color:var(--text2);margin-left:8px" id="refreshNote">Auto-refreshes every 30s</span>
+</div>
+<table class="playlist-table">
+<thead><tr><th>Playlist</th><th>Tracks</th><th>Downloaded</th><th>Status</th><th>Actions</th></tr></thead>
+<tbody id="playlistBody"><tr><td colspan="5" class="loading">Loading playlists...</td></tr></tbody>
+</table>
+</div>
 </main>
 <script>
-var videos=[];
-var stats={};
+var videos=[], stats={}, playlists=[], activePlaylistId='';
 var API=window.location.origin+'/api/library';
+var YTAPI=window.location.origin+'/api/youtube-dj';
 
-function load(){
+function loadLocal(){
   Promise.all([fetch(API+'/list'),fetch(API+'/scan')])
   .then(function(r){return Promise.all([r[0].json(),r[1].json()])})
   .then(function(d){
-    videos=d[0].videos||[];
-    stats=d[1];
+    videos=d[0].videos||[]; stats=d[1];
     document.getElementById('statCount').textContent=stats.totalVideos||0;
     document.getElementById('statSize').textContent=stats.totalSizeFormatted||'0 MB';
     document.getElementById('statArch').textContent=stats.archiveEntries||0;
-    render();
+    renderLocal();
   }).catch(function(){document.getElementById('grid').innerHTML='<div class="empty"><p>Could not load library. Is the server running?</p></div>'});
 }
 
-function render(){
+function loadPlaylists(){
+  fetch(YTAPI+'/playlist')
+  .then(function(r){return r.json()})
+  .then(function(d){
+    var cfg=d.config||{}; playlists=cfg.playlists||[]; activePlaylistId=cfg.activePlaylistId||'';
+    renderPlaylists();
+  }).catch(function(){document.getElementById('playlistBody').innerHTML='<tr><td colspan="5" class="loading">Could not load playlists. Is the S8 connected?</td></tr>'});
+}
+
+function switchTab(tab){
+  document.getElementById('tabLocal').className=tab==='local'?'active':'';
+  document.getElementById('tabPlaylists').className=tab==='playlists'?'active':'';
+  document.getElementById('panelLocal').className=tab==='local'?'':'hidden';
+  document.getElementById('panelPlaylists').className=tab==='playlists'?'':'hidden';
+}
+
+function renderLocal(){
   var q=(document.getElementById('searchInput').value||'').toLowerCase();
   var subF=document.getElementById('subFilter').value;
   var sort=document.getElementById('sortSelect').value;
@@ -87,26 +137,68 @@ function render(){
   if(subF==='no-subs') filtered=filtered.filter(function(v){return (v.subtitles||[]).length===0});
   if(sort==='title') filtered.sort(function(a,b){return a.title.localeCompare(b.title)});
   else if(sort==='duration') filtered.sort(function(a,b){return b.duration-a.duration});
-
   var grid=document.getElementById('grid');
   if(filtered.length===0){grid.innerHTML='<div class="empty"><p>No videos found</p></div>';return}
-
   grid.innerHTML=filtered.map(function(v){
-    var dur=formatDuration(v.duration);
-    var size=formatSize(v.size);
-    var subs=v.subtitles||[];
-    var thumb=v.thumbnail||'';
+    var dur=fmtDur(v.duration), size=fmtSize(v.size), subs=v.subtitles||[];
     var subBadges=subs.length?subs.map(function(l){return '<span class="badge badge-sub">'+esc(l)+'</span>'}).join(''):'<span class="badge badge-no-sub">no subs</span>';
-    return '<div class="card"><div class="card-img">'+(thumb?'<img src="'+esc(thumb)+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<span class=card-placeholder>&#x1F3A5;</span>\'">':'<span class="card-placeholder">&#x1F3A5;</span>')+'</div><div class="card-body"><div class="card-title">'+esc(v.title)+'</div><div class="card-meta"><span>'+dur+'</span><span>'+size+'</span>'+subBadges+'</div></div></div>';
+    return '<div class="card"><div class="card-img">'+(v.thumbnail?'<img src="'+esc(v.thumbnail)+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<span class=card-placeholder>&#x1F3A5;</span>\'">':'<span class="card-placeholder">&#x1F3A5;</span>')+'</div><div class="card-body"><div class="card-title">'+esc(v.title)+'</div><div class="card-meta"><span>'+dur+'</span><span>'+size+'</span>'+subBadges+'</div></div></div>';
   }).join('');
 }
 
-function formatDuration(s){if(!s)return'0:00';var m=Math.floor(s/60);var sec=Math.floor(s%60);return m+':'+(sec<10?'0':'')+sec}
-function formatSize(b){if(!b)return'0 KB';if(b<1048576)return Math.round(b/1024)+' KB';return (b/1048576).toFixed(1)+' MB'}
+function renderPlaylists(){
+  var body=document.getElementById('playlistBody');
+  if(playlists.length===0){body.innerHTML='<tr><td colspan="5" class="loading">No playlists saved yet. Add one from the Karol app.</td></tr>';return}
+  var totalArchive=stats.archiveEntries||0;
+  body.innerHTML=playlists.map(function(p){
+    var isActive=p.playlistId===activePlaylistId;
+    var count=p.videoCount||0;
+    var dlCount=Math.min(totalArchive,count);
+    var pct=count>0?Math.round(dlCount/count*100):0;
+    var done=pct>=100;
+    var barClass=done?'progress-bar-fill done':'progress-bar-fill';
+    var dlBadge='';
+    if(done&&count>0) dlBadge='<span class="badge badge-downloaded">done</span>';
+    else if(dlCount>0) dlBadge='<span class="badge badge-partial">'+pct+'%</span>';
+    var actionBtn='';
+    if(isActive) actionBtn='<span class="badge badge-active">Active</span>';
+    else if(!done&&count>0) actionBtn='<button onclick="downloadPl(\''+p.playlistId+'\')" style="padding:4px 12px;border-radius:12px;border:1px solid var(--accent);background:rgba(139,92,246,.08);color:var(--accent);font-size:0.75rem;cursor:pointer">Download</button>';
+    return '<tr><td class="name">'+esc(p.name||p.playlistId)+(isActive?' <span class="badge badge-active">Show</span>':'')+'</td><td>'+count+'</td><td>'+(count>0?'<span class="progress-bar"><span class="'+barClass+'" style="width:'+pct+'%"></span></span>'+dlCount+'/'+count:'-')+'</td><td>'+dlBadge+'</td><td>'+actionBtn+'</td></tr>';
+  }).join('');
+}
+
+function downloadPl(pid){
+  var pl=playlists.find(function(p){return p.playlistId===pid});
+  if(!pl) return;
+  fetch(window.location.origin+'/api/library/download-playlist',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({playlistUrl:pl.playlistUrl||'https://www.youtube.com/playlist?list='+pid})
+  }).then(function(){
+    loadLocal(); setTimeout(loadPlaylists,2000);
+  }).catch(function(){});
+}
+
+function syncAllPlaylists(){
+  document.getElementById('syncAllBtn').textContent='Syncing...';
+  document.getElementById('syncAllBtn').disabled=true;
+  fetch(YTAPI+'/sync',{method:'POST'})
+  .then(function(r){return r.json()})
+  .then(function(){
+    document.getElementById('syncAllBtn').textContent='Sync All Now';
+    document.getElementById('syncAllBtn').disabled=false;
+    loadPlaylists();
+  }).catch(function(){
+    document.getElementById('syncAllBtn').textContent='Sync All Now';
+    document.getElementById('syncAllBtn').disabled=false;
+  });
+}
+
+function fmtDur(s){if(!s)return'0:00';var m=Math.floor(s/60),sec=Math.floor(s%60);return m+':'+(sec<10?'0':'')+sec}
+function fmtSize(b){if(!b)return'0 KB';if(b<1048576)return Math.round(b/1024)+' KB';return (b/1048576).toFixed(1)+' MB'}
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
 
-load();
-setInterval(load,15000);
+loadLocal(); loadPlaylists();
+setInterval(function(){loadLocal(); loadPlaylists();},30000);
 </script>
 </body>
 </html>

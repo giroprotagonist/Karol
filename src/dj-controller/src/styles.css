@@ -1402,7 +1402,8 @@ textarea {
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		overflow: hidden;
+		overflow-y: auto;
+		overflow-x: hidden;
 		min-height: 0;
 	}
 
@@ -1416,6 +1417,14 @@ textarea {
 
 	.tab-panel .card-header {
 		flex-shrink: 0;
+	}
+
+	/* Playlist Library — the card needs to scroll, not overflow:hidden */
+	.tab-panel > .playlist-library {
+		overflow-y: auto;
+		flex: 1;
+		min-height: 0;
+		margin-bottom: 0;
 	}
 
 	.queue-list {
