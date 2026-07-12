@@ -732,6 +732,7 @@ function renderQueue(){
     }
     list.innerHTML=items.map(function(item,i){
       var vid=item.videoId||'';
+      var qid=item.id||'';
       var title=item.title||vid;
       var thumb=item.thumbnail||(vid?'https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg':'');
       return '<div class="queue-item">'+
@@ -744,7 +745,7 @@ function renderQueue(){
         '<div class="actions">'+
           '<button onclick="queuePlayNow(\''+esc(vid)+'\')">Play Now</button>'+
           '<button onclick="queueMoveToTop(\''+esc(vid)+'\')">Top</button>'+
-          '<button class="danger" onclick="queueRemove(\''+esc(vid)+'\')">Remove</button>'+
+          '<button class="danger" onclick="queueRemove(\''+esc(qid)+'\')">Remove</button>'+
         '</div>'+
       '</div>';
     }).join('');
@@ -768,10 +769,9 @@ function queueMoveToTop(videoId){
   .catch(function(){showToast('Failed')});
 }
 
-function queueRemove(videoId){
-  fetch(YTAPI+'/queue/remove',{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({videoId:videoId})
+function queueRemove(queueItemId){
+  fetch(YTAPI+'/queue/'+encodeURIComponent(queueItemId),{
+    method:'DELETE'
   }).then(function(){showToast('Removed');setTimeout(renderQueue,500)})
   .catch(function(){showToast('Failed')});
 }
