@@ -847,11 +847,22 @@ class MainActivity : AppCompatActivity() {
 
 	private fun enterImmersiveMode() {
 		Log.i("MainActivity", "enterImmersiveMode called")
+		// Modern API (API 30+)
 		WindowInsetsControllerCompat(window, window.decorView).apply {
 			hide(WindowInsetsCompat.Type.systemBars())
 			systemBarsBehavior =
 				WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 		}
+		// Legacy flags as belt-and-suspenders for Samsung devices
+		@Suppress("DEPRECATION")
+		window.decorView.systemUiVisibility = (
+			android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+			or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+			or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+			or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+			or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+			or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+		)
 	}
 
 
