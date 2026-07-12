@@ -948,13 +948,9 @@
 				if (!player) return;
 				if (window.__karolQualityCapped) return;
 				if (typeof player.setPlaybackQualityRange === 'function') {
-					player.setPlaybackQualityRange('small', 'hd1080');
+					player.setPlaybackQualityRange('tiny', 'hd1080');
 					window.__karolQualityCapped = true;
-					karolLog('[Karol] Quality capped: small→hd1080');
-				} else if (typeof player.setPlaybackQuality === 'function') {
-					player.setPlaybackQuality('hd1080');
-					window.__karolQualityCapped = true;
-					karolLog('[Karol] Quality forced: hd1080');
+					karolLog('[Karol] Quality capped: tiny→hd1080');
 				}
 				if (typeof player.getPlaybackQuality === 'function') {
 					karolLog('[Karol] Current quality: ' + player.getPlaybackQuality());

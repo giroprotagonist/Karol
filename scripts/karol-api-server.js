@@ -259,6 +259,122 @@ app.use(async (ctx, next) => {
 });
 
 // ── VLC routes ──
+
+// ═══════════════════════════════════════════════════════════════
+//  Library Module — local video download + metadata pipeline
+// ═══════════════════════════════════════════════════════════════
+
+const LIBRARY_DIR = path.resolve(__dirname, '..', '.deskreen', 'library');
+const ARCHIVE_PATH = path.resolve(__dirname, '..', '.deskreen', 'youtube-download-archive.txt');
+const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
+
+fs.mkdirSync(LIBRARY_DIR, { recursive: true });
+
+function getVideoPath(videoId) {
+  // Try exact match first, then wildcard (yt-dlp sometimes adds format code suffix)
+  const exact = path.join(LIBRARY_DIR, videoId + '.mp4');
+  if (fs.existsSync(exact)) return exact;
+  try {
+    const files = fs.readdirSync(LIBRARY_DIR);
+    const match = files.find(f => f.startsWith(videoId) && f.endsWith('.mp4'));
+    if (match) return path.join(LIBRARY_DIR, match);
+  } catch (e) { /* ignore */ }
+  return exact; // return expected path even if not found
+}
+function getInfoPath(videoId) {
+  return path.join(LIBRARY_DIR, videoId + '.info.json');
+}
+function getThumbPath(videoId) {
+  try {
+    const files = fs.readdirSync(LIBRARY_DIR);
+    for (const ext of ['jpg', 'webp', 'png']) {
+      const exact = path.join(LIBRARY_DIR, videoId + '.' + ext);
+      if (fs.existsSync(exact)) return exact;
+      const match = files.find(f => f.startsWith(videoId) && f.endsWith('.' + ext) && !f.includes('.vtt') && !f.includes('.info.'));
+      if (match) return path.join(LIBRARY_DIR, match);
+    }
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+function getVideoMetadata(videoId) {
+  try {
+    const info = JSON.parse(fs.readFileSync(getInfoPath(videoId), 'utf8'));
+    return {
+      id: info.id,
+      title: info.title,
+      duration: info.duration,
+      thumbnail: info.thumbnail,
+      upload_date: info.upload_date,
+      subtitles: Object.keys(info.subtitles || {}),
+    };
+  } catch { return null; }
+}
+
+function getSubtitleFiles(videoId) {
+  if (!fs.existsSync(LIBRARY_DIR)) return [];
+  const files = [];
+  try {
+    for (const f of fs.readdirSync(LIBRARY_DIR)) {
+      if (f.startsWith(videoId + '.') && f.endsWith('.vtt')) {
+        const stripped = f.replace(videoId + '.', '').replace('.vtt', '');
+        files.push({ lang: stripped, file: f, path: path.join(LIBRARY_DIR, f) });
+      }
+    }
+  } catch (e) { /* ignore */ }
+  return files;
+}
+
+function validateVttFile(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (content.trim().startsWith('WEBVTT') && content.trim().length > 20) {
+      return true;
+    }
+  } catch {}
+  try { fs.unlinkSync(filePath); } catch {}
+  return false;
+}
+
+function downloadVideo(videoId) {
+  return new Promise((resolve, reject) => {
+    const mp4 = getVideoPath(videoId);
+    if (fs.existsSync(mp4)) { resolve(mp4); return; }
+
+    console.log('[library] Downloading video: ' + videoId);
+    const proc = require('child_process').spawn(YT_DLP_PATH, [
+      '-f', 'b[height<=1080]',
+      '--merge-output-format', 'mp4',
+      '--write-info-json',
+      '--write-thumbnail',
+      '--write-subs', '--sub-langs', 'all',
+      '--download-archive', ARCHIVE_PATH,
+      '-o', path.join(LIBRARY_DIR, '%(id)s.%(ext)s'),
+      '--no-playlist',
+      'https://www.youtube.com/watch?v=' + videoId,
+    ], { timeout: 90000 });
+
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    proc.on('close', (code) => {
+      if (code === 0 && fs.existsSync(mp4)) {
+        console.log('[library] Download complete: ' + videoId);
+        // Validate subtitle files
+        const subs = getSubtitleFiles(videoId);
+        for (const s of subs) { validateVttFile(s.path); }
+        resolve(mp4);
+      } else {
+        console.error('[library] Download failed for ' + videoId + ' (code ' + code + ')');
+        reject(new Error('Download failed with code ' + code + (stderr ? ': ' + stderr.slice(-200) : '')));
+      }
+    });
+    proc.on('error', reject);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+
 router.get('/api/vlc-dj/health', async (ctx) => {
   // Actually probe VLC's HTTP interface instead of returning a hardcoded true.
   // Also check the consecutive-failure counter so a single transient error
@@ -1066,8 +1182,228 @@ router.get('/api/discover.json', (ctx) => {
   };
 });
 
+// ── Library API endpoints ──
+
+// Metadata: returns info.json data for a video. Triggers background download if not available.
+router.get('/api/library/metadata/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
+  }
+  const meta = getVideoMetadata(videoId);
+  if (meta) {
+    ctx.body = { ok: true, ready: true, ...meta };
+    return;
+  }
+  // Not downloaded yet — trigger background download, return immediately
+  downloadVideo(videoId).catch((e) => console.warn('[library] Background download failed: ' + e.message));
+  ctx.body = { ok: true, ready: false, downloading: true, id: videoId };
+});
+
+// Serve mp4 file with Range header support for download resumption
+router.get('/api/library/file/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
+  }
+  const mp4 = getVideoPath(videoId);
+  if (!fs.existsSync(mp4)) {
+    ctx.status = 404;
+    ctx.body = { ok: false, error: 'Video not downloaded yet' };
+    return;
+  }
+  const stat = fs.statSync(mp4);
+  const range = ctx.req.headers.range;
+  ctx.set('Accept-Ranges', 'bytes');
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+    ctx.status = 206;
+    ctx.set('Content-Range', 'bytes ' + start + '-' + end + '/' + stat.size);
+    ctx.set('Content-Type', 'video/mp4');
+    ctx.set('Content-Length', String(end - start + 1));
+    ctx.body = fs.createReadStream(mp4, { start, end });
+  } else {
+    ctx.set('Content-Type', 'video/mp4');
+    ctx.set('Content-Length', String(stat.size));
+    ctx.body = fs.createReadStream(mp4);
+  }
+});
+
+// Quick status check: is the video downloaded and ready?
+router.get('/api/library/status/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
+  }
+  const ready = fs.existsSync(getVideoPath(videoId));
+  const meta = getVideoMetadata(videoId);
+  const subs = getSubtitleFiles(videoId).filter(s => validateVttFile(s.path));
+  ctx.body = { ok: true, ready, metadata: meta, subtitles: subs.map(s => ({ lang: s.lang })) };
+});
+
+// Serve a specific subtitle file as WebVTT
+router.get('/api/library/subtitle/:videoId/:lang', async (ctx) => {
+  const { videoId, lang } = ctx.params;
+  if (!videoId || !lang) { ctx.status = 400; ctx.body = { ok: false }; return; }
+  const filePath = path.join(LIBRARY_DIR, videoId + '.' + lang + '.vtt');
+  if (!fs.existsSync(filePath)) {
+    ctx.status = 404;
+    ctx.body = { ok: false, error: 'Subtitle not found' };
+    return;
+  }
+  if (!validateVttFile(filePath)) {
+    ctx.status = 404;
+    ctx.body = { ok: false, error: 'Subtitle file is invalid' };
+    return;
+  }
+  ctx.set('Content-Type', 'text/vtt');
+  ctx.set('Cache-Control', 'public, max-age=3600');
+  ctx.body = fs.createReadStream(filePath);
+});
+
+// Serve thumbnail
+router.get('/api/library/thumb/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  const tp = getThumbPath(videoId);
+  if (!tp) { ctx.status = 404; ctx.body = { ok: false }; return; }
+  const ext = path.extname(tp).toLowerCase();
+  ctx.type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  ctx.set('Cache-Control', 'public, max-age=86400');
+  ctx.body = fs.createReadStream(tp);
+});
+
+// List all videos in the local library
+router.get('/api/library/list', async (ctx) => {
+  const videos = [];
+  try {
+    if (!fs.existsSync(LIBRARY_DIR)) { ctx.body = { ok: true, videos: [] }; return; }
+    for (const f of fs.readdirSync(LIBRARY_DIR)) {
+      if (!f.endsWith('.mp4')) continue;
+      const videoId = f.replace('.mp4', '').replace(/\.f\d+$/, ''); // strip format suffix
+      const meta = getVideoMetadata(videoId);
+      const mp4Path = getVideoPath(videoId);
+      const size = fs.existsSync(mp4Path) ? fs.statSync(mp4Path).size : 0;
+      const subs = getSubtitleFiles(videoId).filter(s => validateVttFile(s.path));
+      videos.push({
+        videoId,
+        title: meta?.title || videoId,
+        duration: meta?.duration || 0,
+        size,
+        subtitles: subs.map(s => s.lang),
+        thumbnail: meta?.thumbnail || '',
+        upload_date: meta?.upload_date || '',
+        cached: true,
+      });
+    }
+  } catch (e) { /* ignore */ }
+  // Sort by most recent first (largest file usually = full recording)
+  videos.sort((a, b) => b.size - a.size);
+  ctx.body = { ok: true, count: videos.length, videos };
+});
+
+// Scan summary
+router.get('/api/library/scan', async (ctx) => {
+  try {
+    if (!fs.existsSync(LIBRARY_DIR)) {
+      ctx.body = { ok: true, totalVideos: 0, totalSize: 0, subtitleLanguages: [] };
+      return;
+    }
+    const files = fs.readdirSync(LIBRARY_DIR);
+    const mp4s = files.filter(f => f.endsWith('.mp4'));
+    let totalSize = 0;
+    for (const f of mp4s) {
+      totalSize += fs.statSync(path.join(LIBRARY_DIR, f)).size;
+    }
+    const langSet = new Set();
+    for (const f of files) {
+      if (f.endsWith('.vtt')) {
+        const parts = f.split('.');
+        if (parts.length >= 3) langSet.add(parts[parts.length - 2]);
+      }
+    }
+    const archiveCount = fs.existsSync(ARCHIVE_PATH)
+      ? fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n').filter(Boolean).length : 0;
+    ctx.body = {
+      ok: true,
+      totalVideos: mp4s.length,
+      totalSize,
+      totalSizeFormatted: (totalSize / 1024 / 1024).toFixed(0) + ' MB',
+      subtitleLanguages: Array.from(langSet),
+      archiveEntries: archiveCount,
+    };
+  } catch (e) {
+    ctx.body = { ok: true, totalVideos: 0, totalSize: 0, subtitleLanguages: [], error: e.message };
+  }
+});
+
+// Batch download all videos from a playlist (background job)
+const activeDownloads = new Set();
+router.post('/api/library/download-playlist', async (ctx) => {
+  const body = ctx.request.body || {};
+  const playlistUrl = body.playlistUrl;
+  const playlistId = body.playlistId || (playlistUrl ? playlistUrl.match(/list=([a-zA-Z0-9_-]+)/)?.[1] : null);
+  if (!playlistId) { ctx.status = 400; ctx.body = { ok: false, error: 'Missing playlistId or playlistUrl' }; return; }
+  if (activeDownloads.has(playlistId)) {
+    ctx.body = { ok: true, alreadyRunning: true, playlistId };
+    return;
+  }
+  activeDownloads.add(playlistId);
+  ctx.body = { ok: true, started: true, playlistId };
+
+  // Run in background
+  (async () => {
+    try {
+      console.log('[library] Batch downloading playlist: ' + playlistId);
+      const proc = require('child_process').spawn(YT_DLP_PATH, [
+        '-f', 'b[height<=1080]',
+        '--merge-output-format', 'mp4',
+        '--write-info-json',
+        '--write-thumbnail',
+        '--write-subs', '--sub-langs', 'all',
+        '--download-archive', ARCHIVE_PATH,
+        '-o', path.join(LIBRARY_DIR, '%(id)s.%(ext)s'),
+        '--yes-playlist',
+        'https://www.youtube.com/playlist?list=' + playlistId,
+      ], { timeout: 600000 });
+
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        console.log('[library] Batch download finished for ' + playlistId + ' (code ' + code + ')');
+        activeDownloads.delete(playlistId);
+      });
+    } catch (e) {
+      console.error('[library] Batch download error: ' + e.message);
+      activeDownloads.delete(playlistId);
+    }
+  })();
+});
+
 // ── Mount router ──
 app.use(router.routes());
+
+// ── Static: Library Dashboard ──
+const libraryDashboardDir = path.resolve(__dirname, '..', 'src', 'library-dashboard');
+if (fs.existsSync(libraryDashboardDir)) {
+  app.use(async (ctx, next) => {
+    if (!ctx.path.startsWith('/library/') && ctx.path !== '/library') { await next(); return; }
+    const relPath = ctx.path === '/library' ? 'index.html' : ctx.path.slice('/library/'.length) || 'index.html';
+    const filePath = path.join(libraryDashboardDir, relPath);
+    try {
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const ext = path.extname(filePath);
+        ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : 'application/octet-stream';
+        ctx.body = fs.createReadStream(filePath);
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    ctx.type = 'text/html';
+    ctx.body = fs.createReadStream(path.join(libraryDashboardDir, 'index.html'));
+  });
+  console.log('Library Dashboard: http://' + getLanIp() + ':' + PORT + '/library/');
+}
 
 // ── Static: Ableton Mixer SPA (iPhone-friendly) ──
 const abletonMixerDir = path.resolve(__dirname, '..', 'src', 'ableton-mixer');

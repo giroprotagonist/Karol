@@ -618,3 +618,25 @@ export async function setMicMute(host: string, muted: boolean): Promise<void> {
 		true,
 	);
 }
+
+// ─── Library Status (local video download progress) ─────────
+
+export interface LibraryStatus {
+	ok: boolean;
+	ready: boolean;
+	metadata: { title: string; duration: number; subtitles: string[] } | null;
+	subtitles: { lang: string }[];
+}
+
+export async function fetchLibraryStatus(
+	host: string,
+	videoId: string,
+): Promise<LibraryStatus> {
+	if (!videoId) return { ok: true, ready: false, metadata: null, subtitles: [] };
+	const resp = await fetch(
+		`${normalizeHost(host)}/api/library/status/${encodeURIComponent(videoId)}`,
+		{ signal: AbortSignal.timeout(5000) },
+	);
+	if (!resp.ok) return { ok: true, ready: false, metadata: null, subtitles: [] };
+	return resp.json();
+}

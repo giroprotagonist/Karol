@@ -737,6 +737,56 @@ textarea {
 	accent-color: var(--accent);
 }
 
+/* Library download status badge */
+.library-status {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 16px 12px;
+	padding: 8px 12px;
+	border-radius: var(--radius-sm);
+	font-size: 0.78rem;
+	font-weight: 500;
+}
+
+.library-status--checking,
+.library-status--downloading {
+	background: rgba(139, 92, 246, 0.08);
+	border: 1px solid rgba(139, 92, 246, 0.25);
+	color: var(--accent-strong);
+}
+
+.library-status--fallback {
+	background: rgba(234, 179, 8, 0.08);
+	border: 1px solid rgba(234, 179, 8, 0.3);
+	color: #eab308;
+}
+
+.library-status__dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+.library-status__dot--pulse {
+	background: #8b5cf6;
+	animation: libraryPulse 1.2s ease-in-out infinite;
+}
+
+.library-status__dot--fallback {
+	background: #eab308;
+}
+
+.library-status__text {
+	flex: 1;
+}
+
+@keyframes libraryPulse {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.45; transform: scale(0.8); }
+}
+
 /* Queue */
 .queue-card {
 	display: flex;
@@ -1271,6 +1321,19 @@ textarea {
 	margin: 4px 0 0;
 	font-size: 0.78rem;
 	color: var(--danger);
+}
+
+.playlist-dl-status {
+	font-size: 0.75rem;
+	margin-top: 3px;
+	font-weight: 500;
+}
+.playlist-dl-partial { color: #f59e0b; }
+.playlist-dl-done { color: #10b981; }
+.download-btn {
+	background: rgba(139,92,246,.08) !important;
+	border-color: rgba(139,92,246,.3) !important;
+	color: var(--accent-strong) !important;
 }
 
 .playlist-item-actions {

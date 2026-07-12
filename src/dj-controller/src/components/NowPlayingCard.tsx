@@ -50,7 +50,9 @@ type NowPlayingCardProps = {
 	onVolumeChange: (level: number) => void;
 	onAutoAdvanceChange: (enabled: boolean) => void;
 	onManualModeChange: (enabled: boolean) => void;
+	onActivityChange?: (page: string) => void;
 	onShuffleChange: (enabled: boolean) => void;
+	libraryStatus?: 'checking' | 'downloading' | 'ready' | 'fallback' | '';
 };
 
 function youtubeThumb(videoId: string, thumbnail?: string): string {
@@ -86,6 +88,7 @@ export default function NowPlayingCard({
 	onAutoAdvanceChange,
 	onManualModeChange,
 	onShuffleChange,
+	libraryStatus,
 }: NowPlayingCardProps) {
 	const serverTime = displayTime ?? nowPlaying?.currentTime ?? queueState?.currentTime ?? 0;
 	const duration = nowPlaying?.duration ?? queueState?.duration ?? 0;
@@ -364,6 +367,25 @@ export default function NowPlayingCard({
 					<span>Manual DJ</span>
 				</label>
 			</div>
+
+			{libraryStatus && libraryStatus !== 'ready' && (
+			<div className={`library-status library-status--${libraryStatus}`}>
+				{libraryStatus === 'checking' && (
+					<span className="library-status__dot library-status__dot--pulse" />
+				)}
+				{libraryStatus === 'downloading' && (
+					<span className="library-status__dot library-status__dot--pulse" />
+				)}
+				{libraryStatus === 'fallback' && (
+					<span className="library-status__dot library-status__dot--fallback" />
+				)}
+				<span className="library-status__text">
+					{libraryStatus === 'checking' && 'Checking local video…'}
+					{libraryStatus === 'downloading' && 'Downloading to tablet…'}
+					{libraryStatus === 'fallback' && 'Streaming from YouTube'}
+				</span>
+			</div>
+			)}
 		</div>
 	);
 }

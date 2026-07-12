@@ -2,6 +2,13 @@ import { PLAYLIST_SYNC_INTERVAL_MS } from '@common/youtubeDjDefaults';
 import type { YouTubeDjPlaylistModeConfig } from '@common/YouTubeKaraokeTypes';
 import { formatSyncTime } from '../api';
 
+export interface PlaylistDownloadStatus {
+	playlistId: string;
+	downloaded: number;
+	total: number;
+	loading: boolean;
+}
+
 type PlaylistLibraryProps = {
 	config: YouTubeDjPlaylistModeConfig | null;
 	connected: boolean;
@@ -13,6 +20,8 @@ type PlaylistLibraryProps = {
 	onRemove: (playlistId: string) => void;
 	onSyncToggle: (enabled: boolean) => void;
 	onSyncNow: () => void;
+	onDownloadPlaylist: (playlistId: string) => void;
+	libraryStatuses: PlaylistDownloadStatus[];
 };
 
 export default function PlaylistLibrary({
@@ -26,10 +35,16 @@ export default function PlaylistLibrary({
 	onRemove,
 	onSyncToggle,
 	onSyncNow,
+	onDownloadPlaylist,
+	libraryStatuses,
 }: PlaylistLibraryProps) {
 	const playlists = config?.playlists ?? [];
 	const activeId = config?.activePlaylistId ?? config?.playlistId ?? '';
 	const activePlaylist = playlists.find((p) => p.playlistId === activeId);
+
+	function getStatus(playlistId: string) {
+		return libraryStatuses.find((s) => s.playlistId === playlistId);
+	}
 
 	return (
 		<div className="card playlist-library">
@@ -121,6 +136,20 @@ export default function PlaylistLibrary({
 											? ` · synced ${formatSyncTime(playlist.lastSyncAt)}`
 											: ''}
 									</p>
+									{(() => {
+										const st = getStatus(playlist.playlistId);
+										if (st && st.total > 0) {
+											const pct = Math.round((st.downloaded / st.total) * 100);
+											return (
+												<p className={`playlist-dl-status ${st.downloaded === st.total ? 'playlist-dl-done' : 'playlist-dl-partial'}`}>
+													{st.downloaded === st.total
+														? `${st.total} videos downloaded`
+														: `${st.downloaded}/${st.total} downloaded (${pct}%)`}
+												</p>
+											);
+										}
+										return null;
+									})()}
 									{playlist.lastSyncError ? (
 										<p className="playlist-item-error">{playlist.lastSyncError}</p>
 									) : null}
@@ -143,8 +172,23 @@ export default function PlaylistLibrary({
 										onClick={() => onActivate(playlist.playlistId, true)}
 										title="Load playlist and start playing"
 									>
-										▶ Play
+										Play
 									</button>
+									{(() => {
+										const st = getStatus(playlist.playlistId);
+										const downloading = st?.loading || false;
+										return (
+											<button
+												type="button"
+												className="btn compact download-btn"
+												disabled={!connected || downloading || (st && st.downloaded === st.total)}
+												onClick={() => onDownloadPlaylist(playlist.playlistId)}
+												title={st && st.downloaded === st.total ? 'All videos downloaded' : 'Download all videos to tablet'}
+											>
+												{downloading ? 'DL...' : st && st.downloaded === st.total ? 'Done' : 'Download All'}
+											</button>
+										);
+									})()}
 									<button
 										type="button"
 										className="btn danger compact"

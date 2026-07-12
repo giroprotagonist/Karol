@@ -38,7 +38,9 @@ import {
 	transportSkipNext,
 	transportSkipPrev,
 	transportVolume,
+	fetchLibraryStatus,
 } from './api';
+import type { PlaylistDownloadStatus } from './components/PlaylistLibrary';
 import NowPlayingCard from './components/NowPlayingCard';
 import PlaylistLibrary from './components/PlaylistLibrary';
 import QueueList, { reorderItemsLocally } from './components/QueueList';
@@ -79,6 +81,8 @@ export default function App() {
 	const [reconnecting, setReconnecting] = useState(false);
 	const [activeTab, setActiveTab] = useState<AppTab>('player');
 	const [displayTime, setDisplayTime] = useState(0);
+	const [libraryStatus, setLibraryStatus] = useState<'checking' | 'downloading' | 'ready' | 'fallback' | ''>('');
+	const [playlistDlStatuses, setPlaylistDlStatuses] = useState<PlaylistDownloadStatus[]>([]);
 	const { previewVideoId, previewLoading, handlePreviewPlay, handlePreviewStop } = useYouTubePreview(host);
 	const playbackAnchor = useRef({
 		time: 0,
@@ -621,6 +625,97 @@ export default function App() {
 	const currentThumbnail =
 		currentItem?.thumbnail || queueState?.currentThumbnail || '';
 
+	// Poll library download status whenever the video changes
+	useEffect(() => {
+		if (!host || !currentVideoId) {
+			setLibraryStatus('');
+			return;
+		}
+		let cancelled = false;
+		setLibraryStatus('checking');
+
+		const check = async () => {
+			try {
+				const st = await fetchLibraryStatus(host, currentVideoId);
+				if (cancelled) return;
+				if (st.ready) {
+					setLibraryStatus('ready');
+				} else {
+					setLibraryStatus('downloading');
+				}
+			} catch {
+				if (!cancelled) setLibraryStatus('fallback');
+			}
+		};
+
+		// First check immediately, then poll every 5s until ready
+		check();
+		const interval = setInterval(async () => {
+			try {
+				const st = await fetchLibraryStatus(host, currentVideoId);
+				if (cancelled) return;
+				if (st.ready) {
+					setLibraryStatus('ready');
+					clearInterval(interval);
+				} else {
+					setLibraryStatus('downloading');
+				}
+			} catch {
+				if (!cancelled) setLibraryStatus('fallback');
+			}
+		}, 5000);
+
+		// Timeout after 90s — mark as fallback (YouTube WebView)
+		const timeout = setTimeout(() => {
+			if (cancelled) return;
+			clearInterval(interval);
+			setLibraryStatus('fallback');
+		}, 90000);
+
+		return () => {
+			cancelled = true;
+			clearInterval(interval);
+			clearTimeout(timeout);
+		};
+	}, [host, currentVideoId]);
+
+	// Track aggregate library stats + which playlists are being batch-downloaded
+	const [activeBatchDownloads, setActiveBatchDownloads] = useState<Set<string>>(new Set());
+
+	useEffect(() => {
+		if (!host || !playlistConfig?.playlists?.length) return;
+		let cancelled = false;
+		const check = async () => {
+			try {
+				const resp = await fetch(host + '/api/library/scan');
+				const scan = await resp.json();
+				if (cancelled) return;
+				const totalGlobal = scan.totalVideos || 0;
+				const statuses: PlaylistDownloadStatus[] = playlistConfig?.playlists?.map(pl => ({
+					playlistId: pl.playlistId,
+					downloaded: Math.min(totalGlobal, pl.videoCount || 0),
+					total: pl.videoCount || 0,
+					loading: activeBatchDownloads.has(pl.playlistId),
+				})) || [];
+				setPlaylistDlStatuses(statuses);
+			} catch {}
+		};
+		check();
+		const interval = setInterval(check, 15000);
+		return () => { cancelled = true; clearInterval(interval); };
+	}, [host, playlistConfig?.playlists?.length]);
+
+	const handleDownloadPlaylist = useCallback(async (playlistId: string) => {
+		const pl = playlistConfig?.playlists?.find(p => p.playlistId === playlistId);
+		if (!pl || !host) return;
+		setActiveBatchDownloads(prev => new Set(prev).add(playlistId));
+		try {
+			await fetch(host + '/api/library/download-playlist', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ playlistUrl: pl.playlistUrl }) });
+		} catch {}
+		// Leave as "loading" until next poll clears it
+		setTimeout(() => setActiveBatchDownloads(prev => { const s = new Set(prev); s.delete(playlistId); return s; }), 30000);
+	}, [host, playlistConfig]);
+
 	const isDirectHost = status?.hostMode === 'direct';
 
 	return (
@@ -836,6 +931,7 @@ export default function App() {
 						setQueueState(state);
 					});
 				}}
+				libraryStatus={libraryStatus}
 			/>
 			</div>
 			)}
@@ -1082,6 +1178,8 @@ export default function App() {
 						setPlaylistConfig(result.config);
 					})
 				}
+				onDownloadPlaylist={handleDownloadPlaylist}
+				libraryStatuses={playlistDlStatuses}
 			/>
 			</div>
 			) : null}

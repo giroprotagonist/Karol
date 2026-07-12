@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+	xmlns:app="http://schemas.android.com/apk/res-auto"
 	android:id="@+id/rootLayout"
 	android:layout_width="match_parent"
 	android:layout_height="match_parent"
@@ -12,6 +13,17 @@
 		android:layout_height="match_parent"
 		android:background="@null"
 		android:visibility="gone" />
+
+	<!-- ExoPlayer view for local video playback (hidden until local file is ready) -->
+	<androidx.media3.ui.PlayerView
+		android:id="@+id/playerView"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"
+		android:background="#000000"
+		android:visibility="gone"
+		app:use_controller="false"
+		app:surface_type="surface_view"
+		app:resize_mode="fit" />
 
 	<!-- Controls panel — sits at the bottom, fixed 200dp height -->
 	<LinearLayout
@@ -210,6 +222,9 @@
 		android:layout_width="match_parent"
 		android:layout_height="match_parent"
 		android:background="@color/black"
+		android:clickable="true"
+		android:elevation="100dp"
+		android:focusable="true"
 		android:visibility="gone"
 		android:alpha="0">
 

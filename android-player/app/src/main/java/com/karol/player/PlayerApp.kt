@@ -31,6 +31,7 @@ class PlayerApp : Application() {
 	var showActive: Boolean = false
 
 	var onRequestStartShow: (() -> Unit)? = null
+	var onSeekRequested: ((Double) -> Unit)? = null
 
 	override fun onCreate() {
 		super.onCreate()
@@ -144,13 +145,15 @@ class PlayerApp : Application() {
 			djHttpServer.invalidatePlaybackSnapshot()
 			if (showActive) {
 				youtubeBridge?.setVolume(djHttpServer.volumeLevel)
-				youtubeBridge?.loadVideo(videoId)
-			} else {
-				onRequestStartShow?.invoke()
 			}
+			onRequestStartShow?.invoke()
 		}
 		queueEngine.onSeekVideo = { seconds ->
-			youtubeBridge?.seek(seconds)
+			if (onSeekRequested != null) {
+				onSeekRequested?.invoke(seconds)
+			} else {
+				youtubeBridge?.seek(seconds)
+			}
 			queueEngine.setPlaybackProgress(seconds, queueEngine.duration)
 		}
 		playlistSync.startPollingIfEnabled()

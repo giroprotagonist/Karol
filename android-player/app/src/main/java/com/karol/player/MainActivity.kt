@@ -18,6 +18,13 @@ import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import java.io.File
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -82,7 +89,13 @@ class MainActivity : AppCompatActivity() {
 	private var isFullscreen = false
 	private var isSeekDragging = false
 	private var controlsRefreshJob: Job? = null
-	private var controlsAutoHideRunnable: Runnable? = null
+
+	// --- ExoPlayer for local video playback ---
+	private var exoPlayer: ExoPlayer? = null
+	private lateinit var playerView: PlayerView
+	private lateinit var videoDownloadManager: VideoDownloadManager
+	private var localPlaybackActive = false
+	private var currentLocalVideoId: String? = null
 
 	private val notificationPermissionLauncher =
 		registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -150,21 +163,14 @@ class MainActivity : AppCompatActivity() {
 		ctlSeekBar = findViewById(R.id.ctlSeekBar)
 		ctlCurrentTime = findViewById(R.id.ctlCurrentTime)
 		ctlTotalTime = findViewById(R.id.ctlTotalTime)
+		playerView = findViewById(R.id.playerView)
+		videoDownloadManager = VideoDownloadManager(this)
+
+		initExoPlayer()
 
 		toggleFullscreenBtn.apply {
 			elevation = 20f
-			setOnClickListener {
-				if (isFullscreen) {
-					// Show controls briefly
-					toggleFullscreenBtn.animate().alpha(1f).setDuration(200).start()
-					mainHandler.removeCallbacks(controlsAutoHideRunnable ?: return@setOnClickListener)
-					controlsAutoHideRunnable = Runnable {
-						toggleFullscreenBtn.animate().alpha(0f).setDuration(500).start()
-					}
-					mainHandler.postDelayed(controlsAutoHideRunnable!!, 3000)
-				}
-				toggleFullscreen()
-			}
+			setOnClickListener { toggleFullscreen() }
 		}
 
 		findViewById<MaterialButton>(R.id.reauthButton).setOnClickListener {
@@ -183,6 +189,13 @@ class MainActivity : AppCompatActivity() {
 		}
 
 		app.onRequestStartShow = { runOnUiThread { ensureShowStarted() } }
+		app.onSeekRequested = { seconds ->
+			runOnUiThread {
+				if (localPlaybackActive && exoPlayer != null) {
+					exoPlayer?.seekTo((seconds * 1000).toLong())
+				}
+			}
+		}
 
 		val ip = NetworkUtils.getLocalIpAddress(this)
 		val controllerUrl = "http://$ip:${DjHttpServer.SERVER_PORT}/dj-controller/"
@@ -262,15 +275,21 @@ class MainActivity : AppCompatActivity() {
 		ctlSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
 			override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
 				if (fromUser) {
-					val dur = (application as PlayerApp).queueEngine.duration
+					val dur = if (localPlaybackActive && exoPlayer != null) exoPlayer!!.duration / 1000.0
+						else (application as PlayerApp).queueEngine.duration
 					if (dur > 0) ctlCurrentTime.text = formatTime(dur * progress / seekBar.max)
 				}
 			}
 			override fun onStartTrackingTouch(seekBar: SeekBar) { isSeekDragging = true }
 			override fun onStopTrackingTouch(seekBar: SeekBar) {
 				isSeekDragging = false
-				val dur = (application as PlayerApp).queueEngine.duration
-				if (dur > 0) bridge?.seek(dur * seekBar.progress.toDouble() / seekBar.max)
+				if (localPlaybackActive && exoPlayer != null) {
+					val dur = exoPlayer!!.duration
+					if (dur > 0) exoPlayer?.seekTo((dur * seekBar.progress / seekBar.max).toLong())
+				} else {
+					val dur = (application as PlayerApp).queueEngine.duration
+					if (dur > 0) bridge?.seek(dur * seekBar.progress.toDouble() / seekBar.max)
+				}
 			}
 		})
 
@@ -300,30 +319,131 @@ class MainActivity : AppCompatActivity() {
 
 	private fun toggleFullscreen() {
 		isFullscreen = !isFullscreen
+		Log.i("MainActivity", "toggleFullscreen: isFullscreen=$isFullscreen controlsPanel.visibility was=${controlsPanel.visibility}")
 		if (isFullscreen) {
 			controlsPanel.visibility = View.GONE
-			toggleFullscreenBtn.alpha = 0.4f
-			bridge?.enterFullscreen()
-
-			// Auto-hide FAB after 3s
-			mainHandler.removeCallbacks(controlsAutoHideRunnable ?: Runnable {})
-			controlsAutoHideRunnable = Runnable {
-				if (isFullscreen) {
-					toggleFullscreenBtn.animate().alpha(0f).setDuration(500).start()
-				}
-			}
-			mainHandler.postDelayed(controlsAutoHideRunnable!!, 3000)
+			toggleFullscreenBtn.alpha = 0.5f
 		} else {
 			controlsPanel.visibility = View.VISIBLE
 			toggleFullscreenBtn.alpha = 1f
-			bridge?.exitYouTubeFullscreen()
+		}
+	}
 
-			mainHandler.removeCallbacks(controlsAutoHideRunnable ?: Runnable {})
-			controlsAutoHideRunnable = null
+	// ═══════════════════════════════════════════════════════
+	//  ExoPlayer — local video playback
+	// ═══════════════════════════════════════════════════════
+
+	private fun initExoPlayer() {
+		exoPlayer = ExoPlayer.Builder(this).build()
+		playerView.player = exoPlayer
+		playerView.useController = false
+		playerView.visibility = View.GONE
+
+		exoPlayer?.addListener(object : Player.Listener {
+			override fun onPlaybackStateChanged(state: Int) {
+				if (state == Player.STATE_ENDED) {
+					Log.i("MainActivity", "ExoPlayer ended, cleaning up local files")
+					val vid = currentLocalVideoId
+					currentLocalVideoId = null
+					localPlaybackActive = false
+					if (vid != null) videoDownloadManager.deleteAll(vid)
+					// Auto-advance via the bridge's existing mechanism
+					runOnUiThread {
+						val handler = mainHandler  // alias for clarity in ExoPlayer listener
+			handler.postDelayed({
+							val app = application as PlayerApp
+							app.queueEngine.onVideoEnded("local-ended")
+						}, 500L)
+					}
+				}
+			}
+		})
+	}
+
+	private fun playLocalVideo(file: File, videoId: String) {
+		Log.i("MainActivity", "playLocalVideo: $videoId (${file.length()} bytes)")
+		localPlaybackActive = true
+		currentLocalVideoId = videoId
+		webView.visibility = View.GONE
+		playerView.visibility = View.VISIBLE
+
+		val vttFiles = videoDownloadManager.getLocalSubtitles(videoId)
+		val subtitleConfigs = vttFiles.map { vttFile ->
+			val lang = vttFile.name.replace("$videoId.", "").replace(".vtt", "")
+			MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(vttFile))
+				.setMimeType(MimeTypes.TEXT_VTT)
+				.setLanguage(lang)
+				.setLabel(langToDisplay(lang))
+				.setSelectionFlags(if (lang.contains("en")) C.SELECTION_FLAG_DEFAULT else 0)
+				.build()
+		}
+
+		val mediaItem = MediaItem.Builder()
+			.setUri(Uri.fromFile(file))
+			.setSubtitleConfigurations(subtitleConfigs)
+			.build()
+
+		exoPlayer?.setMediaItem(mediaItem)
+		exoPlayer?.prepare()
+		exoPlayer?.playWhenReady = true
+	}
+
+	private fun langToDisplay(lang: String): String {
+		return when (lang) {
+			"en" -> "English"
+			"es" -> "Español"
+			"fr" -> "Français"
+			"de" -> "Deutsch"
+			"ja" -> "日本語"
+			"ko" -> "한국어"
+			"zh" -> "中文"
+			"th" -> "ไทย"
+			"pt" -> "Português"
+			"ru" -> "Русский"
+			"ar" -> "العربية"
+			"hi" -> "हिन्दी"
+			else -> lang.uppercase()
 		}
 	}
 
 	private fun showCcDialog() {
+		// ExoPlayer active — show subtitle track selector
+		if (localPlaybackActive && exoPlayer != null) {
+			val tracks = mutableListOf<Pair<String, String>>()
+			val groups = exoPlayer?.currentTracks?.groups ?: emptyList()
+			for (group in groups) {
+				if (group.type == C.TRACK_TYPE_TEXT) {
+					for (j in 0 until group.length) {
+						val format = group.getTrackFormat(j)
+						val lang = format.language ?: "unknown"
+						tracks.add(Pair("${group.hashCode()}:$j", langToDisplay(lang)))
+					}
+				}
+			}
+			if (tracks.isEmpty()) {
+				AlertDialog.Builder(this)
+					.setTitle("Captions / Subtitles")
+					.setMessage("No captions available")
+					.setPositiveButton(android.R.string.ok, null)
+					.show()
+				return
+			}
+			val labels = tracks.map { it.second }.toTypedArray()
+			AlertDialog.Builder(this)
+				.setTitle("Captions / Subtitles")
+				.setItems(labels) { _, which ->
+					val (_, lang) = tracks[which]
+					// Select the matching subtitle track via language
+					exoPlayer?.trackSelectionParameters = exoPlayer!!.trackSelectionParameters
+						.buildUpon()
+						.setPreferredTextLanguage(lang)
+						.build()
+				}
+				.show()
+			return
+		}
+
+		// Fallback: WebView YouTube caption logic (unchanged)
 		Thread {
 			val tracks = bridge?.listCaptions() ?: org.json.JSONArray()
 			runOnUiThread {
@@ -639,9 +759,58 @@ class MainActivity : AppCompatActivity() {
 		}
 	}
 
+	/**
+	 * Try local ExoPlayer first, fall back to WebView YouTube on failure.
+	 * Called by startShow and transport skip handlers.
+	 */
+	private fun tryLoadVideoOrFallback(videoId: String) {
+		Log.i("MainActivity", "tryLoadVideoOrFallback: $videoId")
+		showVideoLoading()
+		// First, try local download
+		videoDownloadManager.download(videoId,
+			onProgress = { /* loading overlay handles progress visually */ },
+			onReady = { file, subs ->
+				runOnUiThread {
+					hideVideoLoading()
+					playLocalVideo(file, videoId)
+				}
+			},
+			onError = { error ->
+				Log.w("MainActivity", "Local download failed ($error), falling back to YouTube WebView")
+				runOnUiThread {
+					hideVideoLoading()
+					localPlaybackActive = false
+					playerView.visibility = View.GONE
+					webView.visibility = View.VISIBLE
+					bridge?.loadVideo(videoId)
+				}
+			}
+		)
+	}
+
+	private fun showVideoLoading() {
+		loadingOverlay.visibility = View.VISIBLE
+		loadingOverlay.animate().alpha(1f).setDuration(200).start()
+	}
+
+	private fun hideVideoLoading() {
+		loadingOverlay.animate().alpha(0f).setDuration(200).withEndAction {
+			loadingOverlay.visibility = View.GONE
+		}.start()
+	}
+
 	private fun ensureShowStarted() {
 		if (!showStarted) {
 			startShow()
+			return
+		}
+		// Already started — handle video change from queue advance
+		val app = application as PlayerApp
+		val currentId = app.queueEngine.getCurrentVideoId()
+		if (currentId != null) {
+			// Force load every time — the queue has advanced, this is a new video
+			Log.i("MainActivity", "ensureShowStarted: loading new video $currentId")
+			tryLoadVideoOrFallback(currentId)
 		}
 	}
 
@@ -649,7 +818,7 @@ class MainActivity : AppCompatActivity() {
 		if (showStarted) {
 			val currentId = (application as PlayerApp).queueEngine.getCurrentVideoId()
 			if (currentId != null && bridge?.needsVideoLoad(currentId) == true) {
-				bridge?.loadVideo(currentId)
+				tryLoadVideoOrFallback(currentId)
 			}
 			return
 		}
@@ -666,17 +835,27 @@ class MainActivity : AppCompatActivity() {
 				runOnUiThread { completeYouTubeSignIn() }
 			}
 			bridge?.onLoadingStateChanged = { loading ->
-				runOnUiThread {
-					if (loading) {
-						loadingOverlay.visibility = View.VISIBLE
-						loadingOverlay.animate().alpha(1f).setDuration(300).start()
-					} else {
-						loadingOverlay.animate().alpha(0f).setDuration(300).withEndAction {
-							loadingOverlay.visibility = View.GONE
-						}.start()
-					}
+			runOnUiThread {
+				if (loading) {
+					Log.i("MainActivity", "loading true: isFullscreen=$isFullscreen")
+					loadingOverlay.visibility = View.VISIBLE
+					loadingOverlay.animate().alpha(1f).setDuration(200).start()
+				} else {
+					val fullscreenBefore = isFullscreen
+					Log.i("MainActivity", "loading false: fullscreenBefore=$fullscreenBefore")
+					loadingOverlay.animate().alpha(0f).setDuration(200).withEndAction {
+						loadingOverlay.visibility = View.GONE
+						Log.i("MainActivity", "loadEndAction: fullscreenBefore=$fullscreenBefore isFullscreen=$isFullscreen")
+						if (fullscreenBefore) {
+							controlsPanel.visibility = View.GONE
+							toggleFullscreenBtn.alpha = 0.5f
+							isFullscreen = true
+							Log.i("MainActivity", "loadEndAction: re-asserted fullscreen controlsPanel.visibility=${controlsPanel.visibility}")
+						}
+					}.start()
 				}
 			}
+		}
 			app.attachBridge(bridge!!)
 		}
 
@@ -684,17 +863,20 @@ class MainActivity : AppCompatActivity() {
 		webView.visibility = View.VISIBLE
 		toggleFullscreenBtn.visibility = View.VISIBLE
 
-		// Start in windowed mode (controls visible, WebView always fills screen)
-		isFullscreen = false
-		controlsPanel.visibility = View.VISIBLE
-		toggleFullscreenBtn.alpha = 1f
+		// Start in fullscreen mode
+		isFullscreen = true
+		controlsPanel.visibility = View.GONE
+		toggleFullscreenBtn.alpha = 0.5f
+		Log.i("MainActivity", "startShow: fullscreen set, controlsPanel.visibility=${controlsPanel.visibility}")
 
 		enterImmersiveMode()
+		// Re-apply immersive mode after 3s — YouTube may restore system bars late
+		Handler(Looper.getMainLooper()).postDelayed({ enterImmersiveMode() }, 3000L)
 		startControlsRefresh()
 
 		val currentId = app.queueEngine.getCurrentVideoId()
 		if (currentId != null) {
-			bridge?.loadVideo(currentId)
+			tryLoadVideoOrFallback(currentId)
 			val prefs = getSharedPreferences("karol_resume", MODE_PRIVATE)
 			val savedVideoId = prefs.getString("resume_videoId", null)
 			val savedTimeMs = prefs.getLong("resume_time", 0L)
@@ -720,12 +902,23 @@ class MainActivity : AppCompatActivity() {
 		showStarted = false
 		(application as PlayerApp).showActive = false
 		isFullscreen = false
-		mainHandler.removeCallbacks(controlsAutoHideRunnable ?: Runnable {})
-		controlsAutoHideRunnable = null
 		bridge?.prepareForStop()
 		webView.stopLoading()
 		stopControlsRefresh()
-		webView.visibility = View.GONE
+
+		// Stop ExoPlayer if active
+		if (localPlaybackActive) {
+			localPlaybackActive = false
+			exoPlayer?.stop()
+			playerView.visibility = View.GONE
+			val oldId = currentLocalVideoId
+			currentLocalVideoId = null
+			if (oldId != null) videoDownloadManager.deleteAll(oldId)
+			webView.visibility = View.VISIBLE
+		} else {
+			webView.visibility = View.GONE
+		}
+
 		controlsPanel.visibility = View.GONE
 		toggleFullscreenBtn.visibility = View.GONE
 		startPanel.visibility = View.VISIBLE
@@ -800,10 +993,13 @@ class MainActivity : AppCompatActivity() {
 		statusRunnable?.let { statusHandler.removeCallbacks(it) }
 		stopControlsRefresh()
 		bridge?.destroy()
+		exoPlayer?.release()
+		exoPlayer = null
 		super.onDestroy()
 	}
 
 	private fun enterImmersiveMode() {
+		Log.i("MainActivity", "enterImmersiveMode called")
 		WindowCompat.setDecorFitsSystemWindows(window, false)
 		window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 		WindowInsetsControllerCompat(window, window.decorView).apply {
@@ -835,6 +1031,23 @@ class MainActivity : AppCompatActivity() {
 	private fun refreshControlsState() {
 		if (isSeekDragging) return
 		if (!showStarted) return
+
+		// ExoPlayer mode — read directly from player
+		if (localPlaybackActive && exoPlayer != null) {
+			val player = exoPlayer!!
+			val playing = player.isPlaying
+			val dur = player.duration.takeIf { it > 0 }?.div(1000.0) ?: (application as PlayerApp).queueEngine.duration
+			val ct = player.currentPosition.toDouble() / 1000.0
+
+			ctlPlayPause.text = if (playing) "\u23F8" else "\u25B6"
+			if (dur > 0) {
+				ctlSeekBar.progress = ((ct / dur) * ctlSeekBar.max).toInt().coerceIn(0, ctlSeekBar.max)
+				ctlTotalTime.text = formatTime(dur)
+				ctlCurrentTime.text = formatTime(ct)
+			}
+			return
+		}
+
 		bridge?.readSnapshot { snap ->
 			if (snap == null) return@readSnapshot
 			val app = application as PlayerApp
@@ -856,6 +1069,10 @@ class MainActivity : AppCompatActivity() {
 	// ──────────────────────────────────────────────
 
 	private fun playTransport() {
+		if (localPlaybackActive && exoPlayer != null) {
+			if (exoPlayer!!.isPlaying) exoPlayer?.pause() else exoPlayer?.play()
+			return
+		}
 		val app = application as PlayerApp
 		app.onRequestStartShow?.invoke()
 		bridge?.play()
@@ -872,20 +1089,40 @@ class MainActivity : AppCompatActivity() {
 	private fun skipNextTransport() {
 		val app = application as PlayerApp
 		app.djHttpServer.invalidatePlaybackSnapshot()
-		app.onRequestStartShow?.invoke()
 		app.djHttpServer.onTransportAdvance?.invoke()
+		if (localPlaybackActive) {
+			// Clean up current local video before advancing
+			val oldId = currentLocalVideoId
+			currentLocalVideoId = null
+			localPlaybackActive = false
+			exoPlayer?.stop()
+			playerView.visibility = View.GONE
+			if (oldId != null) videoDownloadManager.deleteAll(oldId)
+		}
 		app.queueEngine.skipNext("user-skip-controls")
 	}
 
 	private fun skipPrevTransport() {
 		val app = application as PlayerApp
 		app.djHttpServer.invalidatePlaybackSnapshot()
-		app.onRequestStartShow?.invoke()
 		app.djHttpServer.onTransportAdvance?.invoke()
+		if (localPlaybackActive) {
+			val oldId = currentLocalVideoId
+			currentLocalVideoId = null
+			localPlaybackActive = false
+			exoPlayer?.stop()
+			playerView.visibility = View.GONE
+			if (oldId != null) videoDownloadManager.deleteAll(oldId)
+		}
 		app.queueEngine.skipPrev("user-skip-controls")
 	}
 
 	private fun seekRelativeTransport(delta: Double) {
+		if (localPlaybackActive && exoPlayer != null) {
+			val target = (exoPlayer!!.currentPosition + (delta * 1000).toLong()).coerceIn(0, exoPlayer!!.duration)
+			exoPlayer?.seekTo(target)
+			return
+		}
 		val app = application as PlayerApp
 		val snap = bridge?.getSnapshot()
 		val base = snap?.currentTime?.takeIf { it > 0 } ?: app.queueEngine.currentTime

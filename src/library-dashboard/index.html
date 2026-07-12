@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Karol Library</title>
+<style>
+:root{--bg:#0a0a0f;--bg2:#12121a;--bg3:#1a1a26;--text:#e4e4ec;--text2:#8888a0;--accent:#8b5cf6;--green:#10b981;--amber:#f59e0b;--border:#222233;--radius:8px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+header{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+header h1{font-size:1.2rem;font-weight:700}
+.stats-row{display:flex;gap:16px;font-size:0.82rem;color:var(--text2)}
+.stats-row .val{color:var(--accent);font-weight:600}
+main{padding:20px 24px;max-width:1400px;margin:0 auto}
+.toolbar{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.toolbar input{flex:1;min-width:200px;max-width:400px;padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.9rem;outline:none}
+.toolbar input:focus{border-color:var(--accent)}
+.toolbar select{padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.9rem;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color .2s}
+.card:hover{border-color:var(--accent)}
+.card-img{width:100%;aspect-ratio:16/9;background:var(--bg3);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.card-img img{width:100%;height:100%;object-fit:cover}
+.card-placeholder{color:var(--text2);font-size:2rem}
+.card-body{padding:12px}
+.card-title{font-size:0.9rem;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:8px}
+.card-meta{display:flex;flex-wrap:wrap;gap:6px;font-size:0.75rem;color:var(--text2)}
+.badge{padding:2px 8px;border-radius:12px;font-weight:600;font-size:0.7rem}
+.badge-sub{background:rgba(139,92,246,.15);color:var(--accent)}
+.badge-no-sub{background:rgba(245,158,11,.15);color:var(--amber)}
+.empty{text-align:center;padding:60px 20px;color:var(--text2)}
+.empty p{margin-top:8px;font-size:0.9rem}
+.loading{text-align:center;padding:40px;color:var(--text2)}
+</style>
+</head>
+<body>
+<header>
+<h1>Karol Video Library</h1>
+<div class="stats-row" id="stats">
+<span>Videos: <span class="val" id="statCount">-</span></span>
+<span>Size: <span class="val" id="statSize">-</span></span>
+<span>Archived: <span class="val" id="statArch">-</span></span>
+</div>
+</header>
+<main>
+<div class="toolbar">
+<input type="text" id="searchInput" placeholder="Search by title..." oninput="render()">
+<select id="subFilter" onchange="render()">
+<option value="">All videos</option>
+<option value="has-subs">Has subtitles</option>
+<option value="no-subs">No subtitles</option>
+</select>
+<select id="sortSelect" onchange="render()">
+<option value="recent">Largest files</option>
+<option value="title">Title A-Z</option>
+<option value="duration">Duration</option>
+</select>
+</div>
+<div class="grid" id="grid"><div class="loading">Loading library...</div></div>
+</main>
+<script>
+var videos=[];
+var stats={};
+var API=window.location.origin+'/api/library';
+
+function load(){
+  Promise.all([fetch(API+'/list'),fetch(API+'/scan')])
+  .then(function(r){return Promise.all([r[0].json(),r[1].json()])})
+  .then(function(d){
+    videos=d[0].videos||[];
+    stats=d[1];
+    document.getElementById('statCount').textContent=stats.totalVideos||0;
+    document.getElementById('statSize').textContent=stats.totalSizeFormatted||'0 MB';
+    document.getElementById('statArch').textContent=stats.archiveEntries||0;
+    render();
+  }).catch(function(){document.getElementById('grid').innerHTML='<div class="empty"><p>Could not load library. Is the server running?</p></div>'});
+}
+
+function render(){
+  var q=(document.getElementById('searchInput').value||'').toLowerCase();
+  var subF=document.getElementById('subFilter').value;
+  var sort=document.getElementById('sortSelect').value;
+  var filtered=videos.slice();
+  if(q) filtered=filtered.filter(function(v){return v.title.toLowerCase().indexOf(q)!==-1});
+  if(subF==='has-subs') filtered=filtered.filter(function(v){return (v.subtitles||[]).length>0});
+  if(subF==='no-subs') filtered=filtered.filter(function(v){return (v.subtitles||[]).length===0});
+  if(sort==='title') filtered.sort(function(a,b){return a.title.localeCompare(b.title)});
+  else if(sort==='duration') filtered.sort(function(a,b){return b.duration-a.duration});
+
+  var grid=document.getElementById('grid');
+  if(filtered.length===0){grid.innerHTML='<div class="empty"><p>No videos found</p></div>';return}
+
+  grid.innerHTML=filtered.map(function(v){
+    var dur=formatDuration(v.duration);
+    var size=formatSize(v.size);
+    var subs=v.subtitles||[];
+    var thumb=v.thumbnail||'';
+    var subBadges=subs.length?subs.map(function(l){return '<span class="badge badge-sub">'+esc(l)+'</span>'}).join(''):'<span class="badge badge-no-sub">no subs</span>';
+    return '<div class="card"><div class="card-img">'+(thumb?'<img src="'+esc(thumb)+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<span class=card-placeholder>&#x1F3A5;</span>\'">':'<span class="card-placeholder">&#x1F3A5;</span>')+'</div><div class="card-body"><div class="card-title">'+esc(v.title)+'</div><div class="card-meta"><span>'+dur+'</span><span>'+size+'</span>'+subBadges+'</div></div></div>';
+  }).join('');
+}
+
+function formatDuration(s){if(!s)return'0:00';var m=Math.floor(s/60);var sec=Math.floor(s%60);return m+':'+(sec<10?'0':'')+sec}
+function formatSize(b){if(!b)return'0 KB';if(b<1048576)return Math.round(b/1024)+' KB';return (b/1048576).toFixed(1)+' MB'}
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+load();
+setInterval(load,15000);
+</script>
+</body>
+</html>

@@ -56,14 +56,12 @@ class YouTubeKioskBridge(
 	private var layoutRefreshGeneration = 0
 	private var programmaticNavGeneration = 0
 	private var activeProgrammaticGeneration = 0
+	private var navGeneration = 0
 	private var userNavigatedAway = false
 	@Volatile
 	private var lastKnownUrl: String = ""
 	private var lastVolumeLevel: Double = 1.0
-	private var navigationWatchdog: Runnable? = null
-	private var navigationWatchdogRetries = 0
-	private var navigationRetryUrl: String = ""
-	private var premiumCheckDone = false
+	private var lastPageFinishedUrl: String = ""
 	private var signInDetectedOnce = false
 	private var lastKnownPlaybackTime: Double = 0.0
 	private var errorRetryCount = 0
@@ -129,7 +127,6 @@ class YouTubeKioskBridge(
 	fun enterSignInMode(onComplete: (premium: Boolean?) -> Unit) {
 		signInMode = true
 		signInOnComplete = onComplete
-		premiumCheckDone = false
 		allowHomeLanding = true
 		userNavigatedAway = false
 
@@ -354,13 +351,29 @@ class YouTubeKioskBridge(
 			javaScriptCanOpenWindowsAutomatically = true
 			loadWithOverviewMode = true
 			useWideViewPort = true
-			cacheMode = WebSettings.LOAD_DEFAULT
+			cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
 			mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 			userAgentString = buildTrustedUserAgent()
 		}
 		webView.addJavascriptInterface(JsBridge(), "KarolPlayer")
 		webView.webViewClient =
 			object : WebViewClient() {
+				override fun onPageCommitVisible(
+					view: WebView?,
+					url: String?,
+				) {
+					// Inject masthead-hiding CSS before YouTube's DOM renders
+					if (url != null && (url.contains("/watch") || url.contains("/embed/"))) {
+						webView.evaluateJavascript("""
+							(function(){
+								var s=document.createElement('style');
+								s.id='__karol-global-css';
+								s.textContent='body,html{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}#masthead-container,#masthead,ytd-masthead,header,[class*=masthead],[class*=topbar],[class*=header],[id*=masthead]{display:none!important;visibility:hidden!important;height:0!important}';
+								(document.head||document.documentElement).appendChild(s);
+							})()
+						""".trimIndent(), null)
+					}
+				}
 				override fun shouldOverrideUrlLoading(
 					view: WebView?,
 					request: WebResourceRequest?,
@@ -376,15 +389,19 @@ class YouTubeKioskBridge(
 					super.onPageFinished(view, url)
 					if (url == null) return
 					isReady = true
-					onLoadingStateChanged?.invoke(false)
 					noteCurrentUrl(url)
 					notifyInterstitialIfNeeded(url)
 
-					if (url.contains("/watch")) {
+					if (url.contains("/watch") || url.contains("/embed/")) {
+						if (url == lastPageFinishedUrl) return
+						lastPageFinishedUrl = url
+						onLoadingStateChanged?.invoke(false)
 						injectLayoutScriptIfWatch()
 						injectExpectedVideoId()
 						applyVolumeAndPlay()
 						scheduleLayoutRefresh()
+						// Re-hide system bars after each page load
+						requestImmersiveMode()
 					}
 
 					// Detect YouTube sign-in once per session
@@ -431,7 +448,7 @@ class YouTubeKioskBridge(
 			return true
 		}
 		if (url.contains("/embed/")) {
-			return false
+			return true
 		}
 		val uri =
 			try {
@@ -474,86 +491,52 @@ class YouTubeKioskBridge(
 		if (videoId.isBlank()) {
 			return
 		}
-		pendingVideoId = videoId
+		// Debounce: cancel any pending navigation and only execute the latest request
+		navGeneration++
+		val myGen = navGeneration
+
+		// Update queue state immediately (always reflects latest request)
 		if (videoId != lastVideoId) {
 			lastKnownPlaybackTime = 0.0
 		}
 		lastVideoId = videoId
+		pendingVideoId = videoId
 		lastEndedFireVideoId = ""
 		errorRetryCount = 0
-		isNavigating = true
-		onLoadingStateChanged?.invoke(true)
 		layoutScriptInjectedForUrl = ""
 		allowHomeLanding = false
 		userNavigatedAway = false
 		programmaticNavGeneration++
 		activeProgrammaticGeneration = programmaticNavGeneration
-		mainHandler.post {
-			evalJs("window.__deskreenYtPause && window.__deskreenYtPause()")
+
+		// Only fire loading callback once per burst
+		if (!isNavigating) {
+			isNavigating = true
+			onLoadingStateChanged?.invoke(true)
+		}
+		lastPageFinishedUrl = ""
+
+		// Debounce navigation by 100ms — coalesces rapid skips from S24
+		mainHandler.postDelayed({
+			if (myGen != navGeneration) {
+				Log.i(TAG, "loadVideo cancelled (stale gen=$myGen, latest=$navGeneration): $videoId")
+				// Reset navigating only if nothing else is pending
+				if (myGen == navGeneration - 1 && lastPageFinishedUrl == "") {
+					// Still navigating, next gen will handle it
+				}
+				return@postDelayed
+			}
 			// Exit fullscreen before navigating to prevent SurfaceView linger from previous video
 			evalJs("(function(){" +
 				"if(document.exitFullscreen)document.exitFullscreen().catch(function(){});" +
 				"if(document.webkitExitFullscreen)document.webkitExitFullscreen();" +
 				"})()", null)
-			// Load custom IFrame player page from assets — bypasses YouTube's hostile SPA.
-			val url = "https://www.youtube.com/watch?v=${videoId}"
+			val url = "https://m.youtube.com/watch?v=${videoId}"
 			noteCurrentUrl(url)
-			navigationRetryUrl = url
-			scheduleNavigationWatchdog(url)
-			Log.i(TAG, "loadVideo full navigation: $videoId")
+			Log.i(TAG, "loadVideo executing: $videoId → $url  gen=$myGen")
 			webView.loadUrl(url)
 			injectExpectedVideoId()
-		}
-	}
-
-	private fun scheduleNavigationWatchdog(url: String) {
-		navigationWatchdog?.let { mainHandler.removeCallbacks(it) }
-		val watchdog =
-			Runnable {
-				navigationWatchdogRetries++
-				if (navigationWatchdogRetries > MAX_NAVIGATION_WATCHDOG_RETRIES) {
-					Log.e(TAG, "navigation watchdog: exceeded ${MAX_NAVIGATION_WATCHDOG_RETRIES} retries, giving up")
-					isNavigating = false
-					clearNavigationWatchdog()
-					navigationWatchdogRetries = 0
-					onLoadingStateChanged?.invoke(false)
-					return@Runnable
-				}
-				if (!isNavigating) {
-					return@Runnable
-				}
-				readSnapshot { snap ->
-					mainHandler.post {
-						if (!isNavigating) {
-							return@post
-						}
-						if (
-							snap != null &&
-							snap.hasVideo &&
-							snap.videoId == lastVideoId &&
-							snap.currentTime > 2.0
-						) {
-							Log.i(TAG, "navigation watchdog: playback ok, skip reload")
-							isNavigating = false
-							clearNavigationWatchdog()
-							return@post
-						}
-						Log.w(TAG, "navigation watchdog: forcing reload $url (retry ${navigationWatchdogRetries}/${MAX_NAVIGATION_WATCHDOG_RETRIES})")
-						isNavigating = false
-						webView.stopLoading()
-						webView.loadUrl(url)
-						isNavigating = true
-						scheduleNavigationWatchdog(url)
-					}
-				}
-			}
-		navigationWatchdog = watchdog
-		mainHandler.postDelayed(watchdog, NAVIGATION_TIMEOUT_MS)
-	}
-
-	private fun clearNavigationWatchdog() {
-		navigationWatchdog?.let { mainHandler.removeCallbacks(it) }
-		navigationWatchdog = null
+		}, 100L)
 	}
 
 	private fun applyVolumeAndPlay() {
@@ -806,7 +789,7 @@ class YouTubeKioskBridge(
 
 	private fun injectLayoutScriptIfWatch() {
 		val url = lastKnownUrl
-		if (!url.contains("/watch")) {
+		if (!url.contains("/watch") && !url.contains("/embed/")) {
 			return
 		}
 		if (url == layoutScriptInjectedForUrl && layoutRefreshGeneration > 0) {
@@ -837,6 +820,8 @@ class YouTubeKioskBridge(
 			null,
 		)
 		injectExpectedVideoId()
+		// Re-hide system bars — YouTube video init can restore them after onPageFinished
+		requestImmersiveMode()
 	}
 
 	private fun injectLayoutScript() {
@@ -1071,10 +1056,8 @@ class YouTubeKioskBridge(
 	companion object {
 		private const val TAG = "YouTubeKioskBridge"
 		private const val POLL_MS = 500L
-		private const val NAVIGATION_TIMEOUT_MS = 32_000L
 		private const val MAX_PREMIUM_CHECK_ATTEMPTS = 4
 		private const val PREMIUM_CHECK_RETRY_MS = 1500L
-		private const val MAX_NAVIGATION_WATCHDOG_RETRIES = 3
 		private const val SIGN_IN_POLL_INTERVAL_MS = 500L
 		private const val SIGN_IN_TIMEOUT_MS = 120_000L
 	}
