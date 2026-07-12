@@ -121,14 +121,25 @@ var API=window.location.origin+'/api/library';
 var YTAPI=window.location.origin+'/api/youtube-dj';
 
 function loadAll(){
-  // Fetch local library + playlist config in parallel, then merge
+  // Fetch local library + playlist config + queue (for titles) in parallel
   Promise.all([
     fetch(API+'/list').then(function(r){return r.json()}),
     fetch(API+'/scan').then(function(r){return r.json()}),
-    fetch(YTAPI+'/playlist').then(function(r){return r.json()}).catch(function(){return {config:{playlists:[]}}})
+    fetch(YTAPI+'/playlist').then(function(r){return r.json()}).catch(function(){return {config:{playlists:[]}}}),
+    fetch(YTAPI+'/queue').then(function(r){return r.json()}).catch(function(){return {queue:[]}})
   ]).then(function(d){
     var localList=d[0].videos||[]; stats=d[1];
     var cfg=(d[2].config)||{}; playlists=cfg.playlists||[]; activePlaylistId=cfg.activePlaylistId||'';
+    var queueItems=(d[3].queue||d[3])||[];
+
+    // Build queueMap: videoId -> {title, thumbnail} from S8 queue
+    var queueMap={};
+    if(Array.isArray(queueItems)){
+      for(var i=0;i<queueItems.length;i++){
+        var qi=queueItems[i];
+        if(qi.videoId) queueMap[qi.videoId]={title:qi.title||qi.videoId,thumb:qi.thumbnail||''};
+      }
+    }
 
     // Build localMap: videoId -> metadata
     localMap={};
@@ -162,13 +173,14 @@ function loadAll(){
         }
         seen[vid]=merged.length+1;
         var local=localMap[vid];
+        var qi=queueMap[vid];
         merged.push({
           videoId:vid,
-          title:local?local.title:vid,
+          title:local?local.title:(qi?qi.title:vid),
           duration:local?local.duration:0,
           size:local?local.size:0,
           subtitles:local?local.subtitles:[],
-          thumbnail:local?local.thumbnail:'',
+          thumbnail:local?local.thumbnail:(qi?qi.thumb:''),
           downloaded:!!local,
           playlists:[{id:pl.playlistId,name:pl.name||pl.playlistId}]
         });
@@ -242,9 +254,14 @@ function renderVideos(){
     }).join('');
     var dlBadge=v.downloaded?'<span class="badge badge-downloaded">downloaded</span>':'<span class="badge badge-missing">not downloaded</span>';
     var cardClass=v.downloaded?'card':'card not-downloaded';
+    // Undownloaded: use queue thumbnail, or fall back to i.ytimg.com
+    var thumbSrc=v.thumbnail||'';
+    if(!thumbSrc&&!v.downloaded&&v.videoId){
+      thumbSrc='https://i.ytimg.com/vi/'+v.videoId+'/hqdefault.jpg';
+    }
     var imgHtml='';
-    if(v.thumbnail){
-      imgHtml='<img src="'+esc(v.thumbnail)+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<span class=card-placeholder>&#x1F3A5;</span>\'">';
+    if(thumbSrc){
+      imgHtml='<img src="'+esc(thumbSrc)+'" loading="lazy" onerror="this.parentElement.innerHTML=\'<span class=card-placeholder>'+(v.downloaded?'&#x1F3A5;':'&#x1F4E5;')+'</span>\'">';
     } else {
       imgHtml='<span class="card-placeholder">'+(v.downloaded?'&#x1F3A5;':'&#x1F4E5;')+'</span>';
     }
@@ -254,11 +271,13 @@ function renderVideos(){
     } else {
       metaHtml = '<span>Not yet downloaded</span>';
     }
+    // Undownloaded: show real title from queue, or 'YouTube video' as last resort
+    var titleHtml=esc(v.title);
     return '<div class="'+cardClass+'">'+
       '<div class="card-badge-row">'+dlBadge+plBadges+'</div>'+
       '<div class="card-img">'+imgHtml+'</div>'+
       '<div class="card-body">'+
-        '<div class="card-title">'+esc(v.title)+'</div>'+
+        '<div class="card-title">'+titleHtml+'</div>'+
         '<div class="card-meta">'+metaHtml+'</div>'+
       '</div></div>';
   }).join('');
