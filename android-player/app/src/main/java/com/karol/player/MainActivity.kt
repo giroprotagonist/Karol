@@ -112,6 +112,9 @@ class MainActivity : AppCompatActivity() {
 	@SuppressLint("SetJavaScriptEnabled")
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
+		// Must be called BEFORE setContentView to push content under system bars
+		WindowCompat.setDecorFitsSystemWindows(window, false)
+		window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 		setContentView(R.layout.activity_main)
 		enterImmersiveMode()
 
@@ -844,8 +847,6 @@ class MainActivity : AppCompatActivity() {
 
 	private fun enterImmersiveMode() {
 		Log.i("MainActivity", "enterImmersiveMode called")
-		WindowCompat.setDecorFitsSystemWindows(window, false)
-		window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 		WindowInsetsControllerCompat(window, window.decorView).apply {
 			hide(WindowInsetsCompat.Type.systemBars())
 			systemBarsBehavior =

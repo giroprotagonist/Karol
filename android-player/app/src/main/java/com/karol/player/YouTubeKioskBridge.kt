@@ -344,6 +344,7 @@ class YouTubeKioskBridge(
 
 	@SuppressLint("SetJavaScriptEnabled")
 	private fun configureWebView() {
+		webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 		webView.setBackgroundColor(Color.BLACK)
 		webView.settings.apply {
 			javaScriptEnabled = true
@@ -363,14 +364,35 @@ class YouTubeKioskBridge(
 					view: WebView?,
 					url: String?,
 				) {
-					// Inject masthead-hiding CSS before YouTube's DOM renders
+					// Inject masthead-hiding CSS before YouTube's DOM renders — needs to walk shadow roots
 					if (url != null && (url.contains("/watch") || url.contains("/embed/"))) {
 						webView.evaluateJavascript("""
 							(function(){
 								var s=document.createElement('style');
 								s.id='__karol-global-css';
-								s.textContent='body,html{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}#masthead-container,#masthead,ytd-masthead,header,[class*=masthead],[class*=topbar],[class*=header],[id*=masthead]{display:none!important;visibility:hidden!important;height:0!important}';
+								s.textContent='body,html{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}' +
+									'.player-container{top:0!important;margin-top:0!important}';
 								(document.head||document.documentElement).appendChild(s);
+								// Walk all shadow roots and inject masthead-hiding CSS directly
+								function walkShadows(root) {
+									root.querySelectorAll('*').forEach(function(el) {
+										if (el.shadowRoot) {
+											try {
+												var ss = el.shadowRoot.querySelector('#__karol-sh-root-css');
+												if (!ss) {
+													ss = document.createElement('style');
+													ss.id = '__karol-sh-root-css';
+													ss.textContent = 'ytm-mobile-topbar-renderer,.mobile-topbar-header,.mobile-topbar-header-content,.mobile-topbar-logo,.mobile-topbar-title,' +
+														'ytm-header-bar,ytm-header,#masthead-container,#masthead,ytd-masthead,#header,#container,#start,#header-bar,' +
+														'#background{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important}';
+													el.shadowRoot.appendChild(ss);
+												}
+												walkShadows(el.shadowRoot);
+											} catch(e) {}
+										}
+									});
+								}
+								walkShadows(document.documentElement);
 							})()
 						""".trimIndent(), null)
 					}
@@ -403,6 +425,39 @@ class YouTubeKioskBridge(
 						scheduleLayoutRefresh()
 						// Re-hide system bars after each page load
 						requestImmersiveMode()
+						// Re-inject masthead CSS INSIDE shadow roots — YouTube's Shadow DOM blocks regular CSS
+						webView.evaluateJavascript("""
+							(function(){
+								// Global CSS for light DOM elements
+								var old=document.getElementById('__karol-global-css');
+								if(old)old.remove();
+								var s=document.createElement('style');
+								s.id='__karol-global-css';
+								s.textContent='body,html{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}' +
+									'.player-container{top:0!important;margin-top:0!important}';
+								(document.head||document.documentElement).appendChild(s);
+								// Walk all shadow roots and inject masthead-hiding CSS directly
+								function walkShadows(root) {
+									root.querySelectorAll('*').forEach(function(el) {
+										if (el.shadowRoot) {
+											try {
+												var ss = el.shadowRoot.querySelector('#__karol-sh-root-css');
+												if (!ss) {
+													ss = document.createElement('style');
+													ss.id = '__karol-sh-root-css';
+													ss.textContent = 'ytm-mobile-topbar-renderer,.mobile-topbar-header,.mobile-topbar-header-content,.mobile-topbar-logo,.mobile-topbar-title,' +
+														'ytm-header-bar,ytm-header,#masthead-container,#masthead,ytd-masthead,#header,#container,#start,#header-bar,' +
+														'#background{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important}';
+													el.shadowRoot.appendChild(ss);
+												}
+												walkShadows(el.shadowRoot);
+											} catch(e) {}
+										}
+									});
+								}
+								walkShadows(document.documentElement);
+							})()
+						""".trimIndent(), null)
 					}
 
 					// Detect YouTube sign-in once per session
@@ -517,14 +572,10 @@ class YouTubeKioskBridge(
 		}
 		lastPageFinishedUrl = ""
 
-		// Debounce navigation by 100ms — coalesces rapid skips from S24
+		// Minimal 10ms debounce — coalesces rapid bursts from S24 without adding perceptible delay
 		mainHandler.postDelayed({
 			if (myGen != navGeneration) {
 				Log.i(TAG, "loadVideo cancelled (stale gen=$myGen, latest=$navGeneration): $videoId")
-				// Reset navigating only if nothing else is pending
-				if (myGen == navGeneration - 1 && lastPageFinishedUrl == "") {
-					// Still navigating, next gen will handle it
-				}
 				return@postDelayed
 			}
 			// Exit fullscreen before navigating to prevent SurfaceView linger from previous video
@@ -537,7 +588,7 @@ class YouTubeKioskBridge(
 			Log.i(TAG, "loadVideo executing: $videoId → $url  gen=$myGen")
 			webView.loadUrl(url)
 			injectExpectedVideoId()
-		}, 100L)
+		}, 10L)
 	}
 
 	private fun applyVolumeAndPlay() {
@@ -565,7 +616,7 @@ class YouTubeKioskBridge(
 				"window.__deskreenYtReapplyVolume && window.__deskreenYtReapplyVolume();" +
 					"window.__deskreenYtEnsurePlaying && window.__deskreenYtEnsurePlaying()",
 			)
-		}, 200)
+		}, 50)
 	}
 
 	private fun noteCurrentUrl(url: String) {
@@ -813,7 +864,9 @@ class YouTubeKioskBridge(
 	private fun scheduleLayoutRefresh() {
 		val generation = ++layoutRefreshGeneration
 		injectLayoutScriptIfWatch()
-		for (delayMs in listOf(800L, 2000L)) {
+		// Re-apply layout at 100ms (YouTube SPA may create elements after onPageFinished)
+		// and again at 2000ms as a safety net for slow network / late DOM mutations
+		for (delayMs in listOf(100L, 2000L)) {
 			mainHandler.postDelayed({
 				if (generation != layoutRefreshGeneration) {
 					return@postDelayed
@@ -833,6 +886,33 @@ class YouTubeKioskBridge(
 		injectExpectedVideoId()
 		// Re-hide system bars — YouTube video init can restore them after onPageFinished
 		requestImmersiveMode()
+		// Re-walk shadow roots — YouTube SPA recreates shadow DOM elements asynchronously
+		webView.evaluateJavascript("""
+			(function(){
+				function walkShadows(root) {
+					root.querySelectorAll('*').forEach(function(el) {
+						if (el.shadowRoot) {
+							try {
+								var ss = el.shadowRoot.querySelector('#__karol-sh-root-css');
+								if (!ss) {
+									ss = document.createElement('style');
+									ss.id = '__karol-sh-root-css';
+									ss.textContent = 'ytm-mobile-topbar-renderer,.mobile-topbar-header,.mobile-topbar-header-content,.mobile-topbar-logo,.mobile-topbar-title,' +
+										'ytm-header-bar,ytm-header,#masthead-container,#masthead,ytd-masthead,#header,#container,#start,#header-bar,' +
+										'#background{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important}';
+									el.shadowRoot.appendChild(ss);
+								}
+								walkShadows(el.shadowRoot);
+							} catch(e) {}
+						}
+					});
+				}
+				walkShadows(document.documentElement);
+				// Also force player-container to top
+				var pc=document.querySelector('.player-container');
+				if(pc){pc.style.setProperty('top','0','important');pc.style.setProperty('margin-top','0','important');}
+			})()
+		""".trimIndent(), null)
 	}
 
 	private fun injectLayoutScript() {
