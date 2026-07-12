@@ -176,11 +176,14 @@ function loadAll(){
         var qi=queueMap[vid];
         merged.push({
           videoId:vid,
-          title:local?local.title:(qi?qi.title:vid),
+          // Prefer local metadata title, but fall back to queue title if
+          // local only has videoId as a placeholder (no info.json found)
+          title:(local && local.title !== vid) ? local.title : (qi ? qi.title : vid),
           duration:local?local.duration:0,
           size:local?local.size:0,
           subtitles:local?local.subtitles:[],
-          thumbnail:local?local.thumbnail:(qi?qi.thumb:''),
+          // Prefer local thumbnail, fall back to queue thumbnail
+          thumbnail:(local && local.thumbnail) ? local.thumbnail : (qi ? qi.thumb : ''),
           downloaded:!!local,
           playlists:[{id:pl.playlistId,name:pl.name||pl.playlistId}]
         });
@@ -255,8 +258,9 @@ function renderVideos(){
     var dlBadge=v.downloaded?'<span class="badge badge-downloaded">downloaded</span>':'<span class="badge badge-missing">not downloaded</span>';
     var cardClass=v.downloaded?'card':'card not-downloaded';
     // Undownloaded: use queue thumbnail, or fall back to i.ytimg.com
+    // Also for downloaded without metadata thumbnails
     var thumbSrc=v.thumbnail||'';
-    if(!thumbSrc&&!v.downloaded&&v.videoId){
+    if(!thumbSrc&&v.videoId){
       thumbSrc='https://i.ytimg.com/vi/'+v.videoId+'/hqdefault.jpg';
     }
     var imgHtml='';
@@ -267,7 +271,11 @@ function renderVideos(){
     }
     var metaHtml;
     if(v.downloaded){
-      metaHtml = '<span>'+dur+'</span><span>'+size+'</span>'+subBadges;
+      if(v.duration || v.size > 0){
+        metaHtml = '<span>'+dur+'</span><span>'+size+'</span>'+subBadges;
+      } else {
+        metaHtml = '<span>Downloaded</span>'+(subBadges||'');
+      }
     } else {
       metaHtml = '<span>Not yet downloaded</span>';
     }
