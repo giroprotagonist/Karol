@@ -124,6 +124,14 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 #listView td.actions button:hover{background:rgba(139,92,246,.2)}
 #listView td.actions button.queue-btn{border-color:var(--text2);color:var(--text2);background:transparent}
 #listView td.actions button.queue-btn:hover{background:rgba(255,255,255,.08)}
+#listView th.sortable{cursor:pointer;user-select:none;position:relative}
+#listView th.sortable:hover{color:var(--accent)}
+#listView th.sort-active{color:var(--accent)}
+#listView th .sort-indicator{font-size:0.65rem;margin-left:4px;opacity:0}
+#listView th.sort-asc .sort-indicator{opacity:1}
+#listView th.sort-asc .sort-indicator::after{content:'▲'}
+#listView th.sort-desc .sort-indicator{opacity:1}
+#listView th.sort-desc .sort-indicator::after{content:'▼'}
 .summary-banner{padding:12px 16px;border-radius:var(--radius);background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.15);margin-bottom:16px;display:flex;gap:20px;flex-wrap:wrap;font-size:0.82rem;color:var(--text2)}
 .summary-banner strong{color:var(--accent)}
 
@@ -256,7 +264,16 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 </div>
 <div class="video-grid" id="grid"><div class="loading">Loading library...</div></div>
 <table id="listView">
-<thead><tr><th class="thumb"></th><th>Title</th><th>Artist</th><th>Year</th><th>Duration</th><th>Size</th><th>Type</th><th>Actions</th></tr></thead>
+<thead><tr>
+  <th class="thumb"></th>
+  <th class="sortable" data-sort="title" onclick="sortListBy('title')">Title<span class="sort-indicator"></span></th>
+  <th class="sortable" data-sort="artist" onclick="sortListBy('artist')">Artist<span class="sort-indicator"></span></th>
+  <th class="sortable" data-sort="year" onclick="sortListBy('year')">Year<span class="sort-indicator"></span></th>
+  <th class="sortable" data-sort="duration" onclick="sortListBy('duration')">Duration<span class="sort-indicator"></span></th>
+  <th class="sortable" data-sort="size" onclick="sortListBy('size')">Size<span class="sort-indicator"></span></th>
+  <th class="sortable" data-sort="tag" onclick="sortListBy('tag')">Type<span class="sort-indicator"></span></th>
+  <th>Actions</th>
+</tr></thead>
 <tbody id="listBody"><tr><td colspan="8" class="loading">Loading library...</td></tr></tbody>
 </table>
 </div>
@@ -640,6 +657,21 @@ function switchTab(tab){
 
 // ── Grid/List view switching ──
 var currentView='grid';
+var listSort={key:null,asc:true};
+
+function sortListBy(key){
+  if(listSort.key===key){listSort.asc=!listSort.asc}
+  else{listSort.key=key;listSort.asc=true}
+  var ths=document.querySelectorAll('#listView th.sortable');
+  ths.forEach(function(th){
+    th.classList.remove('sort-active','sort-asc','sort-desc');
+    if(th.dataset.sort===key){
+      th.classList.add('sort-active');
+      th.classList.add(listSort.asc?'sort-asc':'sort-desc');
+    }
+  });
+  renderVideos();
+}
 function switchView(view){
   currentView=view;
   localStorage.setItem('karolView',view);
@@ -814,6 +846,24 @@ function toggleTag(videoId, newTag){
 // ── List view rendering ──
 function renderListView(videos){
   var currentVid=nowPlaying?nowPlaying.videoId:null;
+  // Apply list sort
+  if(listSort.key){
+    var k=listSort.key, asc=listSort.asc;
+    videos=videos.slice().sort(function(a,b){
+      var va, vb;
+      if(k==='title'){va=(a.title||'').toLowerCase();vb=(b.title||'').toLowerCase()}
+      else if(k==='artist'){va=(a.artist||'').toLowerCase();vb=(b.artist||'').toLowerCase()}
+      else if(k==='year'){va=parseInt(a.year)||0;vb=parseInt(b.year)||0}
+      else if(k==='duration'){va=a.duration||0;vb=b.duration||0}
+      else if(k==='size'){va=a.size||0;vb=b.size||0}
+      else if(k==='tag'){va=(a.tag||'');vb=(b.tag||'')}
+      else if(k==='downloaded'){va=a.downloaded?1:0;vb=b.downloaded?1:0}
+      else if(k==='playlist'){va=(a.playlists||[])[0]?a.playlists[0].name:'';vb=(b.playlists||[])[0]?b.playlists[0].name:''}
+      else{va=va||'';vb=vb||''}
+      if(typeof va==='string') return asc?va.localeCompare(vb):vb.localeCompare(va);
+      return asc?va-vb:vb-va;
+    });
+  }
   var body=document.getElementById('listBody');
   if(videos.length===0){body.innerHTML='<tr><td colspan="8" class="empty">No videos match</td></tr>';return}
   body.innerHTML=videos.map(function(v){
