@@ -795,6 +795,13 @@ class MainActivity : AppCompatActivity() {
 	/**
 	 * Stop whatever player is currently running — ExoPlayer or WebView YouTube.
 	 * Called before loading a new video to prevent background audio overlap.
+	 *
+	 * For WebView→WebView transitions: just pause the JS player. The loadVideo()
+	 * call that follows will navigate the WebView to the new video, which kills
+	 * the old YouTube instance naturally. Using about:blank here would force
+	 * YouTube to reload the entire SPA from scratch, adding 3-5s of delay.
+	 *
+	 * For ExoPlayer→anything: stop and hide ExoPlayer.
 	 */
 	private fun stopCurrentPlayback() {
 		if (localPlaybackActive) {
@@ -804,9 +811,11 @@ class MainActivity : AppCompatActivity() {
 			currentLocalVideoId = null
 			playerView.visibility = View.GONE
 		} else {
-			// WebView YouTube is active — tell it to stop
+			// WebView YouTube → just pause the JS player so the old video stops.
+			// loadVideo() will handle the URL change; YouTube's SPA reload is instant.
 			Log.i("MainActivity", "stopCurrentPlayback: pausing WebView YouTube")
-			bridge?.pauseAndReset()
+			bridge?.pause()
+			webView.stopLoading()
 		}
 	}
 
