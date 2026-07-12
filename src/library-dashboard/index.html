@@ -12,6 +12,11 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 
 header h1{font-size:1.2rem;font-weight:700}
 .stats-row{display:flex;gap:16px;font-size:0.82rem;color:var(--text2);flex-wrap:wrap}
 .stats-row .val{color:var(--accent);font-weight:600}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+#livePill{padding:2px 10px;border-radius:12px;background:rgba(16,185,129,.1);color:#10b981;font-weight:600;white-space:nowrap}
+.card-just-downloaded{animation:dlPop .4s ease}
+@keyframes dlPop{0%{transform:scale(1);border-color:var(--accent);box-shadow:0 0 12px rgba(139,92,246,.4)}100%{transform:scale(1);border-color:var(--border);box-shadow:none}}
 
 /* ── Player Bar ── */
 .player-bar{background:linear-gradient(135deg,var(--bg2),var(--bg3));border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:16px;min-height:68px}
@@ -148,6 +153,7 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 <span>Downloaded: <span class="val" id="statDl">-</span></span>
 <span>Size: <span class="val" id="statSize">-</span></span>
 <span>Playlists: <span class="val" id="statPl">-</span></span>
+<span id="livePill" style="display:none"><span class="live-dot"></span> <span id="liveCount">0 new</span></span>
 </div>
 </header>
 
@@ -224,7 +230,7 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 <div id="panelPlaylists" class="hidden">
 <div class="toolbar">
 <button id="syncAllBtn" onclick="syncAllPlaylists()" style="padding:8px 16px;border-radius:var(--radius);border:1px solid var(--accent);background:rgba(139,92,246,.08);color:var(--accent);font-size:0.85rem;cursor:pointer;font-weight:600">Sync All Now</button>
-<span style="font-size:0.82rem;color:var(--text2);margin-left:8px">Auto-refreshes every 30s</span>
+<span style="font-size:0.82rem;color:var(--text2);margin-left:8px">Auto-refreshes every 10s</span>
 </div>
 <table class="playlist-table">
 <thead><tr><th>Playlist</th><th>Tracks</th><th>Downloaded</th><th>Status</th><th>Actions</th></tr></thead>
@@ -261,6 +267,8 @@ var playlists=[];
 var activePlaylistId='';
 var localMap={};     // videoId -> metadata for downloaded videos
 var tags={};        // videoId -> 'karaoke' | 'music'
+var prevDownloaded=-1;// track new downloads between polls
+var justDownloaded=[]; // videoIds that just appeared
 var API=window.location.origin+'/api/library';
 var YTAPI=window.location.origin+'/api/youtube-dj';
 
@@ -540,6 +548,25 @@ function loadAll(){
 
     // Update stats
     var dlCount=merged.filter(function(v){return v.downloaded}).length;
+    // Track new downloads since last poll
+    if(prevDownloaded<0) prevDownloaded=dlCount;
+    var nNew=dlCount-prevDownloaded;
+    if(nNew>0){
+      document.getElementById('livePill').style.display='inline';
+      document.getElementById('liveCount').textContent=nNew+' new';
+      // Flash: hide after 4s
+      setTimeout(function(){document.getElementById('livePill').style.display='none'},4000);
+    }
+    prevDownloaded=dlCount;
+    // Collect just-downloaded videoIds for animation
+    if(nNew>0 && allVideos.length>0){
+      var prevMap={};
+      document.querySelectorAll('.card').forEach(function(el){prevMap[el.dataset.vid||'']=true});
+      justDownloaded=[];
+      for(var k=0;k<merged.length;k++){
+        if(merged[k].downloaded && !prevMap[merged[k].videoId]) justDownloaded.push(merged[k].videoId);
+      }
+    }
     document.getElementById('statTracked').textContent=merged.length;
     document.getElementById('statDl').textContent=dlCount;
     document.getElementById('statSize').textContent=stats.totalSizeFormatted||'0 MB';
@@ -638,7 +665,8 @@ function renderVideos(){
       metaHtml = '<span>Not yet downloaded</span>';
     }
     var titleHtml=esc(v.title);
-    return '<div class="'+cardClass+'" data-video-id="'+esc(v.videoId)+'" onclick="playVideoNow(\''+esc(v.videoId)+'\')">'+
+    var jdClass=justDownloaded.indexOf(v.videoId)>=0?' card-just-downloaded':'';
+    return '<div class="'+cardClass+jdClass+'" data-video-id="'+esc(v.videoId)+'" onclick="playVideoNow(\''+esc(v.videoId)+'\')">'+
       '<div class="card-badge-row">'+nowPlayingBadge+dlBadge+karaokeBadge+plBadges+'</div>'+
       '<div class="card-img">'+imgHtml+
         '<div class="card-overlay">'+
@@ -801,8 +829,8 @@ loadAll();
 pollNowPlaying();
 startClockTick();
 
-// Library data every 30s
-setInterval(loadAll,30000);
+// Library data every 10s — tight polling while downloads are active
+setInterval(loadAll,10000);
 
 // Now-playing every 5s (with clock sync)
 setInterval(function(){
