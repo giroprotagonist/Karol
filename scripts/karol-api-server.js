@@ -267,6 +267,7 @@ app.use(async (ctx, next) => {
 const LIBRARY_DIR = path.resolve(__dirname, '..', '.deskreen', 'library');
 const DOWNLOADS_DIR = path.resolve(__dirname, '..', '.deskreen', 'youtube-downloads');
 const ARCHIVE_PATH = path.resolve(__dirname, '..', '.deskreen', 'youtube-download-archive.txt');
+const TAGS_PATH = path.resolve(__dirname, '..', '.deskreen', 'tags.json');
 const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
 
 fs.mkdirSync(LIBRARY_DIR, { recursive: true });
@@ -1414,6 +1415,40 @@ router.get('/api/library/scan', async (ctx) => {
   } catch (e) {
     ctx.body = { ok: true, totalVideos: 0, totalSize: 0, subtitleLanguages: [], error: e.message };
   }
+});
+
+// ── Tag system (karaoke / music video) ──
+function loadTags() {
+  try {
+    if (fs.existsSync(TAGS_PATH)) return JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
+  } catch (e) { console.error('[library/tags] load error:', e.message); }
+  return {};
+}
+
+function saveTags(tags) {
+  try {
+    fs.writeFileSync(TAGS_PATH, JSON.stringify(tags, null, 2), 'utf8');
+  } catch (e) { console.error('[library/tags] save error:', e.message); }
+}
+
+router.get('/api/library/tags', async (ctx) => {
+  ctx.body = { ok: true, tags: loadTags() };
+});
+
+router.post('/api/library/tags', async (ctx) => {
+  const body = ctx.request.body || {};
+  const videoId = body.videoId;
+  const tag = body.tag;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
+  }
+  if (tag !== 'karaoke' && tag !== 'music') {
+    ctx.status = 400; ctx.body = { ok: false, error: 'tag must be "karaoke" or "music"' }; return;
+  }
+  const tags = loadTags();
+  tags[videoId] = tag;
+  saveTags(tags);
+  ctx.body = { ok: true, videoId, tag };
 });
 
 // Batch download all videos from a playlist (background job)
