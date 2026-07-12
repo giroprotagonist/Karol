@@ -97,6 +97,33 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 .progress-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s}
 .progress-bar-fill.done{background:var(--green)}
 .hidden{display:none!important}
+/* ── List/Grid toggle ── */
+.view-toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-left:8px}
+.view-toggle button{padding:6px 12px;background:var(--bg2);border:none;color:var(--text2);font-size:0.78rem;cursor:pointer;font-weight:600;transition:all .15s}
+.view-toggle button.active{background:var(--accent);color:#fff}
+.view-toggle button:hover:not(.active){color:var(--text);background:var(--bg3)}
+/* ── List view table ── */
+#listView{width:100%;border-collapse:collapse;display:none}
+#listView th,#listView td{padding:10px 12px;text-align:left;font-size:0.82rem;border-bottom:1px solid var(--border);vertical-align:middle}
+#listView th{color:var(--text2);font-weight:600;font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0;background:var(--bg);z-index:1}
+#listView tr:hover{background:var(--bg3)}
+#listView tr.not-downloaded{opacity:.55}
+#listView tr.not-downloaded:hover{opacity:.85}
+#listView tr.now-playing{background:rgba(139,92,246,.08)}
+#listView td.thumb{width:72px;min-width:72px}
+#listView td.thumb img{width:64px;height:36px;object-fit:cover;border-radius:4px}
+#listView td.title{font-weight:600;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+#listView td.title:hover{color:var(--accent)}
+#listView td.artist{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)}
+#listView td.year{width:52px;text-align:center;color:var(--text2)}
+#listView td.duration{width:62px;text-align:right;font-variant-numeric:tabular-nums}
+#listView td.size{width:72px;text-align:right;color:var(--text2);font-variant-numeric:tabular-nums}
+#listView td.type{width:70px}
+#listView td.actions{width:80px;text-align:right}
+#listView td.actions button{padding:3px 10px;border-radius:10px;border:1px solid var(--accent);background:rgba(139,92,246,.08);color:var(--accent);font-size:0.7rem;cursor:pointer;margin-left:4px;white-space:nowrap}
+#listView td.actions button:hover{background:rgba(139,92,246,.2)}
+#listView td.actions button.queue-btn{border-color:var(--text2);color:var(--text2);background:transparent}
+#listView td.actions button.queue-btn:hover{background:rgba(255,255,255,.08)}
 .summary-banner{padding:12px 16px;border-radius:var(--radius);background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.15);margin-bottom:16px;display:flex;gap:20px;flex-wrap:wrap;font-size:0.82rem;color:var(--text2)}
 .summary-banner strong{color:var(--accent)}
 
@@ -198,6 +225,10 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 <div id="panelVideos">
 <div class="summary-banner" id="summary"></div>
 <div class="toolbar">
+<div class="view-toggle">
+<button id="btnGridView" onclick="switchView('grid')">Grid</button>
+<button id="btnListView" onclick="switchView('list')">List</button>
+</div>
 <input type="text" id="searchInput" placeholder="Search by title..." oninput="renderVideos()">
 <select id="playlistFilter" onchange="renderVideos()">
 <option value="">All playlists</option>
@@ -224,6 +255,10 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
   </select>
 </div>
 <div class="video-grid" id="grid"><div class="loading">Loading library...</div></div>
+<table id="listView">
+<thead><tr><th class="thumb"></th><th>Title</th><th>Artist</th><th>Year</th><th>Duration</th><th>Size</th><th>Type</th><th>Actions</th></tr></thead>
+<tbody id="listBody"><tr><td colspan="8" class="loading">Loading library...</td></tr></tbody>
+</table>
 </div>
 
 <!-- PLAYLISTS TAB -->
@@ -266,7 +301,7 @@ var stats={};
 var playlists=[];
 var activePlaylistId='';
 var localMap={};     // videoId -> metadata for downloaded videos
-var tags={};        // videoId -> 'karaoke' | 'music'
+var tags={};        // videoId -> {tag, year, artist, source}
 var prevDownloaded=-1;// track new downloads between polls
 var justDownloaded=[]; // videoIds that just appeared
 var API=window.location.origin+'/api/library';
@@ -519,7 +554,10 @@ function loadAll(){
           subtitles:local?local.subtitles:[],
           thumbnail:(local && local.thumbnail) ? local.thumbnail : (qi ? qi.thumb : ''),
           downloaded:!!local,
-          tag:tags[vid]||'music',
+          tag: (tags[vid] && tags[vid].tag) ? tags[vid].tag : (typeof tags[vid] === 'string' ? tags[vid] : 'music'),
+          year: (tags[vid] && tags[vid].year) ? tags[vid].year : '',
+          artist: (tags[vid] && tags[vid].artist) ? tags[vid].artist : '',
+          source: (tags[vid] && tags[vid].source) ? tags[vid].source : '',
           playlists:[{id:pl.playlistId,name:pl.name||pl.playlistId}]
         });
       }
@@ -539,7 +577,10 @@ function loadAll(){
           subtitles:local?local.subtitles:[],
           thumbnail:(local && local.thumbnail) ? local.thumbnail : (qi ? qi.thumb : ''),
           downloaded:!!local,
-          tag:tags[vId]||'music',
+          tag: (tags[vId] && tags[vId].tag) ? tags[vId].tag : (typeof tags[vId] === 'string' ? tags[vId] : 'music'),
+          year: (tags[vId] && tags[vId].year) ? tags[vId].year : '',
+          artist: (tags[vId] && tags[vId].artist) ? tags[vId].artist : '',
+          source: (tags[vId] && tags[vId].source) ? tags[vId].source : '',
           playlists:[{id:'_queue_',name:'Queue'}]
         });
       }
@@ -597,6 +638,24 @@ function switchTab(tab){
   if(tab==='queue') renderQueue();
 }
 
+// ── Grid/List view switching ──
+var currentView='grid';
+function switchView(view){
+  currentView=view;
+  localStorage.setItem('karolView',view);
+  document.getElementById('btnGridView').classList.toggle('active',view==='grid');
+  document.getElementById('btnListView').classList.toggle('active',view==='list');
+  document.getElementById('grid').style.display=view==='grid'?'':'none';
+  document.getElementById('listView').style.display=view==='list'?'':'none';
+  renderVideos();
+}
+// Restore saved view preference
+(function(){
+  var saved=localStorage.getItem('karolView');
+  if(saved==='list'){currentView='list'}
+  switchView(currentView);
+})();
+
 function renderVideos(){
   var q=(document.getElementById('searchInput').value||'').toLowerCase();
   var plF=document.getElementById('playlistFilter').value;
@@ -626,6 +685,7 @@ function renderVideos(){
 
   var currentVid=nowPlaying?nowPlaying.videoId:null;
 
+  if(currentView==='list'){renderListView(filtered);updatePlayingHighlights(currentVid);return}
   grid.innerHTML=filtered.map(function(v){
     var dur=fmtDur(v.duration), size=fmtSize(v.size), subs=v.subtitles||[];
     var subBadges='';
@@ -737,7 +797,7 @@ function esc(s){var d=document.createElement('div');d.textContent=s;return d.inn
 
 // ── Tag toggle ──
 function toggleTag(videoId, newTag){
-  tags[videoId]=newTag;
+  tags[videoId] = typeof tags[videoId] === 'object' ? Object.assign({}, tags[videoId], {tag: newTag}) : {tag: newTag, year: '', artist: '', source: ''};
   // Update local video objects
   for(var i=0;i<allVideos.length;i++){
     if(allVideos[i].videoId===videoId){allVideos[i].tag=newTag;break}
@@ -749,6 +809,35 @@ function toggleTag(videoId, newTag){
   }).catch(function(){});
   showToast(newTag==='karaoke'?'Tagged as Karaoke':'Tagged as Music Video');
   renderVideos();
+}
+
+// ── List view rendering ──
+function renderListView(videos){
+  var currentVid=nowPlaying?nowPlaying.videoId:null;
+  var body=document.getElementById('listBody');
+  if(videos.length===0){body.innerHTML='<tr><td colspan="8" class="empty">No videos match</td></tr>';return}
+  body.innerHTML=videos.map(function(v){
+    var dur=fmtDur(v.duration), size=fmtSize(v.size);
+    var isKaraoke=v.tag==='karaoke';
+    var isNowPlaying=v.videoId===currentVid;
+    var thumbSrc=v.thumbnail||(v.videoId?'https://i.ytimg.com/vi/'+v.videoId+'/hqdefault.jpg':'');
+    var rowClass=(v.downloaded?'':' not-downloaded')+(isNowPlaying?' now-playing':'');
+    var typeBadge=isKaraoke?'<span class="badge badge-karaoke" style="font-size:0.65rem">Karaoke</span>':'<span class="badge badge-sub" style="font-size:0.65rem">Music</span>';
+    var titleDisplay=v.title||v.videoId;
+    if(titleDisplay.length>60) titleDisplay=titleDisplay.substring(0,57)+'...';
+    return '<tr class="'+rowClass+'">'+
+      '<td class="thumb">'+(thumbSrc?'<img src="'+esc(thumbSrc)+'" loading="lazy" onerror="this.style.display=\'none\'">':'')+'</td>'+
+      '<td class="title" onclick="playVideoNow(\''+esc(v.videoId)+'\')">'+esc(titleDisplay)+'</td>'+
+      '<td class="artist">'+esc(v.artist||'')+'</td>'+
+      '<td class="year">'+esc(v.year||'')+'</td>'+
+      '<td class="duration">'+(v.downloaded?dur:'-')+'</td>'+
+      '<td class="size">'+(v.downloaded?size:'-')+'</td>'+
+      '<td class="type">'+typeBadge+'</td>'+
+      '<td class="actions">'+
+        '<button onclick="event.stopPropagation();playVideoNow(\''+esc(v.videoId)+'\')" title="Play">Play</button>'+
+        '<button class="queue-btn" onclick="event.stopPropagation();addToQueue(\''+esc(v.videoId)+'\')" title="Add to Queue">+Q</button>'+
+      '</td></tr>';
+  }).join('');
 }
 
 // ── Queue rendering ──

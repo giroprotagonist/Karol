@@ -1317,24 +1317,16 @@ router.get('/api/library/list', async (ctx) => {
 
         const base = f.slice(0, -extMatch[0].length);
 
-        if (dir === LIBRARY_DIR) {
-          // Library files are named by videoId
-          const vid = base.replace(/\.f\d+$/, ''); // strip format suffix
-          if (downloadedVideoIds.has(vid)) videoIdFromFile = vid;
-        } else {
-          // YouTube-downloads: check if any downloaded videoId appears in filename
-          // or in VTT embedded suffix like lang-VIDEOID.vtt
-          for (const vid of downloadedVideoIds) {
-            if (f.includes(vid)) {
-              videoIdFromFile = vid;
-              break;
-            }
-          }
-          // VTT-specific: extract from <title>.<lang>-<VIDEOID>.vtt pattern
-          if (!videoIdFromFile && extMatch[1] === 'vtt') {
-            const m = base.match(/[.-]([A-Za-z0-9_-]{10,12})$/);
-            if (m && downloadedVideoIds.has(m[1])) videoIdFromFile = m[1];
-          }
+        // Both library and downloads dirs use videoId naming
+        // For VTT files with pattern <videoId>.<lang-info>.vtt, extract videoId from first segment
+        const vid = (extMatch[1] === 'vtt')
+          ? base.split('.')[0].replace(/\.f\d+$/, '')
+          : base.replace(/\.f\d+$/, '');
+        if (downloadedVideoIds.has(vid)) videoIdFromFile = vid;
+        // Fallback: VTT embedded suffix like <lang>-<VIDEOID>.vtt
+        else if (extMatch[1] === 'vtt') {
+          const m = base.match(/[.-]([A-Za-z0-9_-]{10,12})$/);
+          if (m && downloadedVideoIds.has(m[1])) videoIdFromFile = m[1];
         }
 
         if (!videoIdFromFile) continue;
@@ -1349,7 +1341,7 @@ router.get('/api/library/list', async (ctx) => {
           // Extract language code
           const parts = base.split('.');
           for (const p of parts) {
-            if (/^[a-z]{2,3}(-[A-Z][a-z]{3})?$/i.test(p) && p !== 'live_chat') {
+            if (/^[a-z]{2,3}(-[A-Za-z0-9]+)*$/i.test(p) && p !== 'live_chat') {
               entry.subs.push(p);
               break;
             }
@@ -1420,7 +1412,24 @@ router.get('/api/library/scan', async (ctx) => {
 // ── Tag system (karaoke / music video) ──
 function loadTags() {
   try {
-    if (fs.existsSync(TAGS_PATH)) return JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
+    if (fs.existsSync(TAGS_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
+      // Normalize: support both old string format and new object format
+      const normalized = {};
+      for (const [vid, val] of Object.entries(raw)) {
+        if (typeof val === 'string') {
+          normalized[vid] = { tag: val, year: '', artist: '', source: '' };
+        } else if (val && typeof val === 'object') {
+          normalized[vid] = {
+            tag: val.tag || 'music',
+            year: val.year || '',
+            artist: val.artist || '',
+            source: val.source || ''
+          };
+        }
+      }
+      return normalized;
+    }
   } catch (e) { console.error('[library/tags] load error:', e.message); }
   return {};
 }
@@ -1442,13 +1451,20 @@ router.post('/api/library/tags', async (ctx) => {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
   }
-  if (tag !== 'karaoke' && tag !== 'music') {
+  if (!tag || (tag !== 'karaoke' && tag !== 'music')) {
     ctx.status = 400; ctx.body = { ok: false, error: 'tag must be "karaoke" or "music"' }; return;
   }
   const tags = loadTags();
-  tags[videoId] = tag;
+  // Merge: preserve existing metadata, apply new fields
+  const existing = tags[videoId] || { tag: 'music', year: '', artist: '', source: '' };
+  tags[videoId] = {
+    tag: tag,
+    year: body.year !== undefined ? String(body.year) : existing.year,
+    artist: body.artist !== undefined ? String(body.artist) : existing.artist,
+    source: body.source !== undefined ? String(body.source) : existing.source
+  };
   saveTags(tags);
-  ctx.body = { ok: true, videoId, tag };
+  ctx.body = { ok: true, videoId, tag: tags[videoId] };
 });
 
 // Batch download all videos from a playlist (background job)
