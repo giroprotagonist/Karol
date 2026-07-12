@@ -225,7 +225,7 @@ let playerDownSince = 0;
 const PLAYER_DOWN_COOLDOWN = 15000; // After 15s of failures, try again
 
 app.use(async (ctx, next) => {
-  if (ctx.path.startsWith('/api/youtube-dj/')) {
+  if (ctx.path.startsWith('/api/youtube-dj/') || ctx.path.startsWith('/api/youtube-karaoke/')) {
     // Fast-fail: if player was recently down and we have a fresh cache, serve it immediately
     if (playerRecentlyDown && ctx.method === 'GET' && CACHEABLE_PATHS.has(ctx.path)) {
       const cached = getCachedYoutube(ctx.path);
