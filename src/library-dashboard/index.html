@@ -516,6 +516,26 @@ function loadAll(){
         });
       }
     }
+
+    // Merge queue-only items (in queue but not in any playlist)
+    for(var vId in queueMap){
+      if(!seen[vId] && queueMap.hasOwnProperty(vId)){
+        seen[vId]=merged.length+1;
+        var qi=queueMap[vId];
+        var local=localMap[vId];
+        merged.push({
+          videoId:vId,
+          title:(local && local.title !== vId) ? local.title : (qi ? qi.title : vId),
+          duration:local?local.duration:0,
+          size:local?local.size:0,
+          subtitles:local?local.subtitles:[],
+          thumbnail:(local && local.thumbnail) ? local.thumbnail : (qi ? qi.thumb : ''),
+          downloaded:!!local,
+          tag:tags[vId]||'music',
+          playlists:[{id:'_queue_',name:'Queue'}]
+        });
+      }
+    }
     allVideos=merged;
 
     // Update stats
