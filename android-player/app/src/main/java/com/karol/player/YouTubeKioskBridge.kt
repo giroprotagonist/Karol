@@ -368,31 +368,61 @@ class YouTubeKioskBridge(
 					if (url != null && (url.contains("/watch") || url.contains("/embed/"))) {
 						webView.evaluateJavascript("""
 							(function(){
-								var s=document.createElement('style');
-								s.id='__karol-global-css';
-								s.textContent='body,html{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}' +
-									'.player-container{top:0!important;margin-top:0!important}';
-								(document.head||document.documentElement).appendChild(s);
-								// Walk all shadow roots and inject masthead-hiding CSS directly
-								function walkShadows(root) {
-									root.querySelectorAll('*').forEach(function(el) {
-										if (el.shadowRoot) {
-											try {
-												var ss = el.shadowRoot.querySelector('#__karol-sh-root-css');
-												if (!ss) {
-													ss = document.createElement('style');
-													ss.id = '__karol-sh-root-css';
-													ss.textContent = 'ytm-mobile-topbar-renderer,.mobile-topbar-header,.mobile-topbar-header-content,.mobile-topbar-logo,.mobile-topbar-title,' +
-														'ytm-header-bar,ytm-header,#masthead-container,#masthead,ytd-masthead,#header,#container,#start,#header-bar,' +
-														'#background{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important}';
-													el.shadowRoot.appendChild(ss);
-												}
-												walkShadows(el.shadowRoot);
-											} catch(e) {}
-										}
-									});
+								function hideEl(el) {
+									el.style.setProperty('visibility','hidden','important');
+									el.style.setProperty('pointer-events','none','important');
 								}
-								walkShadows(document.documentElement);
+								function nukeEverything() {
+									document.documentElement.style.setProperty('background','#000','important');
+									document.body.style.setProperty('background','#000','important');
+									document.body.style.setProperty('margin','0','important');
+									document.body.style.setProperty('padding','0','important');
+									document.body.style.setProperty('overflow','hidden','important');
+									// visibility:hidden on everything BUT can be overridden by children
+									document.querySelectorAll('body *').forEach(function(el) {
+										if (el.tagName === 'VIDEO') return;
+										hideEl(el);
+									});
+									var video = document.querySelector('video');
+									if (video) {
+										// Walk up and make parents visible
+										var p = video.parentElement;
+										while (p && p !== document.body && p !== document.documentElement) {
+											p.style.setProperty('visibility','visible','important');
+											p.style.setProperty('pointer-events','none','important');
+											p.style.setProperty('position','static','important');
+											p.style.setProperty('overflow','visible','important');
+											p = p.parentElement;
+										}
+										video.style.setProperty('visibility','visible','important');
+										video.style.setProperty('position','fixed','important');
+										video.style.setProperty('top','0','important');
+										video.style.setProperty('left','0','important');
+										video.style.setProperty('width','100vw','important');
+										video.style.setProperty('height','100vh','important');
+										video.style.setProperty('object-fit','contain','important');
+										video.style.setProperty('z-index','2147483647','important');
+										video.style.setProperty('background','#000','important');
+									}
+									// Also hide YouTube's overlay elements in shadow roots
+									function walkShadow(root) {
+										var all = root.querySelectorAll('*');
+										for (var i = 0; i < all.length; i++) {
+											var el = all[i];
+											if (el.shadowRoot) {
+												try {
+													el.shadowRoot.querySelectorAll('.ytp-chrome-top,.ytp-chrome-bottom,.ytp-gradient-top,.ytp-gradient-bottom,.ytp-title,.ytp-chrome-controls').forEach(function(e) {
+														e.style.setProperty('display','none','important');
+													});
+													walkShadow(el.shadowRoot);
+												} catch(e) {}
+											}
+										}
+									}
+									walkShadow(document.documentElement);
+								}
+								nukeEverything();
+								setInterval(nukeEverything, 500);
 							})()
 						""".trimIndent(), null)
 					}
@@ -425,37 +455,67 @@ class YouTubeKioskBridge(
 						scheduleLayoutRefresh()
 						// Re-hide system bars after each page load
 						requestImmersiveMode()
-						// Re-inject masthead CSS INSIDE shadow roots — YouTube's Shadow DOM blocks regular CSS
+						// Persistent JavaScript to nuke YouTube's chrome and keep video fullscreen
 						webView.evaluateJavascript("""
 							(function(){
-								// Global CSS for light DOM elements
-								var old=document.getElementById('__karol-global-css');
-								if(old)old.remove();
-								var s=document.createElement('style');
-								s.id='__karol-global-css';
-								s.textContent='body,html{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}' +
-									'.player-container{top:0!important;margin-top:0!important}';
-								(document.head||document.documentElement).appendChild(s);
-								// Walk all shadow roots and inject masthead-hiding CSS directly
-								function walkShadows(root) {
-									root.querySelectorAll('*').forEach(function(el) {
-										if (el.shadowRoot) {
-											try {
-												var ss = el.shadowRoot.querySelector('#__karol-sh-root-css');
-												if (!ss) {
-													ss = document.createElement('style');
-													ss.id = '__karol-sh-root-css';
-													ss.textContent = 'ytm-mobile-topbar-renderer,.mobile-topbar-header,.mobile-topbar-header-content,.mobile-topbar-logo,.mobile-topbar-title,' +
-														'ytm-header-bar,ytm-header,#masthead-container,#masthead,ytd-masthead,#header,#container,#start,#header-bar,' +
-														'#background{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important}';
-													el.shadowRoot.appendChild(ss);
-												}
-												walkShadows(el.shadowRoot);
-											} catch(e) {}
-										}
-									});
+								if (window.__karolNukeRunning) return;
+								window.__karolNukeRunning = true;
+								function hideEl(el) {
+									el.style.setProperty('opacity','0','important');
+									el.style.setProperty('pointer-events','none','important');
 								}
-								walkShadows(document.documentElement);
+								function nukeEverything() {
+									document.documentElement.style.setProperty('background','#000','important');
+									document.body.style.setProperty('background','#000','important');
+									document.body.style.setProperty('margin','0','important');
+									document.body.style.setProperty('padding','0','important');
+									document.body.style.setProperty('overflow','hidden','important');
+									document.querySelectorAll('body *').forEach(function(el) {
+										if (el.tagName === 'VIDEO') return;
+										hideEl(el);
+									});
+									var video = document.querySelector('video');
+									if (video) {
+										var p = video.parentElement;
+										while (p && p !== document.body && p !== document.documentElement) {
+											p.style.setProperty('opacity','1','important');
+											p.style.setProperty('pointer-events','none','important');
+											p.style.setProperty('position','static','important');
+											p.style.setProperty('overflow','visible','important');
+											p = p.parentElement;
+										}
+										video.style.setProperty('opacity','1','important');
+										video.style.setProperty('position','fixed','important');
+										video.style.setProperty('top','0','important');
+										video.style.setProperty('left','0','important');
+										video.style.setProperty('width','100vw','important');
+										video.style.setProperty('height','100vh','important');
+										video.style.setProperty('object-fit','contain','important');
+										video.style.setProperty('z-index','2147483647','important');
+										video.style.setProperty('background','#000','important');
+									}
+									// Also target shadow roots for ytp elements
+									function walkShadow(root) {
+										var all = root.querySelectorAll('*');
+										for (var i = 0; i < all.length; i++) {
+											var el = all[i];
+											if (el.shadowRoot) {
+												try {
+													el.shadowRoot.querySelectorAll('.ytp-chrome-top,.ytp-chrome-bottom,.ytp-gradient-top,.ytp-gradient-bottom,.ytp-title,.ytp-chrome-controls').forEach(function(e) {
+														e.style.setProperty('display','none','important');
+														e.style.setProperty('visibility','hidden','important');
+														e.style.setProperty('height','0','important');
+														e.style.setProperty('opacity','0','important');
+													});
+													walkShadow(el.shadowRoot);
+												} catch(e) {}
+											}
+										}
+									}
+									walkShadow(document.documentElement);
+								}
+								nukeEverything();
+								setInterval(nukeEverything, 500);
 							})()
 						""".trimIndent(), null)
 					}
@@ -886,31 +946,24 @@ class YouTubeKioskBridge(
 		injectExpectedVideoId()
 		// Re-hide system bars — YouTube video init can restore them after onPageFinished
 		requestImmersiveMode()
-		// Re-walk shadow roots — YouTube SPA recreates shadow DOM elements asynchronously
+		// Re-nuke any YouTube chrome that appeared since page load
 		webView.evaluateJavascript("""
 			(function(){
-				function walkShadows(root) {
-					root.querySelectorAll('*').forEach(function(el) {
-						if (el.shadowRoot) {
-							try {
-								var ss = el.shadowRoot.querySelector('#__karol-sh-root-css');
-								if (!ss) {
-									ss = document.createElement('style');
-									ss.id = '__karol-sh-root-css';
-									ss.textContent = 'ytm-mobile-topbar-renderer,.mobile-topbar-header,.mobile-topbar-header-content,.mobile-topbar-logo,.mobile-topbar-title,' +
-										'ytm-header-bar,ytm-header,#masthead-container,#masthead,ytd-masthead,#header,#container,#start,#header-bar,' +
-										'#background{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important}';
-									el.shadowRoot.appendChild(ss);
-								}
-								walkShadows(el.shadowRoot);
-							} catch(e) {}
-						}
-					});
+				if (!window.__karolNukeRunning) {
+					window.__karolNukeRunning = true;
+					function __hideEl(el){el.style.setProperty('display','none','important');el.style.setProperty('visibility','hidden','important');el.style.setProperty('opacity','0','important');el.style.setProperty('pointer-events','none','important');el.style.setProperty('height','0','important');el.style.setProperty('min-height','0','important')}
+					function __nukeRoot(root){
+						root.querySelectorAll('.ytp-chrome-top,.ytp-chrome-bottom,.ytp-gradient-top,.ytp-gradient-bottom,.ytp-progress-bar-container,.ytp-chrome-controls,.ytp-time-display,.ytp-title,.ytp-title-channel,.ytp-title-text,.ytp-title-link,.ytp-watermark,.ytp-iv-drawer,.ytp-iv-player-content,.ytp-live-badge,.ytp-settings-button,.ytp-fullscreen-button,.ytp-size-button,.ytp-autonav-toggle-button-container,.ytp-next-button,.ytp-prev-button,.ytp-ce-element,.ytp-endscreen-content,.ytp-videowall-still,#masthead-container,#masthead,#header,#container,#guide-inner-content,#comments,#related,#secondary,#meta,ytd-watch-metadata,.player-container-top,.player-container-middle,.watch-title,.slim-video-metadata,.ytm-item-section-renderer').forEach(__hideEl);
+						root.querySelectorAll('*').forEach(function(el){if(el.shadowRoot)try{__nukeRoot(el.shadowRoot)}catch(e){}})
+					}
+					function __karolNuke(){
+						__nukeRoot(document.documentElement);__nukeRoot(document);
+						var v=document.querySelector('video');if(v){v.style.setProperty('position','fixed','important');v.style.setProperty('top','0','important');v.style.setProperty('left','0','important');v.style.setProperty('width','100vw','important');v.style.setProperty('height','100vh','important');v.style.setProperty('object-fit','contain','important');v.style.setProperty('z-index','9999','important')}
+						var p=document.querySelector('#movie_player,.html5-video-player,#player-container-id');if(p){p.style.setProperty('position','fixed','important');p.style.setProperty('top','0','important');p.style.setProperty('left','0','important');p.style.setProperty('width','100vw','important');p.style.setProperty('height','100vh','important')}
+					}
+					__karolNuke();
+					setInterval(__karolNuke, 500);
 				}
-				walkShadows(document.documentElement);
-				// Also force player-container to top
-				var pc=document.querySelector('.player-container');
-				if(pc){pc.style.setProperty('top','0','important');pc.style.setProperty('margin-top','0','important');}
 			})()
 		""".trimIndent(), null)
 	}
