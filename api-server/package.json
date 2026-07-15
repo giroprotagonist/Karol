@@ -9,6 +9,7 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
+    "kcors": "^2.2.2",
     "koa": "^2.16.0",
     "koa-bodyparser": "^4.4.1",
     "koa-router": "^13.0.1",
