@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 // Karol API server - no TypeScript, no Electron deps
+
+// ── Safety net: never let a child-process crash take down the server ──
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] Uncaught:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] Unhandled rejection:', reason);
+});
+
+// ── Server uptime tracking (for health endpoint) ──
+const SERVER_START_TIME = Date.now();
+let activeConnections = 0;
+let peakConnections = 0;
+
 const http = require('http');
 const Koa = require('koa');
 const cors = require('kcors');
@@ -8,16 +22,130 @@ const bodyParser = require('koa-bodyparser');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const mysql = require('./karol-mysql');
 
 const PORT = 3131;
-const PLAYER_HOST = process.env.PLAYER_HOST || (() => {
-  try { return require('fs').readFileSync('/tmp/karol-player-host.txt', 'utf8').trim(); }
-  catch { return '192.168.68.60'; }
-})();
-const PLAYER_PORT = parseInt(process.env.PLAYER_PORT || (() => {
-  try { return require('fs').readFileSync('/tmp/karol-player-port.txt', 'utf8').trim(); }
-  catch { return '3131'; }
-})(), 10);
+
+// ── mDNS Player Discovery — resolves KarolPlayer._karol-dj._tcp ──
+let _mdnsPlayerBrowser = null;
+let _mdnsPlayerHost = null; // { host, port, at: timestamp }
+const MDNS_PLAYER_TTL = 5 * 60 * 1000; // 5 min cache
+let _mdnsDiscoveryInFlight = null; // dedupe concurrent discovery calls
+
+function discoverPlayerViaMdns() {
+  if (_mdnsDiscoveryInFlight) return _mdnsDiscoveryInFlight;
+
+  _mdnsDiscoveryInFlight = (async () => {
+    // Direct resolve — skip browse, go straight to lookup
+    // This is faster and more reliable than browse-then-resolve
+    const { spawn } = require('child_process');
+    
+    try {
+      const hostInfo = await new Promise((resolve) => {
+        const proc = spawn('dns-sd', [
+          '-L', 'KarolPlayer', '_karol-dj._tcp', 'local'
+        ], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 6000 });
+        
+        let output = '';
+        proc.stdout.on('data', (chunk) => { output += chunk.toString(); });
+        
+        // The dns-sd -L is fire-and-forget (keeps running), so we need a timeout
+        setTimeout(() => {
+          try { proc.kill('SIGTERM'); } catch {}
+          const match = output.match(/reached at\s+(\S+)\.local\.:(\d+)/);
+          if (match) {
+            resolve({ host: match[1] + '.local', port: parseInt(match[2], 10) });
+          } else {
+            // Try without .local suffix — some networks resolve differently
+            const match2 = output.match(/reached at\s+(\S+):(\d+)/);
+            if (match2) resolve({ host: match2[1], port: parseInt(match2[2], 10) });
+            else resolve(null);
+          }
+        }, 3000);
+        
+        proc.on('exit', () => { resolve(null); });
+        proc.on('error', () => { resolve(null); });
+      });
+      
+      if (hostInfo) {
+        _mdnsPlayerHost = { host: hostInfo.host, port: hostInfo.port || 3131, at: Date.now() };
+        // Persist to disk cache for cold-start fallback
+        try { fs.writeFileSync('/tmp/karol-player-mdns.txt', hostInfo.host + '\n'); } catch {}
+        return hostInfo.host;
+      }
+    } catch {}
+    
+    // mDNS failed — try persisted cache from last successful discovery
+    try {
+      const cached = fs.readFileSync('/tmp/karol-player-mdns.txt', 'utf8').trim();
+      if (cached && cached.length > 3) {
+        _mdnsPlayerHost = { host: cached, port: 3131, at: Date.now() - MDNS_PLAYER_TTL + 60000 }; // expire in 1 min
+        return cached;
+      }
+    } catch {}
+    
+    return null;
+  })().then(result => {
+    _mdnsDiscoveryInFlight = null;
+    return result;
+  }).catch(err => {
+    _mdnsDiscoveryInFlight = null;
+    console.warn('[mdns] Discovery failed: ' + err.message);
+    return null;
+  });
+  
+  return _mdnsDiscoveryInFlight;
+}
+
+function getPlayerHost() {
+  if (process.env.PLAYER_HOST) return process.env.PLAYER_HOST;
+  if (_mdnsPlayerHost && Date.now() - _mdnsPlayerHost.at < MDNS_PLAYER_TTL)
+    return _mdnsPlayerHost.host;
+  return null; // No fallback — must discover via mDNS
+}
+
+function getPlayerPort() {
+  if (process.env.PLAYER_PORT) return parseInt(process.env.PLAYER_PORT, 10);
+  if (_mdnsPlayerHost) return _mdnsPlayerHost.port || 3131;
+  return 3131;
+}
+
+// Async refresh the player host via mDNS
+function refreshPlayerHostAsync() {
+  return discoverPlayerViaMdns().then(host => {
+    if (host) console.log('[mdns] Discovered player at ' + host);
+    else console.warn('[mdns] No KarolPlayer found via mDNS');
+    return host;
+  });
+}
+
+// Player down tracking — fast-fail proxy when S8 has been unreachable
+let playerRecentlyDown = false;
+let playerDownSince = 0;
+const PLAYER_DOWN_COOLDOWN_MS = 30_000; // 30s cooldown before retrying proxy
+
+function markPlayerDown() {
+  if (!playerRecentlyDown) {
+    playerRecentlyDown = true;
+    playerDownSince = Date.now();
+    console.log('[proxy] Player marked as DOWN — fast-failing proxy for ' + (PLAYER_DOWN_COOLDOWN_MS / 1000) + 's');
+    // Trigger background rediscovery (tablet IP may have changed)
+    refreshPlayerHostAsync().then((ip) => {
+      if (ip && playerRecentlyDown) {
+        // IP still resolves but player is still down — try again after cooldown
+        console.log('[proxy] Player IP resolves to ' + ip + ' but still unreachable');
+      }
+    });
+  }
+}
+
+function markPlayerUp() {
+  if (playerRecentlyDown) {
+    console.log('[proxy] Player recovered — re-enabling proxy');
+    playerRecentlyDown = false;
+    playerDownSince = 0;
+  }
+}
 
 // ── Port conflict: try to listen directly. If the port is occupied
 // by a stale instance, we exit so launchd can restart us cleanly.
@@ -29,6 +157,60 @@ const app = new Koa();
 const router = new Router();
 app.use(cors());
 app.use(bodyParser());
+
+// Force close after every response — prevents Firefox keep-alive connections
+// from accumulating and stalling the TCP send buffer (see CLOSE_WAIT leaks)
+app.use(async (ctx, next) => {
+  ctx.set('Connection', 'close');
+  await next();
+});
+
+// ── Health endpoint middleware — runs before ALL other routes ──
+// Must never block on the event loop, proxy state, or filesystem I/O.
+app.use(async (ctx, next) => {
+  if (ctx.path === '/api/health.json' && ctx.method === 'GET') {
+    const uptime = Math.floor((Date.now() - SERVER_START_TIME) / 1000);
+    const mem = process.memoryUsage();
+    ctx.type = 'application/json';
+    ctx.body = JSON.stringify({
+      ok: true,
+      uptime,
+      uptimeFormatted: Math.floor(uptime / 3600) + 'h ' + Math.floor((uptime % 3600) / 60) + 'm ' + (uptime % 60) + 's',
+      memoryMB: Math.round(mem.heapUsed / 1024 / 1024),
+      memoryTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
+      connections: activeConnections,
+      peakConnections,
+      playerHost: getPlayerHost() || 'not-discovered',
+      playerRecentlyDown,
+    });
+    return;
+  }
+  await next();
+});
+
+// Simple per-IP rate limiter: 100 req/s burst, refills 20 tokens/s.
+// Only rate-limits non-localhost clients to prevent runaway polling.
+const rateLimits = new Map();
+app.use(async (ctx, next) => {
+  const ip = ctx.ip || 'unknown';
+  if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') { await next(); return; }
+  const now = Date.now();
+  let entry = rateLimits.get(ip);
+  if (!entry || now - entry.ts > 30000) {
+    entry = { tokens: 100, last: now, ts: now };
+    rateLimits.set(ip, entry);
+  }
+  const elapsed = now - entry.last;
+  entry.tokens = Math.min(100, entry.tokens + elapsed * (20 / 1000));
+  entry.last = now;
+  if (entry.tokens < 1) {
+    ctx.status = 429;
+    ctx.body = { ok: false, error: 'Rate limited' };
+    return;
+  }
+  entry.tokens -= 1;
+  await next();
+});
 
 // Request logging
 app.use(async (ctx, next) => {
@@ -48,6 +230,17 @@ function getLanIp() {
     }
   }
   return '127.0.0.1';
+}
+
+function getMyIps() {
+  const ips = new Set();
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const addr of nets[name]) {
+      if (addr.address) ips.add(addr.address);
+    }
+  }
+  return ips;
 }
 
 const VLC_PASSWORD = process.env.VLC_PASSWORD || 'karol';
@@ -84,6 +277,58 @@ function findCoverPath(filePath) {
   return null;
 }
 
+// ── Title resolution cache (YouTube: <id> → real title) ──
+const titleResolutionCache = new Map(); // videoId => title
+const TITLE_RESOLVE_TIMEOUT = 3000;
+
+/** Resolve "YouTube: <id>" placeholder titles in a queue response via YouTube oEmbed. */
+async function resolveQueuePlaceholderTitles(queueBody) {
+  if (!queueBody || !queueBody.queue) return queueBody;
+  const toResolve = [];
+  for (const item of queueBody.queue) {
+    if (!item || !item.title) continue;
+    // Matches placeholder format: "YouTube: <videoId>" or bare video ID
+    const placeholder = item.title.startsWith('YouTube: ') ? item.title.slice(9).trim() :
+      (item.title === item.videoId ? item.videoId : null);
+    if (!placeholder) continue;
+    // Check cache first
+    if (titleResolutionCache.has(placeholder)) {
+      item.title = titleResolutionCache.get(placeholder);
+      continue;
+    }
+    toResolve.push({ item, videoId: placeholder });
+  }
+
+  if (toResolve.length === 0) return queueBody;
+
+  console.log(`[youtube-dj proxy] Resolving ${toResolve.length} queue titles via oEmbed...`);
+  // Resolve in parallel — each with its own timeout
+  await Promise.all(toResolve.map(({ item, videoId }) =>
+    (async () => {
+      try {
+        const res = await fetch(
+          `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+          { signal: AbortSignal.timeout(TITLE_RESOLVE_TIMEOUT) }
+        );
+        if (res.ok) {
+          const json = await res.json();
+          const realTitle = json.title || item.title;
+          titleResolutionCache.set(videoId, realTitle);
+          item.title = realTitle;
+          console.log(`[youtube-dj proxy] Resolved title for ${videoId}: ${realTitle.slice(0, 50)}`);
+        } else {
+          console.error(`[youtube-dj proxy] oEmbed ${res.status} for ${videoId}`);
+        }
+      } catch (err) {
+        // Keep placeholder on failure; will retry on next poll
+        console.error(`[youtube-dj proxy] oEmbed failed for ${videoId}: ${err.message || err}`);
+      }
+    })()
+  ));
+
+  return queueBody;
+}
+
 // ── YouTube DJ proxy middleware ───────────────────────────────────────
 
 // ── YouTube response cache (serve stale on S8 unreachable) ──
@@ -109,6 +354,9 @@ function setCachedYoutube(path, status, body, type) {
   youtubeCache.set(path, { status, body, type, timestamp: Date.now() });
 }
 
+// Dedicated agent for S8 proxy — no keep-alive, tight limits to avoid leak accumulation
+const playerAgent = new http.Agent({ keepAlive: false, maxSockets: 50, maxFreeSockets: 0, timeout: 5000 });
+
 function proxyYouTubeToPlayer(ctx) {
   return new Promise((resolve) => {
     let settled = false;
@@ -118,6 +366,7 @@ function proxyYouTubeToPlayer(ctx) {
       clearTimeout(connectTimer);
       try { socket && socket.removeAllListeners('error'); } catch {}
       try { resStream && resStream.removeAllListeners('error'); } catch {}
+      try { req && req.destroy(); } catch {}  // Force close to prevent CLOSE_WAIT leaks
       ctx.status = status;
       if (typeof body === 'object') ctx.type = 'application/json';
       ctx.body = body;
@@ -135,16 +384,17 @@ function proxyYouTubeToPlayer(ctx) {
     const reqPath = ctx.path + (ctx.querystring ? '?' + ctx.querystring : '');
 
     const reqOpts = {
-      hostname: PLAYER_HOST,
-      port: PLAYER_PORT,
+      hostname: getPlayerHost(),
+      port: getPlayerPort(),
       path: reqPath,
       method: ctx.method,
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      timeout: 30000,
+      timeout: 3000,
       family: 4,
+      agent: playerAgent,
     };
     if (reqBody) reqOpts.headers['Content-Length'] = Buffer.byteLength(reqBody);
 
@@ -171,9 +421,25 @@ function proxyYouTubeToPlayer(ctx) {
       });
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
+        // Gracefully handle tablet errors for GET endpoints that the UI polls frequently.
+        // If the tablet returns 5xx for now-playing, return a stub so the UI doesn't disconnect.
+        if (res.statusCode >= 500 && ctx.path === '/api/youtube-dj/now-playing') {
+          console.log(`[youtube-dj proxy] Tablet returned ${res.statusCode} for now-playing — returning stub`);
+          settle(200, { title: '', videoId: '', currentTime: 0, duration: 0, state: -2, error: 'Player recovering' });
+          return;
+        }
         if (res.headers['content-type']) ctx.type = res.headers['content-type'];
-        try { settle(res.statusCode, JSON.parse(data)); }
-        catch { settle(res.statusCode, data); }
+        let parsed;
+        try { parsed = JSON.parse(data); } catch { settle(res.statusCode, data); return; }
+
+        // Enrich queue items with real titles (resolve YouTube: <id> placeholders via oEmbed)
+        if (ctx.method === 'GET' && ctx.path === '/api/youtube-dj/queue' && parsed && parsed.queue && parsed.queue.length > 0) {
+          const placeholderCount = parsed.queue.filter(item => item.title && (item.title.startsWith('YouTube: ') || item.title === item.videoId)).length;
+          console.log(`[youtube-dj proxy] Queue title resolution: ${placeholderCount} placeholders out of ${parsed.queue.length} items`);
+          resolveQueuePlaceholderTitles(parsed).then((enriched) => settle(res.statusCode, enriched));
+        } else {
+          settle(res.statusCode, parsed);
+        }
       });
     });
 
@@ -188,7 +454,7 @@ function proxyYouTubeToPlayer(ctx) {
       } else {
         settle(502, { ok: false, error: 'Player connection timeout' });
       }
-    }, 10000);
+    }, 1000);
 
     req.on('error', (err) => {
       console.error(`[youtube-dj proxy] Error proxying ${ctx.method} ${ctx.path}: ${err.message}`);
@@ -219,39 +485,174 @@ function proxyYouTubeToPlayer(ctx) {
   });
 }
 
-// Track whether the S8 player was recently unreachable (fast-fail cache mode)
-let playerRecentlyDown = false;
-let playerDownSince = 0;
-const PLAYER_DOWN_COOLDOWN = 15000; // After 15s of failures, try again
+// Track whether consecutive proxy failures indicate the S8 player IP may have changed.
+let consecutiveProxyFails = 0;
+const PLAYER_DOWN_THRESHOLD = 10; // Consecutive 502s before triggering mDNS rediscovery
 
 app.use(async (ctx, next) => {
   if (ctx.path.startsWith('/api/youtube-dj/') || ctx.path.startsWith('/api/youtube-karaoke/')) {
-    // Fast-fail: if player was recently down and we have a fresh cache, serve it immediately
-    if (playerRecentlyDown && ctx.method === 'GET' && CACHEABLE_PATHS.has(ctx.path)) {
-      const cached = getCachedYoutube(ctx.path);
-      if (cached) {
-        const age = Date.now() - cached.timestamp;
-        // If cache is fresh enough and player was recently down, skip the proxy attempt
-        if (age < PLAYER_DOWN_COOLDOWN + YOUTUBE_CACHE_TTL) {
-          console.log(`[youtube-dj proxy] Fast-fail cache for ${ctx.path} (player down since ${Math.round((Date.now() - playerDownSince) / 1000)}s ago)`);
-          ctx.status = cached.status;
+    
+    // Detect self-loop: if the proxy target host is this machine, skip proxying.
+    const targetHost = getPlayerHost();
+    const myIps = getMyIps();
+    
+    // If the player has not been discovered yet via mDNS, return stubs
+    // so the UI doesn't hang waiting for a proxy connection that will never come.
+    if (!targetHost) {
+      if (ctx.method === 'GET') {
+        if (ctx.path === '/api/youtube-dj/status' || ctx.path === '/api/youtube-dj/health') {
+          ctx.status = 200;
+          ctx.body = { ok: true, djActive: false, castConnected: false, youtubeSignedIn: false, notDiscovered: true };
           ctx.type = 'application/json';
-          ctx.body = cached.body;
+          return;
+        }
+        if (ctx.path === '/api/youtube-dj/now-playing') {
+          ctx.status = 200;
+          ctx.body = { title: '', videoId: '', currentTime: 0, duration: 0, state: -2 };
+          ctx.type = 'application/json';
+          return;
+        }
+        if (ctx.path === '/api/youtube-dj/queue') {
+          ctx.status = 200;
+          ctx.body = { ok: true, queue: [], currentIndex: -1, playerState: -2 };
+          ctx.type = 'application/json';
+          return;
+        }
+        if (ctx.path === '/api/youtube-dj/playlist') {
+          ctx.status = 200;
+          ctx.body = { ok: true, config: { activePlaylistId: '', playlists: [], playlistId: '', playlistUrl: '' } };
+          ctx.type = 'application/json';
           return;
         }
       }
-      // Cooldown expired, try the player again
-      playerRecentlyDown = false;
+      ctx.status = 503;
+      ctx.body = { ok: false, error: 'Player not yet discovered — waiting for mDNS' };
+      ctx.type = 'application/json';
+      
+      // Fire-and-forget background discovery
+      refreshPlayerHostAsync().catch(() => {});
+      return;
     }
-    await proxyYouTubeToPlayer(ctx);
-    // Track if the proxy failed (502)
-    if (ctx.status === 502) {
-      if (!playerRecentlyDown) {
-        playerRecentlyDown = true;
-        playerDownSince = Date.now();
+    
+    if (myIps.has(targetHost) || targetHost === '127.0.0.1' || targetHost === '::1' || targetHost === 'localhost') {
+      console.log(`[youtube-dj proxy] Target ${targetHost} is local — skipping proxy loop`);
+      // Return stub responses since no upstream player is available
+      if (ctx.path === '/api/youtube-dj/status' || ctx.path === '/api/youtube-dj/health') {
+        ctx.status = 200;
+        ctx.body = {
+          ok: true,
+          djActive: false,
+          castConnected: false,
+          captureReady: false,
+          showActive: false,
+          queueLength: 0,
+          currentTitle: '',
+          interstitialMessage: 'Deskreen Electron app is not running',
+          lastPlaybackError: null,
+          lastAdvanceReason: null,
+          volumeLevel: 1,
+          port: PORT,
+          hostMode: 'direct',
+          host: getLanIp(),
+          youtubeSignedIn: false,
+        };
+      } else if (ctx.path === '/api/youtube-dj/now-playing') {
+        ctx.status = 200;
+        ctx.body = { title: '', videoId: '', currentTime: 0, duration: 0, state: -2 };
+      } else if (ctx.path === '/api/youtube-dj/queue') {
+        ctx.status = 200;
+        ctx.body = { ok: true, queue: [], currentIndex: -1, playerState: -2 };
+      } else if (ctx.path === '/api/youtube-dj/playlist') {
+        ctx.status = 200;
+        ctx.body = { ok: true, config: { activePlaylistId: '', playlists: [], playlistId: '', playlistUrl: '' } };
+      } else if (ctx.path === '/api/youtube-dj/restart-show') {
+        ctx.status = 200;
+        ctx.body = { ok: true };
+      } else {
+        ctx.status = 200;
+        ctx.body = { ok: false, error: 'Deskreen Electron app is not running' };
       }
-    } else {
-      playerRecentlyDown = false;
+      ctx.type = 'application/json';
+      return;
+    }
+
+    // ── Fast-fail: if the S8 player has been unreachable recently, ──
+    // skip the proxy entirely and serve stub/cached responses.
+    // This prevents hung TCP connections from piling up when the
+    // tablet is offline.
+    if (playerRecentlyDown) {
+      const downSec = Math.floor((Date.now() - playerDownSince) / 1000);
+      // GET polling endpoints: serve stubs so the UI doesn't disconnect
+      if (ctx.method === 'GET') {
+        if (ctx.path === '/api/youtube-dj/health' || ctx.path === '/api/youtube-dj/status') {
+          ctx.status = 200;
+          ctx.body = { ok: true, djActive: false, castConnected: false, youtubeSignedIn: false, playerDown: true, playerDownSec: downSec };
+          ctx.type = 'application/json';
+          return;
+        }
+        if (ctx.path === '/api/youtube-dj/now-playing') {
+          ctx.status = 200;
+          ctx.body = { title: '', videoId: '', currentTime: 0, duration: 0, state: -2, playerDown: true };
+          ctx.type = 'application/json';
+          return;
+        }
+        if (ctx.path === '/api/youtube-dj/queue') {
+          ctx.status = 200;
+          ctx.body = { ok: true, queue: [], currentIndex: -1, playerState: -2 };
+          ctx.type = 'application/json';
+          return;
+        }
+      }
+      // POST/DELETE mutations: fast-fail with a clear error
+      // (don't queue up connections that will just time out)
+      if (ctx.method === 'POST' || ctx.method === 'DELETE') {
+        ctx.status = 503;
+        ctx.body = { ok: false, error: 'Player unavailable — retry in ' + Math.max(0, Math.ceil((PLAYER_DOWN_COOLDOWN_MS - (Date.now() - playerDownSince)) / 1000)) + 's' };
+        ctx.type = 'application/json';
+        return;
+      }
+    }
+
+    // ── Background: periodically refresh the player via mDNS ──
+    // Only trigger if the cache is really stale (> 5 min), and never
+    // on the request path — fire-and-forget in the background.
+    const now = Date.now();
+    if (!_mdnsPlayerHost || (now - _mdnsPlayerHost.at) > MDNS_PLAYER_TTL) {
+      // Fire-and-forget — don't await, don't block the request
+      refreshPlayerHostAsync().catch(() => {});
+    }
+
+    // Pre-emptively trigger download when the dashboard sends a video to the S8.
+    const isPlayNow = ctx.method === 'POST' && (ctx.path.endsWith('/play-now') || ctx.path === '/api/youtube-dj/play-now');
+    const isQueue = ctx.method === 'POST' && (ctx.path.endsWith('/queue') || ctx.path === '/api/youtube-dj/queue' || ctx.path === '/api/youtube-karaoke/queue');
+    if ((isPlayNow || isQueue) && ctx.request.body && ctx.request.body.url) {
+      const match = ctx.request.body.url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+      if (match) {
+        const videoId = match[1];
+        const mp4 = getVideoPath(videoId);
+        if (!fs.existsSync(mp4)) {
+          console.log('[proxy] Pre-emptively downloading video for S8: ' + videoId);
+          downloadVideo(videoId).catch((e) => console.warn('[proxy] Pre-download failed: ' + e.message));
+        }
+      }
+    }
+
+    await proxyYouTubeToPlayer(ctx);
+    // Track consecutive proxy failures for ADB-based IP rediscovery.
+    if (ctx.status === 502) {
+      consecutiveProxyFails++;
+      if (consecutiveProxyFails >= PLAYER_DOWN_THRESHOLD) {
+        // Trigger async IP rediscovery (tablet IP may have changed)
+        refreshPlayerHostAsync().catch(() => {});
+        consecutiveProxyFails = 0;
+      }
+      // After 3 consecutive 502s, mark the player as down for fast-fail
+      if (consecutiveProxyFails >= 3 && !playerRecentlyDown) {
+        markPlayerDown();
+      }
+    } else if (ctx.status >= 200 && ctx.status < 500) {
+      consecutiveProxyFails = 0;
+      markPlayerUp();
     }
     return;
   }
@@ -265,38 +666,87 @@ app.use(async (ctx, next) => {
 // ═══════════════════════════════════════════════════════════════
 
 const LIBRARY_DIR = path.resolve(__dirname, '..', '.deskreen', 'library');
+const LIBRARY_KARAOKE_DIR = path.join(LIBRARY_DIR, 'karaoke');
+const LIBRARY_SONGS_DIR = path.join(LIBRARY_DIR, 'songs');
 const DOWNLOADS_DIR = path.resolve(__dirname, '..', '.deskreen', 'youtube-downloads');
 const ARCHIVE_PATH = path.resolve(__dirname, '..', '.deskreen', 'youtube-download-archive.txt');
 const TAGS_PATH = path.resolve(__dirname, '..', '.deskreen', 'tags.json');
 const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
 
+// All library directories to search for files (root + subdirectories)
+const LIBRARY_SEARCH_DIRS = [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR];
+
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const SCRIPTS_DIR = path.resolve(__dirname);
+
 fs.mkdirSync(LIBRARY_DIR, { recursive: true });
+fs.mkdirSync(LIBRARY_KARAOKE_DIR, { recursive: true });
+fs.mkdirSync(LIBRARY_SONGS_DIR, { recursive: true });
+
+// Determine the download directory for a video based on its tag
+function getDownloadDir(videoId) {
+  const tags = loadTags();
+  const tag = tags[videoId]?.tag;
+  if (tag === 'karaoke') return LIBRARY_KARAOKE_DIR;
+  if (tag === 'song' || tag === 'music') return LIBRARY_SONGS_DIR;
+  return LIBRARY_DIR; // root for unclassified
+}
+
+// Search all library dirs for a file matching a predicate
+function _findInLibraryDirs(predicate) {
+  for (const dir of LIBRARY_SEARCH_DIRS) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      const result = predicate(dir);
+      if (result) return result;
+    } catch (e) { /* ignore */ }
+  }
+  return null;
+}
 
 function getVideoPath(videoId) {
-  // Try exact match first, then wildcard (yt-dlp sometimes adds format code suffix)
-  const exact = path.join(LIBRARY_DIR, videoId + '.mp4');
-  if (fs.existsSync(exact)) return exact;
-  try {
-    const files = fs.readdirSync(LIBRARY_DIR);
-    const match = files.find(f => f.startsWith(videoId) && f.endsWith('.mp4'));
-    if (match) return path.join(LIBRARY_DIR, match);
-  } catch (e) { /* ignore */ }
-  return exact; // return expected path even if not found
+  // Search all library dirs (root + subdirs) for video file in any format
+  const VIDEO_EXTS = ['.mp4', '.mkv', '.mp3', '.webm'];
+  const found = _findInLibraryDirs((dir) => {
+    for (const ext of VIDEO_EXTS) {
+      const exact = path.join(dir, videoId + ext);
+      if (fs.existsSync(exact)) return exact;
+    }
+    // Also check for files that start with videoId (handles yt-dlp format suffixes)
+    try {
+      const files = fs.readdirSync(dir);
+      for (const ext of VIDEO_EXTS) {
+        const match = files.find(f => f.startsWith(videoId) && f.endsWith(ext));
+        if (match) return path.join(dir, match);
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  });
+  if (found) return found;
+  return path.join(LIBRARY_DIR, videoId + '.mp4'); // fallback expected path
 }
+
 function getInfoPath(videoId) {
-  return path.join(LIBRARY_DIR, videoId + '.info.json');
+  const found = _findInLibraryDirs((dir) => {
+    const p = path.join(dir, videoId + '.info.json');
+    if (fs.existsSync(p)) return p;
+    return null;
+  });
+  if (found) return found;
+  return path.join(LIBRARY_DIR, videoId + '.info.json'); // fallback expected path
 }
+
 function getThumbPath(videoId) {
-  try {
-    const files = fs.readdirSync(LIBRARY_DIR);
+  return _findInLibraryDirs((dir) => {
+    const files = fs.readdirSync(dir);
     for (const ext of ['jpg', 'webp', 'png']) {
-      const exact = path.join(LIBRARY_DIR, videoId + '.' + ext);
+      const exact = path.join(dir, videoId + '.' + ext);
       if (fs.existsSync(exact)) return exact;
       const match = files.find(f => f.startsWith(videoId) && f.endsWith('.' + ext) && !f.includes('.vtt') && !f.includes('.info.'));
-      if (match) return path.join(LIBRARY_DIR, match);
+      if (match) return path.join(dir, match);
     }
-  } catch (e) { /* ignore */ }
-  return null;
+    return null;
+  });
 }
 
 function getVideoMetadata(videoId) {
@@ -314,16 +764,18 @@ function getVideoMetadata(videoId) {
 }
 
 function getSubtitleFiles(videoId) {
-  if (!fs.existsSync(LIBRARY_DIR)) return [];
   const files = [];
-  try {
-    for (const f of fs.readdirSync(LIBRARY_DIR)) {
-      if (f.startsWith(videoId + '.') && f.endsWith('.vtt')) {
-        const stripped = f.replace(videoId + '.', '').replace('.vtt', '');
-        files.push({ lang: stripped, file: f, path: path.join(LIBRARY_DIR, f) });
+  for (const dir of LIBRARY_SEARCH_DIRS) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      for (const f of fs.readdirSync(dir)) {
+        if (f.startsWith(videoId + '.') && f.endsWith('.vtt')) {
+          const stripped = f.replace(videoId + '.', '').replace('.vtt', '');
+          files.push({ lang: stripped, file: f, path: path.join(dir, f) });
+        }
       }
-    }
-  } catch (e) { /* ignore */ }
+    } catch (e) { /* ignore */ }
+  }
   return files;
 }
 
@@ -343,15 +795,19 @@ function downloadVideo(videoId) {
     const mp4 = getVideoPath(videoId);
     if (fs.existsSync(mp4)) { resolve(mp4); return; }
 
-    console.log('[library] Downloading video: ' + videoId);
+    const outDir = getDownloadDir(videoId);
+    const tagLabel = outDir === LIBRARY_KARAOKE_DIR ? 'karaoke' : outDir === LIBRARY_SONGS_DIR ? 'songs' : 'root';
+    console.log('[library] Downloading video: ' + videoId + ' → ' + tagLabel);
+    // No --download-archive on individual downloads — the archive is for
+    // batch dedup. On-demand downloads must always fetch even if the mp4
+    // was cleaned up since the last batch run.
     const proc = require('child_process').spawn(YT_DLP_PATH, [
       '-f', 'b[height<=1080]',
       '--merge-output-format', 'mp4',
       '--write-info-json',
       '--write-thumbnail',
-      '--write-subs', '--sub-langs', 'all',
-      '--download-archive', ARCHIVE_PATH,
-      '-o', path.join(LIBRARY_DIR, '%(id)s.%(ext)s'),
+      '--write-subs', '--sub-langs', 'all,-live_chat',
+      '-o', path.join(outDir, '%(id)s.%(ext)s'),
       '--no-playlist',
       'https://www.youtube.com/watch?v=' + videoId,
     ], { timeout: 90000 });
@@ -362,6 +818,7 @@ function downloadVideo(videoId) {
     proc.on('close', (code) => {
       if (code === 0 && fs.existsSync(mp4)) {
         console.log('[library] Download complete: ' + videoId);
+        __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 }; // invalidate list cache
         // Validate subtitle files
         const subs = getSubtitleFiles(videoId);
         for (const s of subs) { validateVttFile(s.path); }
@@ -528,6 +985,125 @@ router.get('/api/vlc-dj/status', async (ctx) => {
       duration: (d && d.length) || 0,
     };
   } catch (e) { ctx.body = { state: 'stopped', volume: 0, time: 0, length: 0, position: 0, duration: 0 }; }
+});
+
+// ── Song Request Queue ──
+// Persisted via MySQL on Bluehost (karol.rideyrbike.com/db.php).
+// Local cache for fast lookups; refreshed on startup and periodically.
+
+let songRequestCache = {}; // videoId → requester_name (lazy-loaded)
+
+async function getSongRequestMap() {
+  try {
+    const map = await mysql.requestMap();
+    if (map) { songRequestCache = map; return map; }
+  } catch (e) { console.error('[requests] MySQL fetch error:', e.message); }
+  return songRequestCache || {};
+}
+
+// Pre-load on startup
+getSongRequestMap();
+// Refresh every 30 seconds (lightweight: just returns the map)
+setInterval(() => { getSongRequestMap().catch(() => {}); }, 30000);
+
+function proxyRequestToS8(videoId, forcePlayNow, requester, songTitle) {
+  return new Promise((resolve, reject) => {
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    const bodyObj = { url };
+    if (forcePlayNow) bodyObj.action = 'play-now';
+    if (requester) bodyObj.requester = requester;
+    if (songTitle) bodyObj.title = songTitle;
+    const body = JSON.stringify(bodyObj);
+    const reqOpts = {
+      hostname: getPlayerHost(),
+      port: getPlayerPort(),
+      path: '/api/youtube-dj/queue',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 5000,
+      family: 4,
+      agent: playerAgent,
+    };
+    const req = http.request(reqOpts, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        try { resolve({ ok: true, body: JSON.parse(data) }); }
+        catch { resolve({ ok: true, body: data }); }
+      });
+    });
+    req.on('error', (e) => reject(e));
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+router.post('/api/queue/request', async (ctx) => {
+  const { videoId, name, title } = ctx.request.body || {};
+  if (!videoId || !name) {
+    ctx.status = 400;
+    ctx.body = { ok: false, error: 'videoId and name are required' };
+    return;
+  }
+  const cleanName = String(name).trim().substring(0, 40);
+  if (!cleanName) {
+    ctx.status = 400;
+    ctx.body = { ok: false, error: 'name is required' };
+    return;
+  }
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400;
+    ctx.body = { ok: false, error: 'invalid videoId' };
+    return;
+  }
+
+  // Persist request to MySQL via Bluehost proxy
+  const cleanTitle = title ? String(title).trim().substring(0, 120) : '';
+  mysql.requestAdd(videoId, cleanName, cleanTitle).catch(e => {
+    console.error('[requests] MySQL add error:', e.message);
+  });
+
+  const playerHost = getPlayerHost();
+  if (!playerHost) {
+    console.log(`[request] Queued request from "${cleanName}" for ${videoId} — player not yet discovered, will proxy when ready`);
+    ctx.status = 202;
+    ctx.body = { ok: true, videoId, requester: cleanName, queued: true, playerReady: false };
+    return;
+  }
+
+  // Check if S8 is currently idle — if so, start playback
+  let shouldPlayNow = false;
+  try {
+    const statusBody = await new Promise((res, rej) => {
+      const r = http.get(`http://${playerHost}:${getPlayerPort()}/api/youtube-dj/queue`, { timeout: 3000, family: 4, agent: playerAgent }, (resp) => {
+        let d = '';
+        resp.on('data', c => d += c);
+        resp.on('end', () => { try { res(JSON.parse(d)); } catch { res(null); } });
+      });
+      r.on('error', rej);
+      r.on('timeout', () => { r.destroy(); rej(new Error('timeout')); });
+    });
+    shouldPlayNow = statusBody && (!statusBody.isPlaying || statusBody.currentIndex < 0);
+  } catch (e) { /* can't check, just queue */ }
+
+  // Proxy to S8
+  try {
+    const result = await proxyRequestToS8(videoId, shouldPlayNow, cleanName, cleanTitle);
+    console.log(`[request] "${cleanName}" requested ${videoId} — added to S8 queue`);
+    ctx.status = 200;
+    ctx.body = { ok: true, videoId, requester: cleanName, queued: true, playerReady: true, s8Response: result.body };
+  } catch (e) {
+    console.error(`[request] Failed to proxy to S8 for "${cleanName}" / ${videoId}: ${e.message}`);
+    // Still return success — the request is stored, will be picked up later
+    ctx.status = 202;
+    ctx.body = { ok: true, videoId, requester: cleanName, queued: true, playerReady: false, proxyError: e.message };
+  }
+});
+
+router.get('/api/queue/request/list', async (ctx) => {
+  const map = await getSongRequestMap();
+  ctx.body = { ok: true, requestMap: map, count: Object.keys(map).length };
 });
 
 // ── VLC transport routes (match React SPA paths) ──
@@ -829,13 +1405,20 @@ function queryTrackProperties() {
 let abletonConnected = false;
 
 function checkAbletonConnected() {
-  const { execSync } = require('child_process');
-  try {
-    const out = execSync('lsof -i :11000 -sTCP:LISTEN 2>/dev/null || lsof -i :11000 2>/dev/null', { timeout: 2000 }).toString();
-    return out.includes('Live') || out.includes('Ableton');
-  } catch {
-    return false;
-  }
+  return new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    // Try lsof first (fast, local), fall back silently on failure
+    execFile('lsof', ['-i', ':11000'], { timeout: 2000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' }, (err, stdout) => {
+      if (err) {
+        // lsof failed or returned non-zero — Ableton is not listening
+        resolve(false);
+        return;
+      }
+      resolve((stdout || '').includes('Live') || (stdout || '').includes('Ableton'));
+    });
+    // Safety: if execFile hangs (unlikely with SIGKILL), resolve false after timeout
+    setTimeout(() => resolve(false), 2500);
+  }).catch(() => false);
 }
 
 // ── Cached state — stores the last values the user/API set ──
@@ -883,18 +1466,21 @@ function ensureTrack(idx) {
 
 // Poll connection every 5 seconds, query track properties every 5s
 function startAbletonPoll() {
-  setInterval(() => {
-    abletonConnected = checkAbletonConnected();
+  setInterval(async () => {
+    abletonConnected = await checkAbletonConnected();
     if (abletonConnected) {
       ensureOscSocket();
       queryTrackProperties();
     }
   }, 5000);
-  abletonConnected = checkAbletonConnected();
-  if (abletonConnected) {
-    ensureOscSocket();
-    setTimeout(queryTrackProperties, 1000);
-  }
+  // Initial check (async, fire-and-forget)
+  checkAbletonConnected().then((connected) => {
+    abletonConnected = connected;
+    if (abletonConnected) {
+      ensureOscSocket();
+      setTimeout(queryTrackProperties, 1000);
+    }
+  });
 }
 
 // ── Ableton routes (AbletonOSC Remote Script API) ──
@@ -1072,16 +1658,26 @@ router.post('/api/ableton/track/:i/send/:sendIndex', (ctx) => {
 });
 
 // ── Audio device discovery (for U-Phoria detection from S24) ──
-router.get('/api/audio/devices', (ctx) => {
-  const { execSync } = require('child_process');
+router.get('/api/audio/devices', async (ctx) => {
   let umcPresent = false;
   let blackholePresent = false;
   let karolAggregate = false;
   let defaultOutput = '';
   let umcSampleRate = 0;
 
+  // Use async execFile to avoid blocking the event loop
+  const { execFile } = require('child_process');
   try {
-    const out = execSync('system_profiler SPAudioDataType -json', { timeout: 3000 }).toString();
+    const out = await new Promise((resolve, reject) => {
+      execFile('system_profiler', ['SPAudioDataType', '-json'], {
+        timeout: 3000,
+        maxBuffer: 1024 * 1024,
+        killSignal: 'SIGKILL',
+      }, (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout);
+      });
+    });
     const data = JSON.parse(out);
     for (const item of data.SPAudioDataType || []) {
       for (const d of item._items || []) {
@@ -1202,7 +1798,369 @@ router.get('/api/library/metadata/:videoId', async (ctx) => {
   ctx.body = { ok: true, ready: false, downloading: true, id: videoId };
 });
 
+// Prioritize a video for immediate download (foreground priority)
+router.post('/api/library/download-now', async (ctx) => {
+  const { videoId } = ctx.request.body || {};
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
+  }
+  const mp4 = getVideoPath(videoId);
+  if (fs.existsSync(mp4)) {
+    ctx.body = { ok: true, ready: true, id: videoId };
+    return;
+  }
+  // Fire download immediately (foreground priority)
+  downloadVideo(videoId).then(() => {
+    console.log('[library] Priority download complete: ' + videoId);
+  }).catch((e) => {
+    console.warn('[library] Priority download failed: ' + e.message);
+  });
+  ctx.body = { ok: true, ready: false, downloading: true, id: videoId };
+});
+
+// ── Full-pipeline add-video: download + tag enrichment + cache invalidation ──
+const downloadJobs = new Map(); // videoId -> { status: 'downloading'|'complete'|'failed', progress: 0, error?: string }
+
+router.post('/api/library/add-video', async (ctx) => {
+  const body = ctx.request.body || {};
+  const url = body.url || '';
+  const videoIdMatch = url.match(/(?:v=|youtu\.be\/|^)([a-zA-Z0-9_-]{11})/);
+  if (!videoIdMatch) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid YouTube URL or video ID' }; return;
+  }
+  const videoId = videoIdMatch[1];
+
+  const mp4 = getVideoPath(videoId);
+  if (fs.existsSync(mp4)) {
+    ctx.body = { ok: true, videoId, status: 'complete', message: 'Already downloaded' };
+    return;
+  }
+
+  if (downloadJobs.has(videoId) && downloadJobs.get(videoId).status === 'downloading') {
+    ctx.body = { ok: true, videoId, status: 'downloading', message: 'Download in progress' };
+    return;
+  }
+
+  // Start background download
+  downloadJobs.set(videoId, { status: 'downloading', progress: 0 });
+  ctx.body = { ok: true, videoId, status: 'downloading', message: 'Download started' };
+
+  (async () => {
+    try {
+      console.log('[library/add-video] Downloading: ' + videoId);
+      await downloadVideo(videoId);
+
+      // Add to download archive
+      try {
+        if (!fs.existsSync(path.dirname(ARCHIVE_PATH))) {
+          fs.mkdirSync(path.dirname(ARCHIVE_PATH), { recursive: true });
+        }
+        const archiveContent = fs.existsSync(ARCHIVE_PATH)
+          ? fs.readFileSync(ARCHIVE_PATH, 'utf8') : '';
+        if (!archiveContent.includes('youtube ' + videoId)) {
+          // Ensure trailing newline before appending
+          const needsNewline = archiveContent.length > 0 && !archiveContent.endsWith('\n');
+          fs.appendFileSync(ARCHIVE_PATH, (needsNewline ? '\n' : '') + 'youtube ' + videoId + '\n', 'utf8');
+        }
+      } catch (e) {
+        console.warn('[library/add-video] Archive update warning: ' + e.message);
+      }
+
+      // Enrich tags from info.json
+      try {
+        const infoPath = getInfoPath(videoId);
+        if (fs.existsSync(infoPath)) {
+          const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+          const tags = loadTags();
+          const existing = tags[videoId] || {};
+          // Auto-detect karaoke vs music from title
+          const title = (info.title || '').toLowerCase();
+          const isKaraoke = /karaoke|instrumental|lyrics?|cover\b|backing.track|sing.along/i.test(title);
+          const autoTag = existing.tag
+            || (isKaraoke ? 'karaoke' : 'music');
+          tags[videoId] = {
+            tag: autoTag,
+            year: existing.year || (info.upload_date ? info.upload_date.slice(0, 4) : ''),
+            artist: existing.artist || (info.uploader || ''),
+            source: existing.source || 'auto-info.json',
+          };
+          saveTags(tags);
+          console.log('[library/add-video] Tag enriched: ' + videoId + ' (' + autoTag + ')');
+
+          // Move files to correct subdirectory if they're in the library root
+          const targetDir = autoTag === 'karaoke' ? LIBRARY_KARAOKE_DIR :
+            (autoTag === 'song' || autoTag === 'music') ? LIBRARY_SONGS_DIR : LIBRARY_DIR;
+          if (targetDir !== LIBRARY_DIR) {
+            const rootFiles = [];
+            try {
+              if (fs.existsSync(LIBRARY_DIR)) {
+                for (const f of fs.readdirSync(LIBRARY_DIR)) {
+                  if (f.startsWith(videoId + '.') || f.startsWith(videoId + '-')) {
+                    rootFiles.push(f);
+                  }
+                }
+              }
+            } catch (e) {}
+            for (const fname of rootFiles) {
+              const src = path.join(LIBRARY_DIR, fname);
+              const dst = path.join(targetDir, fname);
+              try {
+                fs.renameSync(src, dst);
+                console.log('[library/add-video] Moved ' + fname + ' → ' + path.relative(LIBRARY_DIR, targetDir) + '/');
+              } catch (e) {
+                console.warn('[library/add-video] Failed to move ' + fname + ': ' + e.message);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[library/add-video] Tag enrichment warning: ' + e.message);
+      }
+
+      // Invalidate list cache
+      __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
+
+      downloadJobs.set(videoId, { status: 'complete', progress: 100 });
+      console.log('[library/add-video] Complete: ' + videoId);
+    } catch (e) {
+      downloadJobs.set(videoId, { status: 'failed', progress: -1, error: e.message });
+      console.error('[library/add-video] Failed: ' + videoId + ' — ' + e.message);
+    }
+  })();
+});
+
+// Check download status
+router.get('/api/library/download-status/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
+  }
+
+  const job = downloadJobs.get(videoId);
+  if (job) {
+    ctx.body = { ok: true, videoId, status: job.status, progress: job.progress, error: job.error };
+    return;
+  }
+
+  // Check if file exists on disk (was downloaded in a previous session)
+  const mp4 = getVideoPath(videoId);
+  ctx.body = {
+    ok: true,
+    videoId,
+    status: fs.existsSync(mp4) ? 'complete' : 'not_found',
+    progress: fs.existsSync(mp4) ? 100 : 0,
+  };
+});
+
+// ── Karaoke Video Maker ──────────────────────────────────────────────
+const karaokeJobs = new Map(); // videoId -> { status, progress, error?, karaokeVideoId? }
+
+router.post('/api/library/make-karaoke', async (ctx) => {
+  const body = ctx.request.body || {};
+  const url = body.url || '';
+  const artist = body.artist || '';
+  const title = body.title || '';
+
+  const videoIdMatch = url.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|^)([a-zA-Z0-9_-]{11})/);
+  if (!videoIdMatch) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid YouTube URL or video ID' }; return;
+  }
+  const videoId = videoIdMatch[1];
+
+  // Check if already processing or complete
+  if (karaokeJobs.has(videoId)) {
+    const job = karaokeJobs.get(videoId);
+    ctx.body = { ok: true, videoId, status: job.status, progress: job.progress, error: job.error };
+    return;
+  }
+
+  // Check if already made
+  const karaokeMp4 = path.join(LIBRARY_KARAOKE_DIR, videoId + '-karaoke.mp4');
+  if (fs.existsSync(karaokeMp4)) {
+    ctx.body = { ok: true, videoId, karaokeVideoId: videoId + '-karaoke', status: 'complete', progress: 100 };
+    return;
+  }
+
+  // Start background job
+  karaokeJobs.set(videoId, { status: 'processing', progress: 0 });
+
+  // Build argument list for make-karaoke-video.py
+  const args = [path.join(SCRIPTS_DIR, 'make-karaoke-video.py'), url];
+  if (artist) args.push('--artist', artist);
+  if (title) args.push('--title', title);
+
+  const proc = require('child_process').spawn('python3', args, {
+    cwd: PROJECT_ROOT,
+    env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let lastProgress = 0;
+  proc.stdout.on('data', (chunk) => {
+    const lines = chunk.toString().split('\n').filter(Boolean);
+    for (const line of lines) {
+      console.log('[karaoke/make] ' + line);
+      // Parse progress from structured log lines: "[TIMESTAMP] step: message"
+      const match = line.match(/^\[\d+\.?\d*\] (\w+): (.+)$/);
+      if (match) {
+        const step = match[1];
+        if (step === 'download') lastProgress = 15;
+        else if (step === 'demucs') lastProgress = 35;
+        else if (step === 'lyrics') lastProgress = 55;
+        else if (step === 'render') lastProgress = 80;
+        else if (step === 'library') lastProgress = 95;
+        else if (step === 'complete') lastProgress = 100;
+        else if (step === 'error') lastProgress = -1;
+        const job = karaokeJobs.get(videoId);
+        if (job) job.progress = lastProgress;
+      }
+    }
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    console.error('[karaoke/make:stderr] ' + chunk.toString().trim());
+  });
+
+  proc.on('close', (code) => {
+    if (code === 0) {
+      karaokeJobs.set(videoId, { status: 'complete', progress: 100, karaokeVideoId: videoId + '-karaoke' });
+      console.log('[karaoke/make] Complete: ' + videoId + ' -> ' + videoId + '-karaoke');
+    } else {
+      karaokeJobs.set(videoId, { status: 'failed', progress: -1, error: 'Process exited with code ' + code });
+      console.error('[karaoke/make] Failed: ' + videoId + ' (exit ' + code + ')');
+    }
+  });
+
+  proc.on('error', (err) => {
+    karaokeJobs.set(videoId, { status: 'failed', progress: -1, error: err.message });
+    console.error('[karaoke/make] Spawn error: ' + err.message);
+  });
+
+  // Return immediately — client polls /status for progress
+  ctx.body = { ok: true, videoId, status: 'processing', progress: 0 };
+});
+
+// Check karaoke job status
+router.get('/api/library/make-karaoke/status/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
+  }
+
+  const job = karaokeJobs.get(videoId);
+  if (job) {
+    ctx.body = { ok: true, videoId, status: job.status, progress: job.progress, error: job.error, karaokeVideoId: job.karaokeVideoId };
+    return;
+  }
+
+  // Check if completed on disk
+  const karaokeMp4 = path.join(LIBRARY_KARAOKE_DIR, videoId + '-karaoke.mp4');
+  if (fs.existsSync(karaokeMp4)) {
+    ctx.body = { ok: true, videoId, karaokeVideoId: videoId + '-karaoke', status: 'complete', progress: 100 };
+  } else {
+    ctx.body = { ok: true, videoId, status: 'not_found', progress: 0 };
+  }
+});
+
+// ── Karaoke Lyrics (LRC JSON) for real-time overlay ──
+router.get('/api/library/lyrics/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
+  }
+
+  // Try karaoke LRC first, then plain library, then songs
+  const candidates = [
+    path.join(LIBRARY_KARAOKE_DIR, videoId + '-karaoke.lrc.json'),
+    path.join(LIBRARY_DIR, videoId + '.lrc.json'),
+    path.join(LIBRARY_SONGS_DIR, videoId + '.lrc.json'),
+  ];
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        ctx.body = { ok: true, videoId, ...data };
+        return;
+      }
+    } catch (e) { /* continue */ }
+  }
+
+  ctx.status = 404;
+  ctx.body = { ok: false, error: 'No lyrics found', videoId };
+});
+
 // Serve mp4 file with Range header support for download resumption
+// Stream a video — pipes yt-dlp directly to the S8 so ExoPlayer starts
+// within seconds. No waiting for full download + transfer.
+router.get('/api/library/stream/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
+  }
+  const mp4 = getVideoPath(videoId);
+  // If already cached (non-empty), serve from disk like /file
+  if (fs.existsSync(mp4) && fs.statSync(mp4).size > 0) {
+    const stat = fs.statSync(mp4);
+    const range = ctx.req.headers.range;
+    ctx.set('Accept-Ranges', 'bytes');
+    ctx.set('Content-Type', 'video/mp4');
+    ctx.set('Cache-Control', 'no-cache');
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      ctx.status = 206;
+      ctx.set('Content-Range', 'bytes ' + start + '-' + end + '/' + stat.size);
+      ctx.set('Content-Length', String(end - start + 1));
+      ctx.body = fs.createReadStream(mp4, { start, end });
+    } else {
+      ctx.set('Content-Length', String(stat.size));
+      ctx.body = fs.createReadStream(mp4);
+    }
+    return;
+  }
+  // Not cached — spawn yt-dlp and pipe directly to the client.
+  // ExoPlayer progressive HTTP playback starts as soon as data arrives.
+  console.log('[library] Streaming live: ' + videoId);
+
+  ctx.respond = false;
+  const res = ctx.res;
+  res.writeHead(200, {
+    'Content-Type': 'video/mp4',
+    'Cache-Control': 'no-cache',
+  });
+
+  const proc = require('child_process').spawn(YT_DLP_PATH, [
+    '-f', 'b[height<=1080]',
+    '--merge-output-format', 'mp4',
+    '-o', '-',
+    '--no-playlist',
+    '--no-progress',
+    'https://www.youtube.com/watch?v=' + videoId,
+  ], { timeout: 300000 });
+
+  let aborted = false;
+  res.on('close', () => { aborted = true; proc.kill('SIGTERM'); });
+  res.on('finish', () => { aborted = true; proc.kill('SIGTERM'); });
+
+  proc.stdout.pipe(res);
+
+  // Also save the data to disk for future cache hits
+  const ws = fs.createWriteStream(mp4);
+  proc.stdout.pipe(ws);
+
+  proc.on('close', (code) => {
+    ws.end();
+    if (!aborted && code !== 0) console.error('[library] Stream exit ' + code + ' for ' + videoId);
+    else if (!aborted) console.log('[library] Stream cache saved: ' + videoId);
+  });
+  proc.stderr.on('data', (d) => {
+    const msg = d.toString().trim();
+    if (msg && !msg.includes('[download]')) console.error('[library] Stream: ' + msg);
+  });
+});
+
 router.get('/api/library/file/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
@@ -1249,8 +2207,13 @@ router.get('/api/library/status/:videoId', async (ctx) => {
 router.get('/api/library/subtitle/:videoId/:lang', async (ctx) => {
   const { videoId, lang } = ctx.params;
   if (!videoId || !lang) { ctx.status = 400; ctx.body = { ok: false }; return; }
-  const filePath = path.join(LIBRARY_DIR, videoId + '.' + lang + '.vtt');
-  if (!fs.existsSync(filePath)) {
+  // Search all library dirs for the subtitle file
+  let filePath = null;
+  for (const dir of LIBRARY_SEARCH_DIRS) {
+    const candidate = path.join(dir, videoId + '.' + lang + '.vtt');
+    if (fs.existsSync(candidate)) { filePath = candidate; break; }
+  }
+  if (!filePath) {
     ctx.status = 404;
     ctx.body = { ok: false, error: 'Subtitle not found' };
     return;
@@ -1277,114 +2240,91 @@ router.get('/api/library/thumb/:videoId', async (ctx) => {
 });
 
 // List all videos in the local library
-router.get('/api/library/list', async (ctx) => {
-  const videos = [];
+// Uses a forked subprocess for the heavy filesystem scan so the
+// main Node.js event loop stays responsive during ~20s of sync I/O.
+let __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
+const LIBRARY_LIST_CACHE_MS = 30_000;
+let __libraryScanInFlight = null;
+const CACHE_FILE = '/tmp/karol-library-cache.json';
+
+function tryLoadCacheFromDisk() {
   try {
-    // Parse the download archive — source of truth for what's been downloaded
-    const downloadedVideoIds = new Set();
-    if (fs.existsSync(ARCHIVE_PATH)) {
-      const lines = fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n').filter(Boolean);
-      for (const line of lines) {
-        const vid = line.trim().replace(/^youtube\s+/i, '').trim();
-        if (vid && vid.length >= 10) downloadedVideoIds.add(vid);
+    if (!fs.existsSync(CACHE_FILE)) return false;
+    const rawJson = fs.readFileSync(CACHE_FILE, 'utf8');
+    const result = JSON.parse(rawJson);
+    if (result && result.ok) {
+      __libraryListCache = { ts: Date.now(), data: result, rawJson, archiveMtime: result.archiveMtime || 0 };
+      console.log('[library] Loaded from disk: ' + result.count + ' videos');
+      return true;
+    }
+  } catch (e) { console.error('[library] Failed to load cache from disk:', e.message); }
+  return false;
+}
+
+function buildLibraryCache() {
+  if (__libraryScanInFlight) return __libraryScanInFlight;
+  __libraryScanInFlight = new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    const worker = execFile(process.execPath, [path.resolve(__dirname, 'library-scan-worker.js'), ARCHIVE_PATH, LIBRARY_DIR, DOWNLOADS_DIR, TAGS_PATH], {
+      timeout: 120_000,
+      maxBuffer: 10 * 1024 * 1024,
+    }, async (err, stdout, stderr) => {
+      if (stderr) console.error('[library] Worker stderr:', stderr.trim());
+      let rawJson = null;
+      try { rawJson = await fs.promises.readFile(CACHE_FILE, 'utf8'); } catch (e) { console.error('[library] Read cache file:', e.message); }
+      let result = null;
+      try { result = rawJson ? JSON.parse(rawJson) : null; } catch (e) { console.error('[library] Parse error:', e.message); }
+      if (result && result.ok) {
+        // Store the pre-serialized JSON string to avoid re-stringifying on every request
+        __libraryListCache = { ts: Date.now(), data: result, rawJson, archiveMtime: result.archiveMtime || 0 };
+        console.log('[library] Cache built: ' + result.count + ' videos');
+      } else {
+        console.error('[library] Worker failed:', err ? err.message : 'no result');
       }
-    }
+      __libraryScanInFlight = null;
+      resolve(result);
+    });
+  });
+  return __libraryScanInFlight;
+}
 
-    // Single-pass scan: build videoId -> {size, subs, meta} map
-    // by scanning both directories once
-    const fileMap = {}; // videoId -> { size: 0, subs: Set, meta: null }
-
-    function ensure(vid) {
-      if (!fileMap[vid]) fileMap[vid] = { size: 0, subs: [], meta: null };
-      return fileMap[vid];
-    }
-
-    for (const dir of [LIBRARY_DIR, DOWNLOADS_DIR]) {
-      if (!fs.existsSync(dir)) continue;
-      const files = fs.readdirSync(dir);
-      for (const f of files) {
-        // Try to extract videoId from filename
-        // Library: <videoId>.mp4 / <videoId>.info.json / <videoId>.<lang>.vtt
-        // YouTube-downloads: title-based.mp4 / title-based.<lang>.vtt
-        // VTT files sometimes embed videoId: title.lang-videoId.vtt
-        let videoIdFromFile = null;
-
-        // Check all known videoIds against filename
-        // For library dir: strip extension to get videoId
-        // For downloads dir: check if any known videoId appears in filename
-        const extMatch = f.match(/\.(mp4|info\.json|vtt|webp|jpg)$/);
-        if (!extMatch) continue;
-
-        const base = f.slice(0, -extMatch[0].length);
-
-        // Both library and downloads dirs use videoId naming
-        // For VTT files with pattern <videoId>.<lang-info>.vtt, extract videoId from first segment
-        const vid = (extMatch[1] === 'vtt')
-          ? base.split('.')[0].replace(/\.f\d+$/, '')
-          : base.replace(/\.f\d+$/, '');
-        if (downloadedVideoIds.has(vid)) videoIdFromFile = vid;
-        // Fallback: VTT embedded suffix like <lang>-<VIDEOID>.vtt
-        else if (extMatch[1] === 'vtt') {
-          const m = base.match(/[.-]([A-Za-z0-9_-]{10,12})$/);
-          if (m && downloadedVideoIds.has(m[1])) videoIdFromFile = m[1];
-        }
-
-        if (!videoIdFromFile) continue;
-
-        const entry = ensure(videoIdFromFile);
-
-        if (extMatch[1] === 'mp4') {
-          try { entry.size = fs.statSync(path.join(dir, f)).size; } catch (e) {}
-        } else if (extMatch[1] === 'info.json') {
-          try { entry.meta = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (e) {}
-        } else if (extMatch[1] === 'vtt') {
-          // Extract language code
-          const parts = base.split('.');
-          for (const p of parts) {
-            if (/^[a-z]{2,3}(-[A-Za-z0-9]+)*$/i.test(p) && p !== 'live_chat') {
-              entry.subs.push(p);
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // Build result from archive entries
-    for (const videoId of downloadedVideoIds) {
-      const f = fileMap[videoId] || { size: 0, subs: [], meta: null };
-      videos.push({
-        videoId,
-        title: f.meta?.title || videoId,
-        duration: f.meta?.duration || 0,
-        size: f.size,
-        subtitles: f.subs,
-        thumbnail: f.meta?.thumbnail || '',
-        upload_date: f.meta?.upload_date || '',
-        cached: true,
-      });
-    }
-  } catch (e) { console.error('[library/list]', e.message); }
-  // Sort by most recent first (largest file usually = full recording)
-  videos.sort((a, b) => b.size - a.size);
-  ctx.body = { ok: true, count: videos.length, videos };
+router.get('/api/library/list', async (ctx) => {
+  const now = Date.now();
+  let archiveChanged = false;
+  try { archiveChanged = (await fs.promises.stat(ARCHIVE_PATH)).mtimeMs > __libraryListCache.archiveMtime; } catch (e) {}
+  if (__libraryListCache.rawJson && now - __libraryListCache.ts < LIBRARY_LIST_CACHE_MS && !archiveChanged) {
+    ctx.type = 'application/json';
+    ctx.body = __libraryListCache.rawJson;
+    return;
+  }
+  const data = await buildLibraryCache();
+  if (data) {
+    ctx.type = 'application/json';
+    ctx.body = __libraryListCache.rawJson;
+  } else {
+    ctx.status = 500;
+    ctx.body = '{"ok":false,"error":"Scan failed"}';
+  }
 });
 
 // Scan summary
 router.get('/api/library/scan', async (ctx) => {
   try {
-    // Count mp4s across both directories
+    // Count mp4s across both directories — use async I/O to avoid blocking the event loop
     let totalMp4Files = 0;
     let totalSize = 0;
     const langSet = new Set();
 
-    for (const dir of [LIBRARY_DIR, DOWNLOADS_DIR]) {
-      if (!fs.existsSync(dir)) continue;
-      const files = fs.readdirSync(dir);
+    for (const dir of [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR, DOWNLOADS_DIR]) {
+      try { await fs.promises.access(dir); } catch (e) { continue; }
+      const files = await fs.promises.readdir(dir);
       for (const f of files) {
-        if (f.endsWith('.mp4')) {
+        if (f.endsWith('.mp4') || f.endsWith('.mkv') || f.endsWith('.mp3') || f.endsWith('.webm')) {
           totalMp4Files++;
-          totalSize += fs.statSync(path.join(dir, f)).size;
+          try {
+            const stat = await fs.promises.stat(path.join(dir, f));
+            totalSize += stat.size;
+          } catch (e) { /* skip files that disappear mid-scan */ }
         }
         if (f.endsWith('.vtt')) {
           const parts = f.split('.');
@@ -1393,8 +2333,12 @@ router.get('/api/library/scan', async (ctx) => {
       }
     }
 
-    const archiveCount = fs.existsSync(ARCHIVE_PATH)
-      ? fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n').filter(Boolean).length : 0;
+    let archiveCount = 0;
+    try {
+      const archiveData = await fs.promises.readFile(ARCHIVE_PATH, 'utf8');
+      archiveCount = archiveData.split('\n').filter(Boolean).length;
+    } catch (e) {}
+
     ctx.body = {
       ok: true,
       totalVideos: archiveCount,
@@ -1409,19 +2353,88 @@ router.get('/api/library/scan', async (ctx) => {
   }
 });
 
+// ── Delete a video from the library ──
+router.delete('/api/library/video/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
+  }
+
+  const deleted = { mp4: false, info: false, subs: 0 };
+  const errors = [];
+
+  // Delete .mp4 file (handles yt-dlp format suffixes)
+  const mp4Path = getVideoPath(videoId);
+  if (mp4Path && fs.existsSync(mp4Path)) {
+    try { fs.unlinkSync(mp4Path); deleted.mp4 = true; } catch (e) { errors.push('mp4: ' + e.message); }
+  }
+  // Also check DOWNLOADS_DIR for the mp4
+  const dlMp4 = path.join(DOWNLOADS_DIR, videoId + '.mp4');
+  if (fs.existsSync(dlMp4)) {
+    try { fs.unlinkSync(dlMp4); deleted.mp4 = true; } catch (e) { errors.push('dl-mp4: ' + e.message); }
+  }
+
+  // Delete .info.json
+  const infoPath = getInfoPath(videoId);
+  if (fs.existsSync(infoPath)) {
+    try { fs.unlinkSync(infoPath); deleted.info = true; } catch (e) { errors.push('info: ' + e.message); }
+  }
+
+  // Delete .vtt subtitle files
+  const subs = getSubtitleFiles(videoId);
+  for (const s of subs) {
+    try { fs.unlinkSync(s.path); deleted.subs++; } catch (e) { errors.push('sub: ' + e.message); }
+  }
+
+  // Remove from download archive
+  try {
+    if (fs.existsSync(ARCHIVE_PATH)) {
+      const lines = fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n');
+      const filtered = lines.filter((l) => {
+        const trimmed = l.trim();
+        if (!trimmed) return false;
+        return !trimmed.includes(videoId);
+      });
+      fs.writeFileSync(ARCHIVE_PATH, filtered.join('\n') + (filtered.length > 0 ? '\n' : ''), 'utf8');
+    }
+  } catch (e) { errors.push('archive: ' + e.message); }
+
+  // Remove from tags
+  try {
+    const tags = loadTags();
+    if (tags[videoId]) {
+      delete tags[videoId];
+      saveTags(tags);
+    }
+  } catch (e) { errors.push('tags: ' + e.message); }
+
+  // Invalidate library list cache
+  __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
+
+  console.log(`[library] Deleted video ${videoId}: mp4=${deleted.mp4} info=${deleted.info} subs=${deleted.subs}${errors.length ? ' errors=' + errors.join('; ') : ''}`);
+
+  ctx.body = {
+    ok: true,
+    videoId,
+    deleted,
+    ...(errors.length ? { warnings: errors } : {}),
+  };
+});
+
 // ── Tag system (karaoke / music video) ──
+// Primary storage: MySQL (Bluehost). Local JSON is kept in sync for the scan worker
+// and as offline cache. read = JSON, write = MySQL + JSON.
 function loadTags() {
   try {
     if (fs.existsSync(TAGS_PATH)) {
       const raw = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
-      // Normalize: support both old string format and new object format
       const normalized = {};
       for (const [vid, val] of Object.entries(raw)) {
         if (typeof val === 'string') {
           normalized[vid] = { tag: val, year: '', artist: '', source: '' };
         } else if (val && typeof val === 'object') {
           normalized[vid] = {
-            tag: val.tag || 'music',
+            tag: val.tag || val.type || 'music',
             year: val.year || '',
             artist: val.artist || '',
             source: val.source || ''
@@ -1440,6 +2453,24 @@ function saveTags(tags) {
   } catch (e) { console.error('[library/tags] save error:', e.message); }
 }
 
+// Sync tags to MySQL (non-blocking, fire-and-forget)
+async function syncTagsToMySQL() {
+  try {
+    const tags = loadTags();
+    const remoteTags = await mysql.tagListAll(10000);
+    // Upsert local tags that are missing or newer to MySQL
+    for (const [vid, meta] of Object.entries(tags)) {
+      try {
+        await mysql.tagSet(vid, meta.tag || 'music', meta.artist || '', meta.year || '', meta.source || '');
+      } catch (e) { /* individual failure shouldn't stop the batch */ }
+    }
+    console.log(`[library/tags] Synced ${Object.keys(tags).length} tags to MySQL`);
+  } catch (e) { console.error('[library/tags] MySQL sync error:', e.message); }
+}
+
+// On startup, sync tags to MySQL and pull remote tags into local cache
+syncTagsToMySQL();
+
 router.get('/api/library/tags', async (ctx) => {
   ctx.body = { ok: true, tags: loadTags() };
 });
@@ -1451,8 +2482,8 @@ router.post('/api/library/tags', async (ctx) => {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
   }
-  if (!tag || (tag !== 'karaoke' && tag !== 'music')) {
-    ctx.status = 400; ctx.body = { ok: false, error: 'tag must be "karaoke" or "music"' }; return;
+  if (!tag || (tag !== 'karaoke' && tag !== 'music' && tag !== 'song')) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'tag must be "karaoke", "music", or "song"' }; return;
   }
   const tags = loadTags();
   // Merge: preserve existing metadata, apply new fields
@@ -1464,6 +2495,10 @@ router.post('/api/library/tags', async (ctx) => {
     source: body.source !== undefined ? String(body.source) : existing.source
   };
   saveTags(tags);
+  // Sync to MySQL asynchronously
+  mysql.tagSet(videoId, tag, body.artist || '', body.year || '', body.source || '').catch(e => {
+    console.error('[library/tags] MySQL write error:', e.message);
+  });
   ctx.body = { ok: true, videoId, tag: tags[videoId] };
 });
 
@@ -1490,8 +2525,11 @@ router.post('/api/library/download-playlist', async (ctx) => {
         '--merge-output-format', 'mp4',
         '--write-info-json',
         '--write-thumbnail',
-        '--write-subs', '--sub-langs', 'all',
+        '--write-subs', '--write-auto-subs', '--sub-langs', 'all,-live_chat',
         '--download-archive', ARCHIVE_PATH,
+        '--limit-rate', '3M',
+        '--sleep-interval', '5',
+        '--max-sleep-interval', '15',
         '-o', path.join(LIBRARY_DIR, '%(id)s.%(ext)s'),
         '--yes-playlist',
         'https://www.youtube.com/playlist?list=' + playlistId,
@@ -1501,6 +2539,7 @@ router.post('/api/library/download-playlist', async (ctx) => {
       proc.stderr.on('data', (d) => { stderr += d.toString(); });
       proc.on('close', (code) => {
         console.log('[library] Batch download finished for ' + playlistId + ' (code ' + code + ')');
+        __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 }; // invalidate list cache
         activeDownloads.delete(playlistId);
       });
     } catch (e) {
@@ -1697,19 +2736,38 @@ function stopMdnsBroadcaster() {
 // ── BlackHole sample rate fix: ensures 44.1 kHz to match UMC404HD ──
 // CoreAudio may reset BlackHole to 48 kHz after reboot; this Swift binary sets it.
 function alignBlackHoleSampleRate() {
-  const { execSync } = require('child_process');
+  const { exec } = require('child_process');
   const binPath = path.resolve(__dirname, '..', 'scripts', 'blackhole-44100');
   if (!fs.existsSync(binPath)) {
     console.log('[blackhole-sr] Swift binary not found at ' + binPath + ' (run: swiftc -o scripts/blackhole-44100 scripts/blackhole-44100.swift)');
     return;
   }
-  try {
-    const out = execSync(binPath, { timeout: 3000 }).toString();
-    console.log('[blackhole-sr] ' + out.trim());
-  } catch (e) {
-    const stderr = e.stderr ? e.stderr.toString() : e.message;
-    console.warn('[blackhole-sr] Failed: ' + stderr.trim());
+  exec(binPath, { timeout: 5000 }, (err, stdout, stderr) => {
+    if (err) {
+      console.warn('[blackhole-sr] Failed: ' + (stderr || err.message).trim());
+    } else {
+      console.log('[blackhole-sr] ' + stdout.trim());
+    }
+  });
+}
+
+// ── Set Karol as macOS default output device ──
+// Without this, VLC audio goes to UMC404HD directly, bypassing BlackHole → Ableton.
+// This Swift binary sets Karol (Multi-Output: BlackHole 2ch + UMC404HD) as default.
+function setDefaultAudioOutput() {
+  const { exec } = require('child_process');
+  const binPath = path.resolve(__dirname, '..', 'scripts', 'set-default-karol');
+  if (!fs.existsSync(binPath)) {
+    console.warn('[audio-default] Binary not found: ' + binPath);
+    return;
   }
+  exec(binPath, { timeout: 5000 }, (err, stdout, stderr) => {
+    if (err) {
+      console.warn('[audio-default] Failed: ' + (stderr || err.message).trim());
+    } else {
+      console.log('[audio-default] ' + stdout.trim());
+    }
+  });
 }
 
 // ── Audio chain verification: confirms the Karol aggregate device,
@@ -1717,87 +2775,111 @@ function alignBlackHoleSampleRate() {
 // Runs once at startup; results are logged for diagnosis but the server
 // stays up regardless — the user can fix audio config later. ──
 function verifyAudioChain() {
-  const { execSync } = require('child_process');
-  try {
-    const text = execSync('system_profiler SPAudioDataType', { timeout: 5000, encoding: 'utf8' });
+  const { exec } = require('child_process');
+  exec('system_profiler SPAudioDataType', { timeout: 5000, encoding: 'utf8' }, (err, text) => {
+    if (err) {
+      console.warn('[audio-check] Failed: ' + err.message);
+      return;
+    }
     const hasKarol = /^\s*Karol:\s*$/m.test(text);
     const hasBlackHole = /BlackHole\s*2ch/i.test(text);
     const hasUMC = /UMC404/i.test(text);
-    const isDefault = /^\s*Default Output Device:\s*Yes\s*$/m.test(text);
+    const isDefaultNo = /^\s*Default Output Device:\s*No\s*$/m;
+    // Check if Karol block has Default Output Device: Yes
+    const afterKarol = text.split(/^\s*Karol:\s*$/m)[1] || '';
+    const defaultInBlock = /^\s*Default Output Device:\s*Yes\s*$/m.test(afterKarol.split(/^\S/m)[0] || afterKarol);
 
-    if (hasKarol) {
-      console.log('[audio-check] Karol aggregate device: present');
-    } else {
-      console.warn('[audio-check] Karol aggregate device: MISSING');
+    if (hasKarol) console.log('[audio-check] Karol aggregate device: present');
+    else console.warn('[audio-check] Karol aggregate device: MISSING');
+    if (hasBlackHole) console.log('[audio-check] BlackHole 2ch: present');
+    else console.warn('[audio-check] BlackHole 2ch: MISSING');
+    if (hasUMC) console.log('[audio-check] UMC404HD: present');
+    else console.warn('[audio-check] UMC404HD: MISSING');
+    if (defaultInBlock) console.log('[audio-check] Karol is default output: yes');
+    else console.warn('[audio-check] Karol is default output: NO');
+  });
+}
+
+// ── UMC404HD volume lock: macOS volume keys can accidentally turn down
+// the UMC master volume, killing the DAW return level (post-mix quiet).
+// Lock it to 100% on every startup so the PA always gets full signal.
+// Uses osascript (rock-solid, never crashes) instead of Swift exec. ──
+function lockUmcVolume() {
+  const { exec } = require('child_process');
+  exec(
+    `osascript -e 'set volume output volume 100'`,
+    { timeout: 5000 },
+    (err, stdout, stderr) => {
+      if (err) console.warn('[umc-volume] Failed to lock: ' + (stderr || err.message).trim());
+      else console.log('[umc-volume] System volume locked to 100%');
     }
-    if (hasBlackHole) {
-      console.log('[audio-check] BlackHole 2ch: present');
-    } else {
-      console.warn('[audio-check] BlackHole 2ch: MISSING');
-    }
-    if (hasUMC) {
-      console.log('[audio-check] UMC404HD: present');
-    } else {
-      console.warn('[audio-check] UMC404HD: MISSING');
-    }
-    if (isDefault) {
-      console.log('[audio-check] Karol is default output: yes');
-    } else {
-      // The default check matches AFTER Karol's block — verify more carefully
-      const afterKarol = text.split(/^\s*Karol:\s*$/m)[1] || '';
-      const defaultInBlock = /^\s*Default Output Device:\s*Yes\s*$/m.test(afterKarol.split(/^\S/m)[0] || afterKarol);
-      if (defaultInBlock) {
-        console.log('[audio-check] Karol is default output: yes (block match)');
-      } else {
-        console.warn('[audio-check] Karol is default output: NO');
-      }
-    }
-    return { hasKarol, hasBlackHole, hasUMC };
-  } catch (e) {
-    console.warn('[audio-check] Failed: ' + e.message);
-    return { hasKarol: false, hasBlackHole: false, hasUMC: false };
-  }
+  );
 }
 
 // ── Ableton auto-launch: opens the Karol template if Ableton isn't
 // already running. Fire-and-forget — the audio announcement doesn't wait. ──
 function launchAbletonIfNotRunning() {
-  const { execSync } = require('child_process');
+  const { execFile, spawn } = require('child_process');
+
   const template = path.join(os.homedir(), 'Music', 'Ableton', 'User Library', 'Templates', 'Karol Live Set.als');
   if (!fs.existsSync(template)) {
     console.warn('[ableton] Template not found: ' + template);
     return;
   }
-  try {
-    const pgrep = execSync('pgrep -x "Live"', { timeout: 2000, encoding: 'utf8' }).trim();
-    if (pgrep) {
-      console.log('[ableton] Already running (pid ' + pgrep.split('\n')[0] + ') — skipping launch');
+
+  // Check if Ableton is running (async, non-blocking)
+  execFile('pgrep', ['-x', 'Live'], { timeout: 2000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' }, (err, stdout) => {
+    if (!err && (stdout || '').trim()) {
+      console.log('[ableton] Already running (pid ' + (stdout || '').trim().split('\n')[0] + ') — skipping launch');
       return;
     }
-  } catch { /* pgrep returns non-zero when no match — that means it's not running */ }
-
-  console.log('[ableton] Launching with Karol template...');
-  const { spawn } = require('child_process');
-  const ableton = spawn('open', [
-    '-a', 'Ableton Live 11 Suite',
-    template,
-  ], { stdio: 'ignore', detached: true });
-  ableton.unref();
-  ableton.on('error', (err) => {
-    console.warn('[ableton] Failed: ' + err.message);
+    // Not running — launch
+    console.log('[ableton] Launching with Karol template...');
+    const ableton = spawn('open', [
+      '-a', 'Ableton Live 11 Suite',
+      template,
+    ], { stdio: 'ignore', detached: true });
+    ableton.unref();
+    ableton.on('error', (err) => {
+      console.warn('[ableton] Failed: ' + err.message);
+    });
   });
 }
 
 const server = http.createServer(app.callback());
-server.listen(PORT, '0.0.0.0', () => {
+server.maxConnections = 200;  // Prevent connection starvation from Firefox polling
+server.timeout = 10000;       // Kill idle connections after 10s
+server.keepAliveTimeout = 8000;
+server.headersTimeout = 6000; // Don't wait forever for headers
+server.requestTimeout = 60000; // 60s — library list response is ~1.1MB, needs time over network
+
+// Connection tracking for health endpoint
+server.on('connection', (socket) => {
+  activeConnections++;
+  if (activeConnections > peakConnections) peakConnections = activeConnections;
+  socket.on('close', () => { activeConnections = Math.max(0, activeConnections - 1); });
+});
+
+server.listen(PORT, '0.0.0.0', async () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
-  console.log('  YouTube DJ proxy → ' + PLAYER_HOST + ':' + PLAYER_PORT);
+  console.log('  YouTube DJ proxy target: mDNS-discovered');
   console.log('  VLC, Ableton, Hardware mixer routes ready');
   alignBlackHoleSampleRate();
+  setDefaultAudioOutput();  // Set Karol as default so VLC → BlackHole → Ableton
+  tryLoadCacheFromDisk();  // Load pre-built cache if available, avoids re-scanning
   startAbletonPoll();
   startMdnsBroadcaster(getLanIp());
-  // ── Audio chain verification ──
-  const audioStatus = verifyAudioChain();
+
+  // Async mDNS player discovery — fire-and-forget, never block startup
+  refreshPlayerHostAsync().then((ip) => {
+    if (ip) console.log('[startup] Initial mDNS discovery: ' + ip);
+    else console.warn('[startup] Could not discover player via mDNS — will retry on proxy request');
+  });
+  // verifyAudioChain();  // DISABLED — system_profiler hangs and kills server
+  // Fire-and-forget: pre-build video library cache in a forked subprocess
+  // so the first API request doesn't have to wait 20+ seconds for the scan.
+  // Now lazy: buildLibraryCache() called on first /api/library/list request.
+  // buildLibraryCache().catch(() => {});  // DISABLED — execFile kills server on macOS 26
   // Write playlist file first, then launch VLC. After VLC is ready,
   // load the .m3u playlist via HTTP API — this is instant for VLC
   // (parses the file natively) vs sequential enqueue (35+ seconds).
@@ -1849,9 +2931,16 @@ server.listen(PORT, '0.0.0.0', () => {
     } else {
       parts.push('VLC not available');
     }
-    if (!audioStatus.hasKarol) parts.push('aggregate device missing');
-    if (!audioStatus.hasBlackHole) parts.push('BlackHole missing');
-    if (!audioStatus.hasUMC) parts.push('interface missing');
+    // Include library info from the pre-loaded disk cache
+    let videoCount = 0;
+    try {
+      if (fs.existsSync(CACHE_FILE)) {
+        videoCount = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')).count || 0;
+      }
+    } catch {}
+    if (videoCount) {
+      parts.push(videoCount + ' videos in library');
+    }
 
     const announcement = 'Karol server is running. ' + parts.join('. ') + '.';
     const { exec } = require('child_process');

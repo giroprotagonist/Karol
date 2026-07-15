@@ -4,17 +4,10 @@
 	android:id="@+id/rootLayout"
 	android:layout_width="match_parent"
 	android:layout_height="match_parent"
+	android:background="#000000"
 	android:animateLayoutChanges="false">
 
-	<!-- WebView fills the screen — bottom margin pushed up by controls in windowed mode -->
-	<WebView
-		android:id="@+id/webView"
-		android:layout_width="match_parent"
-		android:layout_height="match_parent"
-		android:background="@null"
-		android:visibility="gone" />
-
-	<!-- ExoPlayer view for local video playback (hidden until local file is ready) -->
+	<!-- ExoPlayer fullscreen video surface -->
 	<androidx.media3.ui.PlayerView
 		android:id="@+id/playerView"
 		android:layout_width="match_parent"
@@ -25,7 +18,61 @@
 		app:surface_type="surface_view"
 		app:resize_mode="fit" />
 
+	<!-- Karaoke lyric overlay — sits above ExoPlayer, below loading -->
+	<FrameLayout
+		android:id="@+id/lyricOverlay"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"
+		android:elevation="50dp"
+		android:visibility="gone">
 
+		<!-- Countdown: big centered gold number (3, 2, 1) -->
+		<TextView
+			android:id="@+id/lyricCountdown"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_gravity="center"
+			android:shadowColor="#AA000000"
+			android:shadowRadius="12"
+			android:textColor="#FFD700"
+			android:textSize="120sp"
+			android:textStyle="bold"
+			android:visibility="gone" />
+
+		<!-- Active lyric with progressive SpannableString fill -->
+		<TextView
+			android:id="@+id/lyricActiveText"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_gravity="bottom"
+			android:layout_marginBottom="100dp"
+			android:gravity="center"
+			android:paddingStart="24dp"
+			android:paddingEnd="24dp"
+			android:shadowColor="#CC000000"
+			android:shadowRadius="10"
+			android:textColor="#FFD700"
+			android:textSize="48sp"
+			android:textStyle="bold" />
+
+		<!-- Preview (next) lyric line — dim white below active -->
+		<TextView
+			android:id="@+id/lyricPreviewText"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_gravity="bottom"
+			android:layout_marginBottom="40dp"
+			android:alpha="0.45"
+			android:gravity="center"
+			android:paddingStart="24dp"
+			android:paddingEnd="24dp"
+			android:shadowColor="#88000000"
+			android:shadowRadius="6"
+			android:textColor="#FFFFFF"
+			android:textSize="28sp" />
+	</FrameLayout>
+
+	<!-- Loading overlay — shown briefly when switching videos -->
 	<FrameLayout
 		android:id="@+id/loadingOverlay"
 		android:layout_width="match_parent"
@@ -37,284 +84,83 @@
 		android:visibility="gone"
 		android:alpha="0">
 
-		<ProgressBar
-			android:layout_width="48dp"
-			android:layout_height="48dp"
-			android:layout_gravity="center"
-			android:indeterminate="true"
-			android:indeterminateTint="@color/karol_accent" />
-	</FrameLayout>
-
-	<ScrollView
-		android:id="@+id/startPanel"
-		android:layout_width="match_parent"
-		android:layout_height="match_parent"
-		android:background="@color/black"
-		android:fillViewport="true">
-
 		<LinearLayout
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
+			android:layout_gravity="center"
 			android:gravity="center_horizontal"
 			android:orientation="vertical"
 			android:padding="32dp">
 
+			<ProgressBar
+				android:layout_width="48dp"
+				android:layout_height="48dp"
+				android:indeterminate="true"
+				android:indeterminateTint="@color/karol_accent" />
+
 			<TextView
+				android:id="@+id/loadingPercentText"
 				android:layout_width="wrap_content"
 				android:layout_height="wrap_content"
-				android:layout_marginBottom="16dp"
-				android:text="@string/app_name"
-				android:textColor="#FFFFFF"
-				android:textSize="28sp"
+				android:layout_marginTop="16dp"
+				android:text="0%"
+				android:textColor="@color/karol_accent"
+				android:textSize="36sp"
 				android:textStyle="bold" />
 
-			<ImageView
-				android:id="@+id/qrCodeImage"
-				android:layout_width="200dp"
-				android:layout_height="200dp"
-				android:layout_marginBottom="16dp"
-				android:background="#FFFFFF"
-				android:contentDescription="@string/qr_content_desc"
-				android:padding="8dp"
-				android:scaleType="fitCenter" />
+			<ProgressBar
+				android:id="@+id/loadingProgressBar"
+				style="?android:attr/progressBarStyleHorizontal"
+				android:layout_width="280dp"
+				android:layout_height="6dp"
+				android:layout_marginTop="12dp"
+				android:max="100"
+				android:progress="0"
+				android:progressTint="@color/karol_accent" />
 
 			<TextView
+				android:id="@+id/loadingTitleText"
 				android:layout_width="wrap_content"
 				android:layout_height="wrap_content"
-				android:layout_marginBottom="4dp"
-				android:text="@string/controller_url_label"
-				android:textColor="@color/karol_text_secondary"
-				android:textSize="12sp"
-				android:textAllCaps="true"
-				android:letterSpacing="0.08" />
-
-			<TextView
-				android:id="@+id/controllerUrlText"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="12dp"
+				android:layout_marginTop="20dp"
 				android:gravity="center"
+				android:text="Loading..."
 				android:textColor="@color/karol_text_primary"
-				android:textIsSelectable="true"
-				android:textSize="14sp" />
+				android:textSize="16sp" />
 
 			<TextView
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="4dp"
-				android:text="@string/api_url_label"
-				android:textColor="@color/karol_text_secondary"
-				android:textSize="12sp"
-				android:textAllCaps="true"
-				android:letterSpacing="0.08" />
-
-			<TextView
-				android:id="@+id/hostInfoText"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="12dp"
-				android:gravity="center"
-				android:textColor="@color/karol_text_secondary"
-				android:textIsSelectable="true"
-				android:textSize="13sp" />
-
-			<TextView
-				android:id="@+id/statusText"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="8dp"
-				android:gravity="center"
-				android:textColor="#CCCCCC"
-				android:textSize="13sp" />
-
-			<TextView
-				android:id="@+id/errorText"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="16dp"
-				android:gravity="center"
-				android:textColor="#F87171"
-				android:textSize="13sp"
-				android:visibility="gone" />
-
-			<TextView
-				android:id="@+id/youtubeAccountText"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="12dp"
-				android:gravity="center"
-				android:textColor="#FACC15"
-				android:textSize="14sp" />
-
-			<com.google.android.material.button.MaterialButton
-				android:id="@+id/signInYouTubeButton"
-				style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="4dp"
-				android:text="@string/sign_in_youtube" />
-
-			<TextView
-				android:id="@+id/signInTroubleLink"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="12dp"
-				android:padding="8dp"
-				android:text="@string/sign_in_trouble_import"
-				android:textColor="@color/karol_text_secondary"
-				android:textSize="12sp" />
-
-			<com.google.android.material.button.MaterialButton
-				android:id="@+id/copyUrlButton"
-				style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="16dp"
-				android:text="@string/copy_url" />
-
-			<com.google.android.material.button.MaterialButton
-				android:id="@+id/startShowButton"
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginBottom="16dp"
-				android:text="@string/start_show" />
-
-			<LinearLayout
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:gravity="center_vertical"
-				android:orientation="horizontal">
-
-				<TextView
-					android:layout_width="wrap_content"
-					android:layout_height="wrap_content"
-					android:layout_marginEnd="12dp"
-					android:text="@string/auto_start_boot"
-					android:textColor="#AAAAAA"
-					android:textSize="14sp" />
-
-				<Switch
-					android:id="@+id/autoBootSwitch"
-					android:layout_width="wrap_content"
-					android:layout_height="wrap_content"
-					android:showText="false" />
-			</LinearLayout>
-		</LinearLayout>
-	</ScrollView>
-
-	<LinearLayout
-		android:id="@+id/reauthOverlay"
-		android:layout_width="match_parent"
-		android:layout_height="match_parent"
-		android:background="#CC000000"
-		android:gravity="center"
-		android:orientation="vertical"
-		android:padding="32dp"
-		android:visibility="gone">
-
-		<TextView
-			android:layout_width="wrap_content"
-			android:layout_height="wrap_content"
-			android:gravity="center"
-			android:text="@string/reauth_overlay_message"
-			android:textColor="@color/karol_text_primary"
-			android:textSize="18sp" />
-
-		<com.google.android.material.button.MaterialButton
-			android:id="@+id/reauthButton"
-			android:layout_width="wrap_content"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="24dp"
-			android:text="@string/reauth_button" />
-
-		<com.google.android.material.button.MaterialButton
-			android:id="@+id/reauthStopShowButton"
-			style="@style/Widget.MaterialComponents.Button.TextButton"
-			android:layout_width="wrap_content"
-			android:layout_height="wrap_content"
-			android:layout_marginTop="8dp"
-			android:text="@string/stop_show" />
-	</LinearLayout>
-
-	<!-- Sign-in progress banner -->
-	<FrameLayout
-		android:id="@+id/signInProgressOverlay"
-		android:layout_width="match_parent"
-		android:layout_height="wrap_content"
-		android:layout_gravity="top"
-		android:visibility="gone">
-
-		<LinearLayout
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:background="#CC000000"
-			android:gravity="center"
-			android:orientation="vertical"
-			android:paddingTop="24dp"
-			android:paddingBottom="16dp"
-			android:paddingStart="24dp"
-			android:paddingEnd="24dp">
-
-			<LinearLayout
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:gravity="center_vertical"
-				android:orientation="horizontal">
-
-				<ProgressBar
-					android:id="@+id/signInSpinner"
-					android:layout_width="24dp"
-					android:layout_height="24dp"
-					android:layout_marginEnd="12dp"
-					android:indeterminate="true"
-					android:indeterminateTint="@color/karol_accent" />
-
-				<TextView
-					android:id="@+id/signInProgressTitle"
-					android:layout_width="wrap_content"
-					android:layout_height="wrap_content"
-					android:gravity="center_vertical"
-					android:text="@string/sign_in_overlay_opening"
-					android:textColor="@color/karol_text_primary"
-					android:textSize="16sp"
-					android:textStyle="bold" />
-			</LinearLayout>
-
-			<TextView
-				android:id="@+id/signInProgressSubtitle"
+				android:id="@+id/loadingDetailText"
 				android:layout_width="wrap_content"
 				android:layout_height="wrap_content"
 				android:layout_marginTop="6dp"
 				android:gravity="center"
-				android:text="@string/sign_in_overlay_2fa_hint"
+				android:text="Streaming from Mac..."
 				android:textColor="@color/karol_text_secondary"
 				android:textSize="13sp" />
-
-			<LinearLayout
-				android:layout_width="wrap_content"
-				android:layout_height="wrap_content"
-				android:layout_marginTop="12dp"
-				android:gravity="center"
-				android:orientation="horizontal">
-
-				<com.google.android.material.button.MaterialButton
-					android:id="@+id/signInRetryButton"
-					style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-					android:layout_width="wrap_content"
-					android:layout_height="36dp"
-					android:layout_marginEnd="12dp"
-					android:text="@string/sign_in_overlay_timeout"
-					android:textSize="13sp"
-					android:visibility="gone" />
-
-				<com.google.android.material.button.MaterialButton
-					android:id="@+id/signInCancelButton"
-					style="@style/Widget.MaterialComponents.Button.TextButton"
-					android:layout_width="wrap_content"
-					android:layout_height="36dp"
-					android:text="@string/sign_in_overlay_cancel"
-					android:textSize="13sp" />
-			</LinearLayout>
 		</LinearLayout>
 	</FrameLayout>
+
+	<!-- Queue marquee — scrolls upcoming singers at bottom of screen -->
+	<TextView
+		android:id="@+id/queueMarquee"
+		android:layout_width="match_parent"
+		android:layout_height="80dp"
+		android:layout_gravity="bottom"
+		android:background="#DD000000"
+		android:ellipsize="marquee"
+		android:fadingEdge="horizontal"
+		android:fadingEdgeLength="60dp"
+		android:focusable="true"
+		android:focusableInTouchMode="true"
+		android:gravity="center_vertical"
+		android:marqueeRepeatLimit="marquee_forever"
+		android:paddingStart="20dp"
+		android:paddingEnd="20dp"
+		android:scrollHorizontally="true"
+		android:singleLine="true"
+		android:text="Karol Player — Ready"
+		android:textColor="@android:color/white"
+		android:textSize="16sp"
+		android:textStyle="bold"
+		android:visibility="visible" />
 </FrameLayout>

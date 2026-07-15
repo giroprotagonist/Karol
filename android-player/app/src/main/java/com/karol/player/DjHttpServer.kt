@@ -1,7 +1,6 @@
 package com.karol.player
 
 import android.content.Context
-import android.net.Uri
 import android.util.Log
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -32,13 +31,34 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import com.karol.player.BuildConfig
+
+/**
+ * Local player controller — delegates to ExoPlayer via the activity.
+ */
+interface LocalPlayerController {
+	fun play(): Boolean
+	fun pause(): Boolean
+	fun seek(seconds: Double): Boolean
+	fun setVolume(level: Double): Boolean
+	fun skipNext(): Boolean
+	fun skipPrev(): Boolean
+	fun needsVideoLoad(videoId: String): Boolean
+	fun loadVideo(videoId: String)
+	fun getCurrentTime(): Double
+	fun getDuration(): Double
+	fun isPlaying(): Boolean
+	fun listCaptions(): JSONArray
+	fun setCaption(index: Int)
+	fun setCaptionOff()
+	fun loadLyrics(json: String)
+	fun clearLyrics()
+}
 
 class DjHttpServer(
 	private val context: Context,
 	private val hostIpProvider: () -> String,
 	private val queueEngine: QueueEngine,
-	private val youtubeBridge: YouTubePlayerController,
+	private val localPlayer: LocalPlayerController,
 	private val preferences: PlayerPreferences,
 	private val playlistSync: PlaylistSyncManager,
 	private val dataClient: YouTubeDataClient,
@@ -51,33 +71,6 @@ class DjHttpServer(
 	private var engine: ApplicationEngine? = null
 
 	@Volatile
-	var latestSnapshot: PlayerSnapshot? = null
-
-	@Volatile
-	private var playbackClockBaseSec = 0.0
-
-	@Volatile
-	private var playbackClockMarkedAtMs = 0L
-
-	@Volatile
-	private var playbackClockVideoId = ""
-
-	@Volatile
-	private var seekSettleUntilMs = 0L
-
-	fun isSeekSettling(): Boolean = System.currentTimeMillis() < seekSettleUntilMs
-
-	fun reconcileSnapshotProgress(snapshot: PlayerSnapshot): PlayerSnapshot {
-		if (!snapshot.hasVideo || !isSeekSettling()) {
-			return snapshot
-		}
-		val queueTime = queueEngine.currentTime
-		if (queueTime <= 0.0 || kotlin.math.abs(snapshot.currentTime - queueTime) <= 2.5) {
-			return snapshot
-		}
-		return snapshot.copy(currentTime = queueTime)
-	}
-
 	var volumeLevel: Double = 1.0
 
 	var onPlaybackRequested: (() -> Unit)? = null
@@ -86,124 +79,7 @@ class DjHttpServer(
 
 	private fun notifyTransportAdvance() {
 		onTransportAdvance?.invoke()
-		youtubeBridge.setVolume(volumeLevel)
-	}
-
-	fun invalidatePlaybackSnapshot() {
-		latestSnapshot = null
-	}
-
-	private fun applySeek(seconds: Double) {
-		val clamped = maxOf(0.0, seconds)
-		val duration =
-			queueEngine.duration.takeIf { it > 0 }
-				?: latestSnapshot?.duration?.takeIf { it > 0 }
-				?: 0.0
-		val resolvedTime =
-			if (duration > 0) {
-				minOf(clamped, duration)
-			} else {
-				clamped
-			}
-		queueEngine.setPlaybackProgress(resolvedTime, duration)
-		resetPlaybackClock(queueEngine.getCurrentVideoId().orEmpty(), resolvedTime)
-		seekSettleUntilMs = System.currentTimeMillis() + 4000
-		val snap = latestSnapshot
-		if (snap != null) {
-			val updated =
-				snap.copy(
-					currentTime = resolvedTime,
-					duration = if (duration > 0) duration else snap.duration,
-				)
-			latestSnapshot = updated
-			notePlaybackSample(updated)
-		}
-	}
-
-	/** Track live playback for API clients when the WebView snapshot time stalls. */
-	fun notePlaybackSample(snapshot: PlayerSnapshot) {
-		val activeId = queueEngine.getCurrentVideoId().orEmpty()
-		if (
-			activeId.isNotBlank() &&
-				snapshot.videoId.isNotBlank() &&
-				snapshot.videoId != activeId
-		) {
-			return
-		}
-		val videoId = snapshot.videoId
-		val time = snapshot.currentTime
-		if (videoId != playbackClockVideoId) {
-			playbackClockVideoId = videoId
-			playbackClockBaseSec = maxOf(0.0, time)
-			playbackClockMarkedAtMs = System.currentTimeMillis()
-			return
-		}
-		if (snapshot.state == 1 && snapshot.hasVideo) {
-			if (time > playbackClockBaseSec + 0.2) {
-				playbackClockBaseSec = time
-				playbackClockMarkedAtMs = System.currentTimeMillis()
-			}
-		} else {
-			playbackClockBaseSec = time
-			playbackClockMarkedAtMs = System.currentTimeMillis()
-		}
-	}
-
-	fun resetPlaybackClock(
-		videoId: String = "",
-		timeSec: Double = 0.0,
-	) {
-		playbackClockVideoId = videoId
-		playbackClockBaseSec = maxOf(0.0, timeSec)
-		playbackClockMarkedAtMs = System.currentTimeMillis()
-	}
-
-	private fun resolveCurrentTimeForApi(
-		state: Int,
-		duration: Double,
-	): Double {
-		val activeId = queueEngine.getCurrentVideoId().orEmpty()
-		val snap = latestSnapshot
-		val snapMatches =
-			snap != null &&
-				snap.videoId.isNotBlank() &&
-				(activeId.isBlank() || snap.videoId == activeId)
-		val snapTime =
-			if (snapMatches && snap != null && snap.hasVideo) {
-				snap.currentTime
-			} else {
-				0.0
-			}
-		val direct =
-			when {
-				snapTime > 0.5 -> snapTime
-				state != 1 -> {
-					val queueTime = queueEngine.currentTime
-					if (queueTime > 0) queueTime else snapTime
-				}
-				else -> 0.0
-			}
-
-		if (state != 1) {
-			return if (duration > 0) minOf(direct, duration) else direct
-		}
-
-		val elapsedSec =
-			(System.currentTimeMillis() - playbackClockMarkedAtMs).coerceAtLeast(0L) / 1000.0
-		val extrapolated = playbackClockBaseSec + elapsedSec
-		val merged =
-			when {
-				isSeekSettling() -> extrapolated
-				direct > 0.5 -> {
-					if (kotlin.math.abs(direct - extrapolated) > 2.0) {
-						extrapolated
-					} else {
-						maxOf(direct, extrapolated)
-					}
-				}
-				else -> extrapolated
-			}
-		return if (duration > 0) minOf(merged, duration) else merged
+		localPlayer.setVolume(volumeLevel)
 	}
 
 	fun start(port: Int = SERVER_PORT) {
@@ -227,25 +103,6 @@ class DjHttpServer(
 					get("/api/youtube-dj/health") {
 						call.respondJson(statusJson())
 					}
-					if (BuildConfig.DEBUG) {
-						get("/api/youtube-dj/dev/youtube-session") {
-							call.respondJson(JSONObject(YouTubeSessionBackup.exportJson()))
-						}
-						put("/api/youtube-dj/dev/youtube-session") {
-							val body = call.receiveText()
-							val ok = YouTubeSessionBackup.importJson(body)
-							val signedIn = YouTubeSessionHelper.isSignedIn()
-							if (ok && signedIn) {
-								YouTubeSessionHelper.markSignedIn(preferences)
-								YouTubeSessionBackup.saveToDevice(this@DjHttpServer.context)
-							}
-							call.respondJson(
-								JSONObject()
-									.put("ok", ok)
-									.put("signedIn", signedIn),
-							)
-						}
-					}
 					get("/api/youtube-dj/status") {
 						call.respondJson(statusJson())
 					}
@@ -253,7 +110,21 @@ class DjHttpServer(
 						call.respondJson(JSONObject().put("ok", true))
 					}
 					get("/api/youtube-dj/now-playing") {
-						call.respondJson(nowPlayingJson())
+						try {
+							call.respondJson(nowPlayingJson())
+						} catch (e: Exception) {
+							Log.e("DjHttpServer", "nowPlayingJson error", e)
+							call.respondJson(
+								JSONObject()
+									.put("title", "Unknown")
+									.put("videoId", "")
+									.put("thumbnail", "")
+									.put("currentTime", 0.0)
+									.put("duration", 0.0)
+									.put("volumeLevel", 1.0)
+									.put("state", 0),
+							)
+						}
 					}
 					get("/api/youtube-dj/queue") {
 						call.respondJson(queueEngine.getKaraokeStateJson())
@@ -554,33 +425,17 @@ class DjHttpServer(
 								.put("results", JSONArray(results.map { it.toJson() })),
 						)
 					}
+					// ── Transport endpoints ──
 					post("/api/youtube-dj/transport/play") {
 						onPlaybackRequested?.invoke()
 						notifyTransportAdvance()
 						queueEngine.setTransportPlaying(true)
 						val currentId = queueEngine.getCurrentVideoId()
-						val snap = latestSnapshot
-						val resumeTime =
-							if (snap != null && snap.videoId == currentId) {
-								snap.currentTime.coerceAtLeast(0.0)
-							} else {
-								0.0
-							}
-						if (snap != null && snap.videoId != currentId) {
-							invalidatePlaybackSnapshot()
-						}
-						resetPlaybackClock(currentId.orEmpty(), resumeTime)
-						val needsLoad = currentId != null && youtubeBridge.needsVideoLoad(currentId)
-						if (needsLoad) {
-							youtubeBridge.loadVideo(currentId!!)
+						if (currentId != null && localPlayer.needsVideoLoad(currentId)) {
+							localPlayer.loadVideo(currentId)
 						} else {
-							youtubeBridge.play()
+							localPlayer.play()
 						}
-						latestSnapshot =
-							latestSnapshot?.takeIf { it.videoId == currentId }?.copy(
-								state = 1,
-								paused = false,
-							)
 						call.respondJson(
 							JSONObject()
 								.put("ok", true)
@@ -588,17 +443,8 @@ class DjHttpServer(
 						)
 					}
 					post("/api/youtube-dj/transport/pause") {
-						latestSnapshot?.let { snap ->
-							if (snap.currentTime > 0 || snap.duration > 0) {
-								queueEngine.setPlaybackProgress(
-									snap.currentTime,
-									snap.duration.takeIf { it > 0 } ?: queueEngine.duration,
-								)
-							}
-						}
 						queueEngine.setTransportPlaying(false)
-						youtubeBridge.pause()
-						latestSnapshot = latestSnapshot?.copy(state = 2, paused = true)
+						localPlayer.pause()
 						call.respondJson(
 							JSONObject()
 								.put("ok", true)
@@ -608,8 +454,9 @@ class DjHttpServer(
 					post("/api/youtube-dj/transport/seek") {
 						val body = JSONObject(call.receiveText())
 						val seconds = body.optDouble("seconds", 0.0)
-						youtubeBridge.seek(seconds)
-						applySeek(seconds)
+						val clamped = maxOf(0.0, seconds)
+						localPlayer.seek(clamped)
+						queueEngine.setPlaybackProgress(clamped, queueEngine.duration)
 						call.respondJson(
 							JSONObject()
 								.put("ok", true)
@@ -618,13 +465,10 @@ class DjHttpServer(
 					}
 					post("/api/youtube-dj/transport/seek-relative") {
 						val body = JSONObject(call.receiveText())
-						val base =
-							queueEngine.currentTime.takeIf { it > 0 }
-								?: latestSnapshot?.currentTime
-								?: 0.0
+						val base = queueEngine.currentTime.takeIf { it > 0 } ?: 0.0
 						val target = maxOf(0.0, base + body.optDouble("delta", 0.0))
-						youtubeBridge.seek(target)
-						applySeek(target)
+						localPlayer.seek(target)
+						queueEngine.setPlaybackProgress(target, queueEngine.duration)
 						call.respondJson(
 							JSONObject()
 								.put("ok", true)
@@ -635,15 +479,12 @@ class DjHttpServer(
 						val body = JSONObject(call.receiveText())
 						volumeLevel = body.optDouble("level", 1.0).coerceIn(0.0, 1.0)
 						preferences.setVolumeLevel(volumeLevel)
-						youtubeBridge.setVolume(volumeLevel)
+						localPlayer.setVolume(volumeLevel)
 						call.respondJson(JSONObject().put("ok", true))
 					}
 					post("/api/youtube-dj/transport/skip-next") {
-						invalidatePlaybackSnapshot()
-						onPlaybackRequested?.invoke()
 						notifyTransportAdvance()
 						queueEngine.skipNext("user-skip-api")
-						resetPlaybackClock(queueEngine.getCurrentVideoId().orEmpty(), 0.0)
 						call.respondJson(
 							JSONObject()
 								.put("ok", true)
@@ -652,11 +493,8 @@ class DjHttpServer(
 						)
 					}
 					post("/api/youtube-dj/transport/skip-prev") {
-						invalidatePlaybackSnapshot()
-						onPlaybackRequested?.invoke()
 						notifyTransportAdvance()
 						queueEngine.skipPrev("user-skip-api")
-						resetPlaybackClock(queueEngine.getCurrentVideoId().orEmpty(), 0.0)
 						call.respondJson(
 							JSONObject()
 								.put("ok", true)
@@ -699,9 +537,9 @@ class DjHttpServer(
 								.put("macHostIp", preferences.getMacHostIp()),
 						)
 					}
-					// Caption / subtitle endpoints
+					// ── Caption / subtitle endpoints ──
 					get("/api/youtube-dj/captions/list") {
-						val captionsJson = youtubeBridge.listCaptions()
+						val captionsJson = localPlayer.listCaptions()
 						call.respondJson(
 							JSONObject()
 								.put("ok", true)
@@ -719,48 +557,35 @@ class DjHttpServer(
 							)
 							return@post
 						}
-						youtubeBridge.setCaption(index)
+						localPlayer.setCaption(index)
 						call.respondJson(JSONObject().put("ok", true))
 					}
 					post("/api/youtube-dj/captions/off") {
-						youtubeBridge.setCaptionOff()
+						localPlayer.setCaptionOff()
 						call.respondJson(JSONObject().put("ok", true))
+				}
+				// ── Karaoke lyric overlay ──
+				post("/api/youtube-dj/lyrics/load") {
+					try {
+						val body = JSONObject(call.receiveText())
+						localPlayer.loadLyrics(body.toString())
+						call.respondJson(JSONObject().put("ok", true))
+					} catch (e: Exception) {
+						call.respondJson(
+							JSONObject()
+								.put("ok", false)
+								.put("error", e.message ?: "invalid json")
+						)
 					}
-					// Proxy routes – forward to the Mac Deskreen host (192.168.68.51:3131)
-					route("/api/vlc-dj") {
-						get("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
-						post("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
-						put("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
-						delete("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
-						patch("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/vlc-dj") }
-					}
-					route("/api/ableton") {
-						get("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
-						post("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
-						put("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
-						delete("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
-						patch("{path...}") { proxyToMacHost(call, vlcProxyTarget, "/api/ableton") }
-					}
-					// YouTube audio preview proxy – forward to Mac where yt-dlp is available
+				}
+				post("/api/youtube-dj/lyrics/clear") {
+					localPlayer.clearLyrics()
+					call.respondJson(JSONObject().put("ok", true))
+				}
+				// YouTube audio preview proxy – forward to Mac where yt-dlp is available
 					get("/api/youtube-dj/audio-stream") {
 						val targetUrl = "$vlcProxyTarget/api/youtube-dj/audio-stream?${call.request.queryString()}"
 						proxyJsonToHost(call, targetUrl)
-					}
-					// Root path – serve the DJ controller SPA
-					get("/") {
-						call.serveAsset("dj-controller/index.html", "text/html")
-					}
-					get("/dj-controller") {
-						call.response.header(HttpHeaders.Location, "/dj-controller/")
-						call.respondText("", status = HttpStatusCode.MovedPermanently)
-					}
-					get("/dj-controller/") {
-						call.serveAsset("dj-controller/index.html", "text/html")
-					}
-					get("/dj-controller/{path...}") {
-						val parts = call.parameters.getAll("path") ?: emptyList()
-						val rel = parts.joinToString("/")
-						call.serveAsset("dj-controller/$rel", contentTypeFor(rel))
 					}
 				}
 			}
@@ -788,10 +613,9 @@ class DjHttpServer(
 			return
 		}
 		val action = if (forcePlayNow) "play-now" else body.optString("action", "queue")
-		if (action == "play-now") {
-			onPlaybackRequested?.invoke()
-		}
-		val videoId = queueEngine.addFromUrl(url, action)
+		val requester = body.optString("requester").ifBlank { null }
+		val songTitle = body.optString("title").ifBlank { null }
+		val videoId = queueEngine.addFromUrl(url, action, requester, songTitle)
 		if (videoId == null) {
 			respondText(
 				JSONObject().put("ok", false).put("error", "invalid url").toString(),
@@ -818,7 +642,6 @@ class DjHttpServer(
 			.put("host", ip)
 			.put("port", SERVER_PORT)
 			.put("shareUrl", JSONObject.NULL)
-			.put("djControllerUrl", "$base/dj-controller/")
 			.put("youtubeDjHealthUrl", "$base/api/youtube-dj/health")
 	}
 
@@ -829,7 +652,7 @@ class DjHttpServer(
 			.put("ok", true)
 			.put("djActive", queueEngine.isPlaying || queueEngine.queue.isNotEmpty())
 			.put("castConnected", false)
-			.put("captureReady", host.showActive && youtubeBridge.isReady)
+			.put("captureReady", host.showActive)
 			.put("showActive", host.showActive)
 			.put("queueLength", host.queueLength)
 			.put("currentTitle", host.currentTitle)
@@ -837,51 +660,43 @@ class DjHttpServer(
 			.put("lastPlaybackError", host.lastPlaybackError ?: JSONObject.NULL)
 			.put("lastAdvanceReason", queueEngine.lastAdvanceReason.ifBlank { JSONObject.NULL })
 			.put("volumeLevel", volumeLevel)
-			.put("youtubeSignedIn", YouTubeSessionHelper.isSignedIn())
-			.put("youtubePremiumActive", YouTubeSessionHelper.isPremiumActive(preferences))
-			.put("layoutOk", latestSnapshot?.layoutOk ?: false)
-			.put("videoTopPx", latestSnapshot?.videoTopPx ?: 0)
 			.put("port", SERVER_PORT)
 			.put("hostMode", "direct")
 			.put("host", ip)
 	}
 
 	private fun nowPlayingJson(): JSONObject {
-		val snap = latestSnapshot
 		val queueItem =
 			queueEngine.queue.getOrNull(queueEngine.currentIndex)
 		val prevItem = queueEngine.queue.getOrNull(queueEngine.currentIndex - 1)
 		val nextItem = queueEngine.queue.getOrNull(queueEngine.currentIndex + 1)
 		val videoId =
-			snap?.videoId?.takeIf { it.isNotBlank() }
-				?: queueEngine.getCurrentVideoId().orEmpty()
+			queueEngine.getCurrentVideoId().orEmpty()
 		val title =
-			snap?.title?.takeIf { it.isNotBlank() }
-				?: queueEngine.currentTitle.takeIf { it.isNotBlank() }
+			queueEngine.currentTitle.takeIf { it.isNotBlank() }
 				?: queueItem?.title.orEmpty()
 		val thumbnail =
 			queueEngine.currentThumbnail.takeIf { it.isNotBlank() }
-				?: snap?.thumbnail?.takeIf { it.isNotBlank() }
 				?: queueItem?.thumbnail.orEmpty()
 				.ifBlank {
 					if (videoId.isNotBlank()) {
-						"https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+						"https://i.ytimg.com/vi/$videoId/maxresdefault.jpg"
 					} else {
 						""
 					}
 				}
 		val duration =
-			snap?.duration?.takeIf { it > 0 }
-				?: queueEngine.duration.takeIf { it > 0 }
+			queueEngine.duration.takeIf { it > 0 }
 				?: queueItem?.durationSec?.toDouble()?.takeIf { it > 0 }
 				?: 0.0
 		val state =
 			if (!queueEngine.isPlaying) {
 				2
 			} else {
-				snap?.state?.takeIf { it == 1 || it == 2 } ?: 1
+				1
 			}
-		val currentTime = resolveCurrentTimeForApi(state, duration)
+		val currentTime =
+			queueEngine.currentTime.takeIf { it > 0 } ?: 0.0
 		val previousThumbnail = prevItem?.thumbnail.orEmpty()
 		val nextThumbnail = nextItem?.thumbnail.orEmpty()
 		return JSONObject()
@@ -938,7 +753,6 @@ class DjHttpServer(
 			val conn = (url.openConnection() as HttpURLConnection).apply {
 				requestMethod = call.request.httpMethod.value
 				connectTimeout = 5000
-				// Use a longer read timeout for binary streams (e.g. audio preview)
 				readTimeout = if (path.startsWith("/audio")) 120_000 else 8000
 				if (call.request.httpMethod.value in listOf("POST", "PUT", "PATCH")) {
 					doOutput = true
@@ -1002,13 +816,10 @@ class DjHttpServer(
 		contentType: String,
 	) {
 		response.header(HttpHeaders.AccessControlAllowOrigin, "*")
-		// Hashed assets can be cached forever (content-addressed URLs).
-		// Hashed file pattern: index-<8 char hex hash>.js / .css
 		val isHashedAsset = assetPath.endsWith(".js") || assetPath.endsWith(".css")
 		if (isHashedAsset && assetPath.matches(Regex(".*/[a-zA-Z0-9_-]{8,}\\.(js|css)$"))) {
 			response.header(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
 		} else if (assetPath.endsWith(".html")) {
-			// HTML must never be cached — it lists the current asset hashes
 			response.header(HttpHeaders.CacheControl, "no-cache, no-store, must-revalidate")
 		}
 		try {
