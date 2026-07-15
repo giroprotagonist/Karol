@@ -175,9 +175,9 @@ def generate_ass(
     video_width: int = 1280,
     video_height: int = 720,
     fontname: str = "Arial",
-    fontsize_active: int = 48,
-    fontsize_inactive: int = 28,
-    countdown_fontsize: int = 100,
+    fontsize_active: int = 36,
+    fontsize_inactive: int = 21,
+    countdown_fontsize: int = 75,
     preview_lead_seconds: float = 1.8,
 ) -> str:
     """Generate an ASS subtitle file with progressive karaoke highlighting.
@@ -209,15 +209,15 @@ def generate_ass(
     is_near_square = aspect < 1.55
 
     if is_square:
-        fontsize_active = max(34, fontsize_active - 6)
-        fontsize_inactive = max(20, fontsize_inactive - 4)
-        countdown_fontsize = max(72, countdown_fontsize - 24)
+        fontsize_active = max(26, fontsize_active - 4)
+        fontsize_inactive = max(15, fontsize_inactive - 3)
+        countdown_fontsize = max(54, countdown_fontsize - 18)
         bar_top_y = int(video_height * 0.82)
         bar_height = int(video_height * 0.12)
         active_y = int(video_height * 0.855)
         line_offset = int(video_height * 0.065)
     elif is_near_square:
-        fontsize_active = max(40, fontsize_active - 2)
+        fontsize_active = max(30, fontsize_active - 2)
         bar_top_y = int(video_height * 0.78)
         bar_height = int(video_height * 0.14)
         active_y = int(video_height * 0.82)
@@ -420,9 +420,9 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1280, help="Video width (px)")
     parser.add_argument("--height", type=int, default=720, help="Video height (px)")
     parser.add_argument("--font", default="Arial", help="Font name for subtitles")
-    parser.add_argument("--font-size-active", type=int, default=48,
+    parser.add_argument("--font-size-active", type=int, default=36,
                        help="Active lyric font size")
-    parser.add_argument("--font-size-inactive", type=int, default=28,
+    parser.add_argument("--font-size-inactive", type=int, default=21,
                        help="Inactive lyric font size")
     parser.add_argument(
         "--output", choices=["ass", "ffmpeg-cmd"], default="ass",

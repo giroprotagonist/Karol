@@ -35,7 +35,7 @@
 			android:shadowColor="#AA000000"
 			android:shadowRadius="12"
 			android:textColor="#FFD700"
-			android:textSize="120sp"
+			android:textSize="90sp"
 			android:textStyle="bold"
 			android:visibility="gone" />
 
@@ -52,7 +52,7 @@
 			android:shadowColor="#CC000000"
 			android:shadowRadius="10"
 			android:textColor="#FFD700"
-			android:textSize="48sp"
+			android:textSize="36sp"
 			android:textStyle="bold" />
 
 		<!-- Preview (next) lyric line — dim white below active -->
@@ -69,7 +69,7 @@
 			android:shadowColor="#88000000"
 			android:shadowRadius="6"
 			android:textColor="#FFFFFF"
-			android:textSize="28sp" />
+			android:textSize="21sp" />
 	</FrameLayout>
 
 	<!-- Loading overlay — shown briefly when switching videos -->

@@ -2243,7 +2243,7 @@ router.get('/api/library/thumb/:videoId', async (ctx) => {
 // Uses a forked subprocess for the heavy filesystem scan so the
 // main Node.js event loop stays responsive during ~20s of sync I/O.
 let __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
-const LIBRARY_LIST_CACHE_MS = 30_000;
+const LIBRARY_LIST_CACHE_MS = 3600_000;  // 1 hour — serves from in-memory cache
 let __libraryScanInFlight = null;
 const CACHE_FILE = '/tmp/karol-library-cache.json';
 
@@ -2297,13 +2297,14 @@ router.get('/api/library/list', async (ctx) => {
     ctx.body = __libraryListCache.rawJson;
     return;
   }
-  const data = await buildLibraryCache();
-  if (data) {
+  // Reload from disk cache — never use execFile (it kills the server on macOS 26)
+  const loaded = tryLoadCacheFromDisk();
+  if (loaded && __libraryListCache.rawJson) {
     ctx.type = 'application/json';
     ctx.body = __libraryListCache.rawJson;
   } else {
     ctx.status = 500;
-    ctx.body = '{"ok":false,"error":"Scan failed"}';
+    ctx.body = '{"ok":false,"error":"Cache not available — run library scan separately"}';
   }
 });
 
