@@ -1,0 +1,28 @@
+{
+  "name": "karol",
+  "version": "3.2.0",
+  "private": true,
+  "description": "Karol — Karaoke DJ system with local library, S8 tablet player, S24 controller, and live lyric overlay",
+  "workspaces": [
+    "api-server",
+    "dj-controller",
+    "electron"
+  ],
+  "scripts": {
+    "dev:dj-controller": "cd dj-controller && npm run dev",
+    "dev:api-server": "cd api-server && npm run dev",
+    "build:dj-controller": "cd dj-controller && npm run build",
+    "build:electron": "cd electron && npm run build",
+    "build:mac": "npm run build:dj-controller && npm run build:electron",
+    "start:electron": "cd electron && npm start",
+    "test:karol": "bash scripts/verify-karol-e2e.sh",
+    "test:karol:controller": "bash scripts/verify-karol-controller.sh",
+    "test:karol:all": "npm run test:karol && npm run test:karol:controller",
+    "karaoke:make": "python3 tools/make-karaoke-video.py",
+    "install:android": "bash scripts/install-android-devices.sh",
+    "build:android-player": "cd android-player && ./gradlew assembleDebug",
+    "player:save-youtube-session": "bash scripts/player-youtube-session-save.sh",
+    "player:restore-youtube-session": "bash scripts/player-youtube-session-restore.sh",
+    "scan:library": "node api-server/library-scan-worker.js .deskreen/youtube-download-archive.txt .deskreen/library .deskreen/downloads .deskreen/tags.json"
+  }
+}

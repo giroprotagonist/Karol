@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+	xmlns:app="http://schemas.android.com/apk/res-auto"
+	android:id="@+id/rootLayout"
+	android:layout_width="match_parent"
+	android:layout_height="match_parent"
+	android:background="#000000"
+	android:animateLayoutChanges="false">
+
+	<!-- ExoPlayer fullscreen video surface -->
+	<androidx.media3.ui.PlayerView
+		android:id="@+id/playerView"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"
+		android:background="#000000"
+		android:visibility="gone"
+		app:use_controller="false"
+		app:surface_type="surface_view"
+		app:resize_mode="fit" />
+
+	<!-- Karaoke lyric overlay — sits above ExoPlayer, below loading -->
+	<FrameLayout
+		android:id="@+id/lyricOverlay"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"
+		android:elevation="50dp"
+		android:visibility="gone">
+
+		<!-- Countdown: big centered gold number (3, 2, 1) -->
+		<TextView
+			android:id="@+id/lyricCountdown"
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_gravity="center"
+			android:shadowColor="#AA000000"
+			android:shadowRadius="12"
+			android:textColor="#FFD700"
+			android:textSize="90sp"
+			android:textStyle="bold"
+			android:visibility="gone" />
+
+		<!-- Active lyric with progressive SpannableString fill -->
+		<TextView
+			android:id="@+id/lyricActiveText"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_gravity="bottom"
+			android:layout_marginBottom="100dp"
+			android:gravity="center"
+			android:paddingStart="24dp"
+			android:paddingEnd="24dp"
+			android:shadowColor="#CC000000"
+			android:shadowRadius="10"
+			android:textColor="#FFD700"
+			android:textSize="36sp"
+			android:textStyle="bold" />
+
+		<!-- Preview (next) lyric line — dim white below active -->
+		<TextView
+			android:id="@+id/lyricPreviewText"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_gravity="bottom"
+			android:layout_marginBottom="40dp"
+			android:alpha="0.45"
+			android:gravity="center"
+			android:paddingStart="24dp"
+			android:paddingEnd="24dp"
+			android:shadowColor="#88000000"
+			android:shadowRadius="6"
+			android:textColor="#FFFFFF"
+			android:textSize="21sp" />
+	</FrameLayout>
+
+	<!-- Loading overlay — shown briefly when switching videos -->
+	<FrameLayout
+		android:id="@+id/loadingOverlay"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent"
+		android:background="@color/black"
+		android:clickable="true"
+		android:elevation="100dp"
+		android:focusable="true"
+		android:visibility="gone"
+		android:alpha="0">
+
+		<LinearLayout
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:layout_gravity="center"
+			android:gravity="center_horizontal"
+			android:orientation="vertical"
+			android:padding="32dp">
+
+			<ProgressBar
+				android:layout_width="48dp"
+				android:layout_height="48dp"
+				android:indeterminate="true"
+				android:indeterminateTint="@color/karol_accent" />
+
+			<TextView
+				android:id="@+id/loadingPercentText"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="16dp"
+				android:text="0%"
+				android:textColor="@color/karol_accent"
+				android:textSize="36sp"
+				android:textStyle="bold" />
+
+			<ProgressBar
+				android:id="@+id/loadingProgressBar"
+				style="?android:attr/progressBarStyleHorizontal"
+				android:layout_width="280dp"
+				android:layout_height="6dp"
+				android:layout_marginTop="12dp"
+				android:max="100"
+				android:progress="0"
+				android:progressTint="@color/karol_accent" />
+
+			<TextView
+				android:id="@+id/loadingTitleText"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="20dp"
+				android:gravity="center"
+				android:text="Loading..."
+				android:textColor="@color/karol_text_primary"
+				android:textSize="16sp" />
+
+			<TextView
+				android:id="@+id/loadingDetailText"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="6dp"
+				android:gravity="center"
+				android:text="Streaming from Mac..."
+				android:textColor="@color/karol_text_secondary"
+				android:textSize="13sp" />
+		</LinearLayout>
+	</FrameLayout>
+
+	<!-- Queue marquee — scrolls upcoming singers at bottom of screen -->
+	<TextView
+		android:id="@+id/queueMarquee"
+		android:layout_width="match_parent"
+		android:layout_height="80dp"
+		android:layout_gravity="bottom"
+		android:background="#DD000000"
+		android:ellipsize="marquee"
+		android:fadingEdge="horizontal"
+		android:fadingEdgeLength="60dp"
+		android:focusable="true"
+		android:focusableInTouchMode="true"
+		android:gravity="center_vertical"
+		android:marqueeRepeatLimit="marquee_forever"
+		android:paddingStart="20dp"
+		android:paddingEnd="20dp"
+		android:scrollHorizontally="true"
+		android:singleLine="true"
+		android:text="Karol Player — Ready"
+		android:textColor="@android:color/white"
+		android:textSize="16sp"
+		android:textStyle="bold"
+		android:visibility="visible" />
+</FrameLayout>

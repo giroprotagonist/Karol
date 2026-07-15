@@ -1,0 +1,11 @@
+<resources>
+	<color name="black">#000000</color>
+	<color name="karol_icon_bg">#1A0B2E</color>
+	<color name="karol_bg">#07070D</color>
+	<color name="karol_accent">#238636</color>
+	<color name="karol_text_primary">#F0F3F6</color>
+	<color name="karol_text_secondary">#9AA4B2</color>
+	<color name="karol_blue">#137CBD</color>
+	<color name="karol_connected">#3FB950</color>
+	<color name="karol_warning">#FACC15</color>
+</resources>

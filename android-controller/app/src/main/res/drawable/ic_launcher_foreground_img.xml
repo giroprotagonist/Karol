@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+	android:width="108dp"
+	android:height="108dp"
+	android:viewportWidth="108"
+	android:viewportHeight="108">
+
+	<!-- Karol "K" logo mark -->
+	<path
+		android:pathData="M34,24 L34,84 M34,54 L66,24 M34,54 L66,84"
+		android:strokeWidth="8"
+		android:strokeColor="#7C3AED"
+		android:strokeLineCap="round"
+		android:strokeLineJoin="round"
+		android:fillColor="#00000000" />
+
+	<!-- Accent dot -->
+	<path
+		android:pathData="M72,42 A5,5 0 1,1 72,42.01 Z"
+		android:fillColor="#A78BFA" />
+</vector>

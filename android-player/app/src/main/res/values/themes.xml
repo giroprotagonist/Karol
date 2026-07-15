@@ -1,0 +1,15 @@
+<resources>
+	<style name="Theme.KarolPlayer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+		<item name="colorPrimary">@color/karol_accent</item>
+		<item name="colorPrimaryVariant">#196127</item>
+		<item name="colorOnPrimary">#FFFFFF</item>
+		<item name="android:statusBarColor">@android:color/transparent</item>
+		<item name="android:navigationBarColor">@android:color/transparent</item>
+		<item name="android:windowBackground">@android:color/black</item>
+		<item name="android:windowNoTitle">true</item>
+	</style>
+
+	<style name="Theme.KarolPlayer.Fullscreen" parent="Theme.KarolPlayer">
+		<item name="android:windowFullscreen">true</item>
+	</style>
+</resources>

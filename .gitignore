@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+
+# Electron build output
+electron/dist/
+electron/out/
+*.dmg
+*.zip
+
+# DJ Controller build output
+dj-controller/dist/
+
+# API Server (no build step needed, but log files)
+api-server/*.log
+
+# Android
+android-player/*.apk
+android-player/app/build/
+android-player/.gradle/
+android-player/build/
+android-player/local.properties
+android-controller/*.apk
+android-controller/app/build/
+android-controller/.gradle/
+android-controller/build/
+android-controller/local.properties
+
+# Video downloads (large, local only)
+.deskreen/youtube-downloads/
+.deskreen/library/
+.deskreen/karaoke-temp/
+
+# Session data (credentials)
+.deskreen/youtube-session.json
+*.session.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+*.dmg
+
+# IDE
+.idea/
+.vscode/
+
+# Env files
+.env
+.env.local
+
+# Data cache files (generated at runtime)
+/tmp/karol-*.json
+*.csv
+*.xlsx
+
+# Keep these in git
+!.deskreen/tags.json
+!.deskreen/schema.sql

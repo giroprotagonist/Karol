@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Karol Library</title>
+<style>
+:root{--bg:#08080c;--bg2:#101016;--text:#ddd;--text2:#777;--accent:#8b5cf6;--green:#10b981;--red:#f87171;--border:#1a1a26;--radius:6px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.status-bar{display:flex;gap:16px;padding:6px 16px;font-size:0.65rem;color:var(--text2);background:var(--bg2);border-bottom:1px solid var(--border)}
+.status-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle}
+.status-dot.on{background:var(--green)}.status-dot.off{background:var(--red);animation:blink 2s infinite}@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.custom-bar{display:flex;gap:6px;padding:8px 16px;flex-wrap:wrap;align-items:center;background:var(--bg2);border-bottom:1px solid var(--border)}
+.custom-bar input{flex:1;min-width:140px;max-width:360px;padding:5px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.82rem;outline:none}
+.custom-bar input:focus{border-color:var(--accent)}
+.custom-bar label{display:flex;align-items:center;gap:4px;font-size:0.72rem;color:var(--text2);cursor:pointer;white-space:nowrap}
+.custom-bar button{padding:5px 12px;border-radius:var(--radius);border:none;background:var(--accent);color:#fff;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.toolbar{display:flex;gap:8px;padding:8px 16px;flex-wrap:wrap;align-items:center;position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--border)}
+.toolbar input{flex:1;min-width:140px;max-width:320px;padding:6px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;outline:none}
+.toolbar input:focus{border-color:var(--accent)}
+.toolbar select{padding:6px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.82rem;cursor:pointer;max-width:120px}
+.queue-bar{display:flex;gap:8px;padding:6px 16px;flex-wrap:wrap;align-items:center;font-size:0.7rem;border-bottom:1px solid var(--border);background:var(--bg)}
+.queue-bar .q-title{background:var(--bg2);padding:3px 8px;border-radius:4px;color:var(--text);font-size:0.68rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.queue-bar .q-name{color:var(--accent);font-size:0.68rem;margin-left:4px}
+.video-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;align-items:start;padding:0 16px 16px}
+@media(max-width:600px){.video-grid{grid-template-columns:repeat(2,1fr);gap:8px}}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative}
+.card:hover{border-color:var(--accent)}.card.q-highlight{border-color:var(--accent);box-shadow:0 0 8px rgba(139,92,246,.2)}
+.card-img{width:100%;aspect-ratio:16/9;background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.card-img img{width:100%;height:100%;object-fit:cover}
+.card-img img[data-src]{opacity:0}
+.card-placeholder{color:var(--text2);font-size:1.4rem}
+.card-overlay{position:absolute;bottom:8px;right:8px;display:flex;align-items:center;justify-content:center;z-index:2}
+.card-q-btn{width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:0.9rem;display:flex;align-items:center;justify-content:center;opacity:.85;transition:transform .1s,opacity .1s}
+.card-q-btn:hover{transform:scale(1.15);opacity:1}.card-q-btn.added{background:var(--green)}
+.card-badge-row{position:absolute;top:4px;right:4px;display:flex;flex-direction:column;gap:2px;align-items:flex-end;z-index:1}
+.card-body{padding:8px 10px}
+.card-title{font-size:0.78rem;font-weight:600;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;margin-bottom:4px}
+.card-meta{display:flex;flex-wrap:wrap;gap:4px;font-size:0.68rem;color:var(--text2)}
+.badge{padding:1px 6px;border-radius:8px;font-weight:600;font-size:0.65rem;white-space:nowrap;line-height:1.5}
+.badge-downloaded{background:rgba(16,185,129,.12);color:var(--green)}
+.badge-karaoke{background:rgba(168,85,247,.12);color:#a855f7}
+.badge-queued{background:rgba(139,92,246,.15);color:var(--accent)}
+#listView{width:100%;border-collapse:collapse;display:none;font-size:.78rem}
+#listView th,#listView td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);vertical-align:middle}
+#listView th{color:var(--text2);font-weight:600;font-size:0.7rem;text-transform:uppercase;letter-spacing:.03em;position:sticky;top:86px;background:var(--bg);z-index:1}
+#listView tr:hover{background:var(--bg2)}
+#listView td.thumb{width:56px;min-width:56px}
+#listView td.thumb img{width:48px;height:27px;object-fit:cover;border-radius:3px}
+#listView td.title{font-weight:600;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#listView td.artist{max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)}
+#listView td.year{width:44px;text-align:center}
+#listView td.duration{width:54px;text-align:right;font-variant-numeric:tabular-nums}
+#listView td.size{width:62px;text-align:right;color:var(--text2);font-variant-numeric:tabular-nums}
+#listView td.type{width:54px}
+#listView td.actions{width:56px;text-align:right}
+#listView td.actions button{padding:2px 8px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-size:0.63rem;cursor:pointer;white-space:nowrap}
+#listView td.actions button.added{background:var(--green)}
+#listView th.sortable{cursor:pointer;user-select:none}
+#listView th.sortable:hover{color:var(--accent)}
+#listView th.sort-active{color:var(--accent)}
+#listView th .sort-indicator{font-size:0.6rem;margin-left:3px}
+#listView th.sort-asc .sort-indicator::after{content:'\25B2'}#listView th.sort-desc .sort-indicator::after{content:'\25BC'}
+
+#requestModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;align-items:center;justify-content:center}
+#requestModal.show{display:flex}
+.modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;width:90%;max-width:360px;text-align:center}
+.modal-box h3{font-size:1rem;margin-bottom:4px}
+.modal-box p{font-size:0.78rem;color:var(--text2);margin-bottom:12px}
+.modal-box input{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:0.9rem;outline:none;text-align:center;margin-bottom:8px}
+.modal-box input:focus{border-color:var(--accent)}
+.modal-actions{display:flex;gap:8px;margin-top:14px}
+.modal-actions button{flex:1;padding:8px;border-radius:var(--radius);border:none;cursor:pointer;font-size:0.85rem;font-weight:600}
+.btn-cancel{background:var(--bg);color:var(--text2)}
+.btn-submit{background:var(--accent);color:#fff}
+
+.payment-col{padding:10px;background:var(--bg);border-radius:8px;margin-top:8px;text-align:center}
+.payment-col strong{font-size:0.9rem;color:var(--text)}
+.payment-link{display:block;margin-top:4px;font-size:0.78rem;color:var(--accent);text-decoration:none}
+.payment-link:hover{text-decoration:underline}
+.qr-img{width:90px;height:90px;object-fit:contain;margin-top:4px;border-radius:6px;background:#fff;padding:3px;cursor:pointer}
+#qrFullscreen{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:220;align-items:center;justify-content:center;cursor:pointer}
+#qrFullscreen.show{display:flex}
+#qrFullscreen img{max-width:90vw;max-height:85vh;object-fit:contain;border-radius:12px;background:#fff;padding:10px}
+.toast{position:fixed;bottom:16px;right:16px;background:var(--bg2);border:1px solid var(--accent);color:var(--text);padding:8px 16px;border-radius:var(--radius);font-size:0.8rem;z-index:100;opacity:0;transform:translateY(8px);transition:all .2s;pointer-events:none}
+.toast.show{opacity:1;transform:translateY(0)}
+.view-toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.view-toggle button{padding:5px 10px;background:var(--bg);border:none;color:var(--text2);font-size:0.72rem;cursor:pointer;font-weight:600}
+.view-toggle button.active{background:var(--accent);color:#fff}
+.empty,.loading{text-align:center;padding:40px 16px;color:var(--text2);font-size:0.85rem}
+.spin{display:inline-block;width:16px;height:16px;border:2px solid var(--text2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin-right:6px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div class="status-bar">
+  <span><span class="status-dot off" id="playerDot"></span> S8: <span id="playerLabel">checking...</span></span>
+  <span><span class="status-dot off" id="apiDot"></span> API: <span id="apiLabel">loading...</span></span>
+  <span>Loaded: <strong id="videoCount">0</strong></span>
+  <span>Queue: <strong id="queueCount">0</strong></span>
+</div>
+
+<div class="custom-bar">
+  <input type="text" id="customUrl" placeholder="YouTube URL...">
+  <label><input type="checkbox" id="customKaraokeify"> Karaoke?</label>
+  <button onclick="requestCustom()">Request</button>
+</div>
+
+<div class="queue-bar" id="queueBar" style="display:none">
+  <strong style="color:var(--accent)">Queue:</strong>
+  <div id="queueScroll" style="display:flex;gap:6px;overflow-x:auto;flex:1"></div>
+</div>
+
+<div class="toolbar">
+  <div class="view-toggle">
+    <button id="btnGridView" onclick="switchView('grid')">Grid</button>
+    <button id="btnListView" onclick="switchView('list')">List</button>
+  </div>
+  <input type="text" id="searchInput" placeholder="Search title, artist, year..." oninput="renderVideos()">
+  <select id="yearFilter" onchange="renderVideos()">
+    <option value="">All years</option>
+  </select>
+  <select id="sortSelect" onchange="renderVideos()">
+    <option value="title">Title A-Z</option>
+    <option value="duration">Duration</option>
+  </select>
+</div>
+<div class="video-grid" id="grid"><div class="loading"><span class="spin"></span> Fetching library...</div></div>
+<table id="listView">
+  <thead><tr>
+    <th class="thumb"></th>
+    <th class="sortable" data-sort="title" onclick="sortListBy('title')">Title<span class="sort-indicator"></span></th>
+    <th class="sortable" data-sort="artist" onclick="sortListBy('artist')">Artist<span class="sort-indicator"></span></th>
+    <th class="sortable" data-sort="year" onclick="sortListBy('year')">Year<span class="sort-indicator"></span></th>
+    <th class="sortable" data-sort="duration" onclick="sortListBy('duration')">Dur<span class="sort-indicator"></span></th>
+    <th class="sortable" data-sort="size" onclick="sortListBy('size')">Size<span class="sort-indicator"></span></th>
+    <th class="sortable" data-sort="tag" onclick="sortListBy('tag')">Type<span class="sort-indicator"></span></th>
+    <th class="actions"></th>
+  </tr></thead>
+  <tbody id="listBody"><tr><td colspan="8" class="loading"><span class="spin"></span> Fetching library...</td></tr></tbody>
+</table>
+<div class="toast" id="toast"></div>
+
+<div id="requestModal">
+  <div class="modal-box">
+    <h3>Add to Queue</h3>
+    <p id="modalSongTitle"></p>
+    <input type="text" id="requesterName" placeholder="Your name" maxlength="40" autocomplete="off">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-submit" id="btnSubmit" onclick="confirmRequest()">Next</button>
+    </div>
+  </div>
+</div>
+
+<div id="paymentModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:210;align-items:center;justify-content:center">
+  <div class="modal-box" style="max-width:380px">
+    <h3 id="paymentTitle">Almost done!</h3>
+    <p>Tip to get your song played sooner</p>
+    <div class="payment-col" style="margin-bottom:8px">
+      <strong>Venmo</strong>
+      <a href="https://venmo.com/karolpdx" target="_blank" class="payment-link">@karolpdx</a>
+      <br><img class="qr-img" src="venmo-qr.png" loading="lazy" onclick="openQrFullscreen(this.src)">
+    </div>
+    <div class="payment-col">
+      <strong>CashApp</strong>
+      <a href="https://cash.app/$karolpdx" target="_blank" class="payment-link">$karolpdx</a>
+      <br><img class="qr-img" src="cashapp-qr.png" loading="lazy" onclick="openQrFullscreen(this.src)">
+    </div>
+    <button class="btn-cancel" onclick="closePayment()" style="margin-top:12px;width:100%;padding:8px;border-radius:var(--radius);background:var(--bg);color:var(--text2);border:none;cursor:pointer;font-size:0.85rem">Close</button>
+  </div>
+</div>
+
+<div id="qrFullscreen" onclick="this.classList.remove('show')">
+  <img id="qrFullscreenImg" src="">
+</div>
+
+<script>
+if('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(function(regs){
+    regs.forEach(function(r){r.unregister()})
+  })
+}
+
+var allVideos=[],currentView='grid',listSort={key:null,asc:true},toastTimer=null,pendingVideoId=null,pendingTitle='',queueVideos={};
+var imgObserver=null;
+var RENDER_CHUNK=50;
+
+function showToast(msg){
+  var t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){t.classList.remove('show')},3000);
+}
+function fmtDur(s){if(!s||!isFinite(s))return'0:00';var m=Math.floor(s/60),sec=Math.floor(s%60);return m+':'+(sec<10?'0':'')+sec}
+function fmtSize(b){if(!b)return'0 KB';if(b<1048576)return Math.round(b/1024)+' KB';return (b/1048576).toFixed(1)+' MB'}
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+// ── Lazy images ──
+function setupLazyImages(){
+  imgObserver=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(!e.isIntersecting) return;
+      var img=e.target,src=img.getAttribute('data-src');
+      if(!src) return;
+      img.onload=function(){img.removeAttribute('data-src');img.style.opacity='1'};
+      img.onerror=function(){img.parentElement.innerHTML='<span class="card-placeholder">&#x1F3A5;</span>'};
+      img.src=src;
+    });
+  },{rootMargin:'400px'});
+}
+function observeImages(rootEl){
+  if(!imgObserver) setupLazyImages();
+  rootEl.querySelectorAll('img[data-src]').forEach(function(img){imgObserver.observe(img)});
+}
+
+// ── API ──
+function apiPost(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()})}
+function apiGet(path){return fetch(path).then(function(r){return r.json()})}
+
+// ── Status ──
+function checkStatus(){
+  apiGet('/api/health.json').then(function(d){
+    var d1=document.getElementById('apiDot'),l1=document.getElementById('apiLabel');
+    if(d.ok){d1.className='status-dot on';l1.textContent='online'}else{d1.className='status-dot off';l1.textContent='error'}
+  }).catch(function(){document.getElementById('apiDot').className='status-dot off';document.getElementById('apiLabel').textContent='offline'});
+  apiGet('/api/youtube-dj/status').then(function(d){
+    var d2=document.getElementById('playerDot'),l2=document.getElementById('playerLabel');
+    if(d.playerDown){d2.className='status-dot off';l2.textContent='offline'}
+    else if(d.djActive){d2.className='status-dot on';l2.textContent=(d.currentTitle||'playing').slice(0,30)}
+    else{d2.className='status-dot on';l2.textContent='idle'}
+  }).catch(function(){document.getElementById('playerDot').className='status-dot off';document.getElementById('playerLabel').textContent='offline'});
+}
+
+function fetchQueue(){
+  apiGet('/api/queue/request/list').then(function(d){
+    if(d.ok){queueVideos=d.requestMap||{};document.getElementById('queueCount').textContent=Object.keys(queueVideos).length;renderQueueBar();updateQueuedHighlights()}
+  }).catch(function(){});
+}
+
+function renderQueueBar(){
+  var ids=Object.keys(queueVideos),bar=document.getElementById('queueBar'),scroll=document.getElementById('queueScroll');
+  if(ids.length===0){bar.style.display='none';return}
+  bar.style.display='flex';
+  scroll.innerHTML=ids.map(function(id){
+    var title='';
+    for(var i=0;i<allVideos.length;i++){if(allVideos[i].videoId===id){title=allVideos[i].title;break}}
+    return '<span class="q-title">'+esc(title||id)+'<span class="q-name">'+esc(queueVideos[id]||'')+'</span></span>';
+  }).join('');
+}
+
+function updateQueuedHighlights(){
+  var ids=new Set(Object.keys(queueVideos));
+  document.querySelectorAll('.card').forEach(function(c){var v=c.getAttribute('data-video-id');c.classList.toggle('q-highlight',v&&ids.has(v))});
+  document.querySelectorAll('#listView td.actions button').forEach(function(btn){
+    var m=(btn.getAttribute('onclick')||'').match(/addToQueue\('([^']+)'\)/);
+    btn.classList.toggle('added',m&&ids.has(m[1]));
+  });
+}
+
+// ── Request flow ──
+function addToQueue(videoId){
+  pendingVideoId=videoId;
+  var vid=null;
+  for(var i=0;i<allVideos.length;i++){if(allVideos[i].videoId===videoId){vid=allVideos[i];break}}
+  pendingTitle=vid?vid.title:videoId;
+  document.getElementById('modalSongTitle').textContent=pendingTitle;
+  document.getElementById('requesterName').value='';
+  document.getElementById('btnSubmit').disabled=false;
+  document.getElementById('requestModal').classList.add('show');
+}
+function closeModal(){document.getElementById('requestModal').classList.remove('show');pendingVideoId=null;pendingTitle='';}
+
+function confirmRequest(){
+  var name=document.getElementById('requesterName').value.trim();
+  if(!name){showToast('Enter your name first');return}
+  document.getElementById('requestModal').classList.remove('show');
+  var body={videoId:pendingVideoId,name:name,title:pendingTitle};
+  if(pendingVideoId==='__custom__'){var url=document.getElementById('customUrl').value.trim();body.url=url;body.videoId='';var karaoke=document.getElementById('customKaraokeify').checked;body.karaokeify=karaoke}
+  showToast('Adding...');
+  apiPost('/api/queue/request',body).then(function(r){
+    if(r.ok){showToast('Added: '+(r.requester||name)+' \u00BB '+pendingTitle);queueVideos[pendingVideoId||r.videoId||'']=name;renderQueueBar();updateQueuedHighlights();document.getElementById('queueCount').textContent=Object.keys(queueVideos).length}
+    else{showToast('Error: '+(r.error||'unknown'))}
+  }).catch(function(){showToast('Network error')});
+  document.getElementById('paymentTitle').textContent=name+', almost done!';
+  document.getElementById('paymentModal').style.display='flex';
+  pendingVideoId=null;pendingTitle='';
+}
+function closePayment(){document.getElementById('paymentModal').style.display='none';}
+function openQrFullscreen(src){document.getElementById('qrFullscreenImg').src=src;document.getElementById('qrFullscreen').classList.add('show');}
+function requestCustom(){
+  var url=document.getElementById('customUrl').value.trim();
+  if(!url){showToast('Paste a YouTube URL first');return}
+  var karaoke=document.getElementById('customKaraokeify').checked;
+  pendingVideoId='__custom__';pendingTitle=url+(karaoke?' [karaoke]':'');
+  document.getElementById('modalSongTitle').textContent=pendingTitle;
+  document.getElementById('requesterName').value='';
+  document.getElementById('requestModal').classList.add('show');
+}
+
+// ── Library loading ──
+function loadLibrary(){
+  document.getElementById('apiLabel').textContent='loading...';
+  apiGet('/api/library/list').then(function(d){
+    if(d&&d.videos){
+      allVideos=d.videos;
+      document.getElementById('videoCount').textContent=allVideos.length;
+      document.getElementById('apiLabel').textContent='online';
+      document.getElementById('apiDot').className='status-dot on';
+      populateYearFilter();
+      renderVideos();
+    }else{
+      document.getElementById('apiLabel').textContent='error';
+      document.getElementById('grid').innerHTML='<div class="empty">Failed to load library</div>';
+    }
+  }).catch(function(){
+    document.getElementById('apiLabel').textContent='offline';
+    document.getElementById('apiDot').className='status-dot off';
+    document.getElementById('grid').innerHTML='<div class="empty">Cannot reach library server<br><br><small>Make sure the API server is running on your Mac</small></div>';
+  });
+}
+
+function populateYearFilter(){
+  var years={};
+  for(var i=0;i<allVideos.length;i++){var yr=allVideos[i].year;if(yr&&String(yr).trim())years[yr]=true}
+  var sorted=Object.keys(years).sort(function(a,b){return parseInt(a)-parseInt(b)});
+  var sel=document.getElementById('yearFilter'),cur=sel.value;
+  sel.innerHTML='<option value="">All years</option>';
+  for(var j=0;j<sorted.length;j++){sel.innerHTML+='<option value="'+sorted[j]+'">'+sorted[j]+'</option>'}
+  if(cur)sel.value=cur;
+}
+
+// Chunked grid rendering
+function renderGridChunk(videos,start,grid,queued){
+  var end=Math.min(start+RENDER_CHUNK,videos.length);
+  var html='';
+  for(var i=start;i<end;i++){
+    var v=videos[i],dur=fmtDur(v.duration),sz=fmtSize(v.size),isK=v.tag==='karaoke',hasQ=queued.has(v.videoId),vid=esc(v.videoId);
+    var thumbSrc=v.thumbnail||(v.videoId?'art/'+v.videoId+'.webp':'');
+    html+='<div class="card'+(hasQ?' q-highlight':'')+'" data-video-id="'+vid+'">'+
+      '<div class="card-badge-row">'+
+        (v.downloaded?'<span class="badge badge-downloaded">ready</span>':'<span class="badge badge-missing">pending</span>')+
+        (isK?'<span class="badge badge-karaoke">K</span>':'')+
+        (hasQ?'<span class="badge badge-queued">'+esc(queueVideos[v.videoId]||'queued')+'</span>':'')+
+      '</div>'+
+      '<div class="card-img">'+
+        (thumbSrc?'<img src="" data-src="'+esc(thumbSrc)+'" alt="" style="opacity:0">':'<span class="card-placeholder">&#x1F3A5;</span>')+
+        '<div class="card-overlay">'+
+          '<button class="card-q-btn'+(hasQ?' added':'')+'" onclick="event.stopPropagation();addToQueue(\''+vid+'\')">+</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="card-body">'+
+        '<div class="card-title">'+esc(v.title)+'</div>'+
+        '<div class="card-meta">'+(v.downloaded&&(v.duration||v.size>0)?'<span>'+dur+'</span><span>'+sz+'</span>':'<span>'+(v.downloaded?'Downloaded':'Pending')+'</span>')+'</div>'+
+      '</div></div>';
+  }
+  if(start===0) grid.innerHTML=html; else grid.innerHTML+=html;
+  observeImages(grid);
+  if(end<videos.length){
+    requestAnimationFrame(function(){renderGridChunk(videos,end,grid,queued)});
+  }
+}
+
+function renderVideos(){
+  var q=(document.getElementById('searchInput').value||'').toLowerCase(),
+      yf=document.getElementById('yearFilter').value,
+      sort=document.getElementById('sortSelect').value;
+  var filtered=allVideos.slice();
+  if(q)filtered=filtered.filter(function(v){return v.title.toLowerCase().indexOf(q)!==-1||(v.artist||'').toLowerCase().indexOf(q)!==-1||String(v.year||'').indexOf(q)!==-1});
+  if(yf)filtered=filtered.filter(function(v){return String(v.year)===yf});
+  if(sort==='title')filtered.sort(function(a,b){return a.title.localeCompare(b.title)});
+  else if(sort==='duration')filtered.sort(function(a,b){return b.duration-a.duration});
+
+  if(currentView==='list'){renderListView(filtered);return}
+
+  var grid=document.getElementById('grid');
+  if(filtered.length===0){grid.innerHTML='<div class="empty">No videos match</div>';return}
+  var queued=new Set(Object.keys(queueVideos));
+  renderGridChunk(filtered,0,grid,queued);
+}
+
+// List view render (simple, not chunked since sorted)
+function renderListView(videos){
+  if(listSort.key){
+    var k=listSort.key,asc=listSort.asc;
+    videos=videos.slice().sort(function(a,b){
+      var va,vb;
+      if(k==='title'){va=(a.title||'').toLowerCase();vb=(b.title||'').toLowerCase()}
+      else if(k==='artist'){va=(a.artist||'').toLowerCase();vb=(b.artist||'').toLowerCase()}
+      else if(k==='year'){va=parseInt(a.year)||0;vb=parseInt(b.year)||0}
+      else if(k==='duration'){va=a.duration||0;vb=b.duration||0}
+      else if(k==='size'){va=a.size||0;vb=b.size||0}
+      else if(k==='tag'){va=a.tag||'';vb=b.tag||''}
+      else{va='';vb=''}
+      if(typeof va==='string') return asc?va.localeCompare(vb):vb.localeCompare(va);
+      return asc?va-vb:vb-va;
+    });
+  }
+  var body=document.getElementById('listBody');
+  if(videos.length===0){body.innerHTML='<tr><td colspan="8" class="empty">No videos match</td></tr>';return}
+  var queued=new Set(Object.keys(queueVideos));
+  body.innerHTML=videos.map(function(v){
+    var dur=fmtDur(v.duration),sz=fmtSize(v.size),isK=v.tag==='karaoke',hasQ=queued.has(v.videoId);
+    var thumbSrc=v.thumbnail||(v.videoId?'art/'+v.videoId+'.webp':'');
+    return '<tr>'+
+      '<td class="thumb">'+(thumbSrc?'<img src="" data-src="'+esc(thumbSrc)+'" alt="" style="width:48px;height:27px;object-fit:cover;border-radius:3px;opacity:0">':'')+'</td>'+
+      '<td class="title">'+esc(v.title)+'</td>'+
+      '<td class="artist">'+esc(v.artist||'')+'</td>'+
+      '<td class="year">'+(v.year||'')+'</td>'+
+      '<td class="duration">'+dur+'</td>'+
+      '<td class="size">'+sz+'</td>'+
+      '<td class="type">'+(isK?'<span class="badge badge-karaoke">K</span>':'<span class="badge badge-downloaded">M</span>')+'</td>'+
+      '<td class="actions"><button class="'+(hasQ?'added':'')+'" onclick="addToQueue(\''+esc(v.videoId)+'\')">'+(hasQ?'\u2713':'+')+'</button></td>'+
+    '</tr>';
+  }).join('');
+  observeImages(body);
+}
+
+function sortListBy(key){if(listSort.key===key){listSort.asc=!listSort.asc}else{listSort.key=key;listSort.asc=true};var ths=document.querySelectorAll('#listView th');ths.forEach(function(th){th.classList.remove('sort-active','sort-asc','sort-desc');if(th.dataset.sort===key){th.classList.add('sort-active',listSort.asc?'sort-asc':'sort-desc')}});renderVideos()}
+
+function switchView(view){
+  currentView=view;
+  document.getElementById('grid').style.display=view==='grid'?'grid':'none';
+  document.getElementById('listView').style.display=view==='list'?'table':'none';
+  document.getElementById('btnGridView').classList.toggle('active',view==='grid');
+  document.getElementById('btnListView').classList.toggle('active',view==='list');
+  localStorage.setItem('karolView',view);
+  if(allVideos.length>0) renderVideos();
+}
+
+function init(){
+  var savedView=localStorage.getItem('karolView');
+  if(savedView==='list')currentView='list';
+  switchView(currentView);
+  loadLibrary();
+  checkStatus();fetchQueue();
+  setInterval(checkStatus,15000);setInterval(fetchQueue,10000);
+}
+
+init();
+</script>
+</body>
+</html>
