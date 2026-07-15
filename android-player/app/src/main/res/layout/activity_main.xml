@@ -140,27 +140,11 @@
 		</LinearLayout>
 	</FrameLayout>
 
-	<!-- Queue marquee — scrolls upcoming singers at bottom of screen -->
-	<TextView
+	<!-- Queue marquee — continuously scrolls upcoming singers at bottom of screen -->
+	<com.karol.player.MarqueeView
 		android:id="@+id/queueMarquee"
 		android:layout_width="match_parent"
-		android:layout_height="80dp"
+		android:layout_height="100dp"
 		android:layout_gravity="bottom"
-		android:background="#DD000000"
-		android:ellipsize="marquee"
-		android:fadingEdge="horizontal"
-		android:fadingEdgeLength="60dp"
-		android:focusable="true"
-		android:focusableInTouchMode="true"
-		android:gravity="center_vertical"
-		android:marqueeRepeatLimit="marquee_forever"
-		android:paddingStart="20dp"
-		android:paddingEnd="20dp"
-		android:scrollHorizontally="true"
-		android:singleLine="true"
-		android:text="Karol Player — Ready"
-		android:textColor="@android:color/white"
-		android:textSize="16sp"
-		android:textStyle="bold"
 		android:visibility="visible" />
 </FrameLayout>

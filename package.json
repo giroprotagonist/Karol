@@ -24,5 +24,8 @@
     "player:save-youtube-session": "bash scripts/player-youtube-session-save.sh",
     "player:restore-youtube-session": "bash scripts/player-youtube-session-restore.sh",
     "scan:library": "node api-server/library-scan-worker.js .deskreen/youtube-download-archive.txt .deskreen/library .deskreen/downloads .deskreen/tags.json"
+  },
+  "dependencies": {
+    "koa-compress": "^5.2.2"
   }
 }

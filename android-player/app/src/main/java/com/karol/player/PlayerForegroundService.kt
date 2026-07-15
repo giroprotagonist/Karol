@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.net.wifi.WifiManager
+import android.util.Log
 
 class PlayerForegroundService : Service() {
 	private var wakeLock: PowerManager.WakeLock? = null

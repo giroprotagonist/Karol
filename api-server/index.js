@@ -19,6 +19,7 @@ const Koa = require('koa');
 const cors = require('kcors');
 const Router = require('koa-router');
 const bodyParser = require('koa-bodyparser');
+const compress = require('koa-compress');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -79,7 +80,9 @@ function discoverPlayerViaMdns() {
     try {
       const cached = fs.readFileSync('/tmp/karol-player-mdns.txt', 'utf8').trim();
       if (cached && cached.length > 3) {
-        _mdnsPlayerHost = { host: cached, port: 3131, at: Date.now() - MDNS_PLAYER_TTL + 60000 }; // expire in 1 min
+        _mdnsPlayerHost = { host: cached, port: 3131, at: Date.now() }; // fresh TTL, re-verify in background
+        // Kick off background refresh to get the real IP behind .local
+        refreshPlayerHostAsync().catch(() => {});
         return cached;
       }
     } catch {}
@@ -157,6 +160,11 @@ const app = new Koa();
 const router = new Router();
 app.use(cors());
 app.use(bodyParser());
+// Gzip/brotli compression — cuts the 1.4MB library JSON to ~280KB
+app.use(compress({
+  threshold: 1024,      // compress anything over 1KB
+  br: false,            // brotli compresses well but encoding is slow — gzip is fast enough
+}));
 
 // Force close after every response — prevents Firefox keep-alive connections
 // from accumulating and stalling the TCP send buffer (see CLOSE_WAIT leaks)
@@ -665,12 +673,14 @@ app.use(async (ctx, next) => {
 //  Library Module — local video download + metadata pipeline
 // ═══════════════════════════════════════════════════════════════
 
-const LIBRARY_DIR = path.resolve(__dirname, '..', '..', '.deskreen', 'library');
+// External drive with full video archive (8,000+ karaoke mp4s)
+const EXTERNAL_DRIVE = '/Volumes/maxone';
+const LIBRARY_DIR = path.join(EXTERNAL_DRIVE, 'Deskreen');
 const LIBRARY_KARAOKE_DIR = path.join(LIBRARY_DIR, 'karaoke');
 const LIBRARY_SONGS_DIR = path.join(LIBRARY_DIR, 'songs');
 const DOWNLOADS_DIR = path.resolve(__dirname, '..', '..', '.deskreen', 'youtube-downloads');
-const ARCHIVE_PATH = path.resolve(__dirname, '..', '..', '.deskreen', 'youtube-download-archive.txt');
-const TAGS_PATH = path.resolve(__dirname, '..', '..', '.deskreen', 'tags.json');
+const ARCHIVE_PATH = path.join(LIBRARY_DIR, 'youtube-download-archive.txt');
+const TAGS_PATH = path.join(LIBRARY_DIR, 'tags.json');
 const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
 
 // All library directories to search for files (root + subdirectories)
@@ -1058,7 +1068,7 @@ router.post('/api/queue/request', async (ctx) => {
     return;
   }
 
-  // Persist request to MySQL via Bluehost proxy
+  // Persist request to MySQL via Bluehost proxy (fire-and-forget, never blocks)
   const cleanTitle = title ? String(title).trim().substring(0, 120) : '';
   mysql.requestAdd(videoId, cleanName, cleanTitle).catch(e => {
     console.error('[requests] MySQL add error:', e.message);
@@ -1072,30 +1082,15 @@ router.post('/api/queue/request', async (ctx) => {
     return;
   }
 
-  // Check if S8 is currently idle — if so, start playback
-  let shouldPlayNow = false;
+  // Proxy to S8 immediately — no blocking status check
+  // S8 decides play-now vs queue-add on its own
   try {
-    const statusBody = await new Promise((res, rej) => {
-      const r = http.get(`http://${playerHost}:${getPlayerPort()}/api/youtube-dj/queue`, { timeout: 3000, family: 4, agent: playerAgent }, (resp) => {
-        let d = '';
-        resp.on('data', c => d += c);
-        resp.on('end', () => { try { res(JSON.parse(d)); } catch { res(null); } });
-      });
-      r.on('error', rej);
-      r.on('timeout', () => { r.destroy(); rej(new Error('timeout')); });
-    });
-    shouldPlayNow = statusBody && (!statusBody.isPlaying || statusBody.currentIndex < 0);
-  } catch (e) { /* can't check, just queue */ }
-
-  // Proxy to S8
-  try {
-    const result = await proxyRequestToS8(videoId, shouldPlayNow, cleanName, cleanTitle);
+    const result = await proxyRequestToS8(videoId, false, cleanName, cleanTitle);
     console.log(`[request] "${cleanName}" requested ${videoId} — added to S8 queue`);
     ctx.status = 200;
     ctx.body = { ok: true, videoId, requester: cleanName, queued: true, playerReady: true, s8Response: result.body };
   } catch (e) {
     console.error(`[request] Failed to proxy to S8 for "${cleanName}" / ${videoId}: ${e.message}`);
-    // Still return success — the request is stored, will be picked up later
     ctx.status = 202;
     ctx.body = { ok: true, videoId, requester: cleanName, queued: true, playerReady: false, proxyError: e.message };
   }
@@ -2292,20 +2287,55 @@ router.get('/api/library/list', async (ctx) => {
   const now = Date.now();
   let archiveChanged = false;
   try { archiveChanged = (await fs.promises.stat(ARCHIVE_PATH)).mtimeMs > __libraryListCache.archiveMtime; } catch (e) {}
-  if (__libraryListCache.rawJson && now - __libraryListCache.ts < LIBRARY_LIST_CACHE_MS && !archiveChanged) {
+  if ((!__libraryListCache.rawJson) || now - __libraryListCache.ts >= LIBRARY_LIST_CACHE_MS || archiveChanged) {
+    tryLoadCacheFromDisk();
+  }
+  if (!__libraryListCache.data) {
+    ctx.status = 500;
+    ctx.body = '{"ok":false,"error":"Cache not available — run library scan separately"}';
+    return;
+  }
+
+  // Client-side search params — filter server-side for speed
+  const q = (ctx.query.q || '').toLowerCase();
+  const year = ctx.query.year || '';
+  const page = parseInt(ctx.query.page, 10) || 0;
+  const limit = parseInt(ctx.query.limit, 10) || 0;
+
+  if (!q && !year && !page && !limit) {
+    // Fast path: return full cached JSON (compressed by middleware)
     ctx.type = 'application/json';
     ctx.body = __libraryListCache.rawJson;
     return;
   }
-  // Reload from disk cache — never use execFile (it kills the server on macOS 26)
-  const loaded = tryLoadCacheFromDisk();
-  if (loaded && __libraryListCache.rawJson) {
-    ctx.type = 'application/json';
-    ctx.body = __libraryListCache.rawJson;
-  } else {
-    ctx.status = 500;
-    ctx.body = '{"ok":false,"error":"Cache not available — run library scan separately"}';
+
+  // Filtered/paginated path: work from the parsed data
+  const allVideos = __libraryListCache.data.videos || [];
+  let videos = allVideos;
+  if (q) {
+    videos = videos.filter(v =>
+      (v.title || '').toLowerCase().includes(q) ||
+      (v.artist || '').toLowerCase().includes(q) ||
+      String(v.year || '').includes(q)
+    );
   }
+  if (year) {
+    videos = videos.filter(v => String(v.year) === year);
+  }
+  const total = videos.length;
+  if (limit > 0) {
+    const start = (page - 1) * limit;
+    videos = videos.slice(start, start + limit);
+  }
+
+  ctx.type = 'application/json';
+  ctx.body = JSON.stringify({
+    ok: true,
+    count: total,
+    page: page || 1,
+    limit: limit || total,
+    videos,
+  });
 });
 
 // Scan summary
@@ -2885,6 +2915,16 @@ server.listen(PORT, '0.0.0.0', async () => {
   alignBlackHoleSampleRate();
   setDefaultAudioOutput();  // Set Karol as default so VLC → BlackHole → Ableton
   tryLoadCacheFromDisk();  // Load pre-built cache if available, avoids re-scanning
+  // Seed mDNS player cache from persisted file for instant cold-start connectivity
+  try {
+    const cached = fs.readFileSync('/tmp/karol-player-mdns.txt', 'utf8').trim();
+    if (cached && cached.length > 3 && !_mdnsPlayerHost) {
+      _mdnsPlayerHost = { host: cached, port: 3131, at: Date.now() };
+      console.log('[mdns] Seeded player cache from disk: ' + cached);
+      // Refresh in background so we get the current IP for the .local hostname
+      refreshPlayerHostAsync().catch(() => {});
+    }
+  } catch {}
   startAbletonPoll();
   startMdnsBroadcaster(getLanIp());
 

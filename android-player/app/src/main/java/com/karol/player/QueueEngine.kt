@@ -402,6 +402,17 @@ class QueueEngine(context: Context) {
 		return queue[prevIndex].videoId
 	}
 
+	/** Returns the video ID of the next track (for preloading) without advancing */
+	fun getNextVideoId(): String? {
+		if (queue.isEmpty()) return null
+		val nextIndex = when {
+			currentIndex < 0 -> 0
+			currentIndex >= queue.size - 1 -> return null
+			else -> currentIndex + 1
+		}
+		return queue.getOrNull(nextIndex)?.videoId
+	}
+
 	fun onVideoEnded(reason: String = "ended-confirmed"): String? {
 		logAdvance(reason)
 		if (currentIndex in queue.indices) {

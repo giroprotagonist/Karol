@@ -78,14 +78,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .btn-cancel{background:var(--bg);color:var(--text2)}
 .btn-submit{background:var(--accent);color:#fff}
 
-.payment-col{padding:10px;background:var(--bg);border-radius:8px;margin-top:8px;text-align:center}
-.payment-col strong{font-size:0.9rem;color:var(--text)}
-.payment-link{display:block;margin-top:4px;font-size:0.78rem;color:var(--accent);text-decoration:none}
-.payment-link:hover{text-decoration:underline}
-.qr-img{width:90px;height:90px;object-fit:contain;margin-top:4px;border-radius:6px;background:#fff;padding:3px;cursor:pointer}
-#qrFullscreen{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:220;align-items:center;justify-content:center;cursor:pointer}
-#qrFullscreen.show{display:flex}
-#qrFullscreen img{max-width:90vw;max-height:85vh;object-fit:contain;border-radius:12px;background:#fff;padding:10px}
 .toast{position:fixed;bottom:16px;right:16px;background:var(--bg2);border:1px solid var(--accent);color:var(--text);padding:8px 16px;border-radius:var(--radius);font-size:0.8rem;z-index:100;opacity:0;transform:translateY(8px);transition:all .2s;pointer-events:none}
 .toast.show{opacity:1;transform:translateY(0)}
 .view-toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
@@ -158,26 +150,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   </div>
 </div>
 
-<div id="paymentModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:210;align-items:center;justify-content:center">
-  <div class="modal-box" style="max-width:380px">
+<div id="paymentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:210;align-items:center;justify-content:center" onclick="event.target===this && closePayment()">
+  <div class="modal-box" style="max-width:340px">
     <h3 id="paymentTitle">Almost done!</h3>
     <p>Tip to get your song played sooner</p>
-    <div class="payment-col" style="margin-bottom:8px">
-      <strong>Venmo</strong>
-      <a href="https://venmo.com/karolpdx" target="_blank" class="payment-link">@karolpdx</a>
-      <br><img class="qr-img" src="venmo-qr.png" loading="lazy" onclick="openQrFullscreen(this.src)">
+    <div style="display:flex;gap:12px;justify-content:center;margin-bottom:12px">
+      <a href="https://venmo.com/karolpdx" target="_blank" style="background:var(--accent);color:#fff;padding:8px 20px;border-radius:var(--radius);text-decoration:none;font-size:0.85rem;font-weight:600">Venmo @karolpdx</a>
+      <a href="https://cash.app/$karolpdx" target="_blank" style="background:var(--green);color:#fff;padding:8px 20px;border-radius:var(--radius);text-decoration:none;font-size:0.85rem;font-weight:600">CashApp $karolpdx</a>
     </div>
-    <div class="payment-col">
-      <strong>CashApp</strong>
-      <a href="https://cash.app/$karolpdx" target="_blank" class="payment-link">$karolpdx</a>
-      <br><img class="qr-img" src="cashapp-qr.png" loading="lazy" onclick="openQrFullscreen(this.src)">
-    </div>
-    <button class="btn-cancel" onclick="closePayment()" style="margin-top:12px;width:100%;padding:8px;border-radius:var(--radius);background:var(--bg);color:var(--text2);border:none;cursor:pointer;font-size:0.85rem">Close</button>
+    <button class="btn-cancel" onclick="closePayment()" style="width:100%;padding:8px;border-radius:var(--radius);background:var(--bg);color:var(--text2);border:none;cursor:pointer;font-size:0.85rem">Close</button>
   </div>
-</div>
-
-<div id="qrFullscreen" onclick="this.classList.remove('show')">
-  <img id="qrFullscreenImg" src="">
 </div>
 
 <script>
@@ -292,7 +274,6 @@ function confirmRequest(){
   pendingVideoId=null;pendingTitle='';
 }
 function closePayment(){document.getElementById('paymentModal').style.display='none';}
-function openQrFullscreen(src){document.getElementById('qrFullscreenImg').src=src;document.getElementById('qrFullscreen').classList.add('show');}
 function requestCustom(){
   var url=document.getElementById('customUrl').value.trim();
   if(!url){showToast('Paste a YouTube URL first');return}
@@ -303,26 +284,69 @@ function requestCustom(){
   document.getElementById('requestModal').classList.add('show');
 }
 
-// ── Library loading ──
+// ── Library loading (paginated: fast first page, background rest) ──
+var PAGE_SIZE=100, libraryLoading=false, libraryTotal=0, libraryLoadedPages=0;
 function loadLibrary(){
   document.getElementById('apiLabel').textContent='loading...';
-  apiGet('/api/library/list').then(function(d){
+  libraryLoading=true; libraryLoadedPages=0;
+
+  // Load first page fast — user sees results immediately
+  apiGet('/api/library/list?page=1&limit='+PAGE_SIZE).then(function(d){
     if(d&&d.videos){
       allVideos=d.videos;
-      document.getElementById('videoCount').textContent=allVideos.length;
-      document.getElementById('apiLabel').textContent='online';
+      libraryTotal=d.count;
+      libraryLoadedPages=1;
+      document.getElementById('videoCount').textContent=libraryTotal;
+      document.getElementById('apiLabel').textContent='loading...'; // still loading more
       document.getElementById('apiDot').className='status-dot on';
-      populateYearFilter();
+      populateYearFilterFromSample();
       renderVideos();
+      // Load remaining pages in background
+      loadRemainingPages();
     }else{
+      libraryLoading=false;
       document.getElementById('apiLabel').textContent='error';
       document.getElementById('grid').innerHTML='<div class="empty">Failed to load library</div>';
     }
   }).catch(function(){
+    libraryLoading=false;
     document.getElementById('apiLabel').textContent='offline';
     document.getElementById('apiDot').className='status-dot off';
-    document.getElementById('grid').innerHTML='<div class="empty">Cannot reach library server<br><br><small>Make sure the API server is running on your Mac</small></div>';
+    document.getElementById('grid').innerHTML='<div class="empty">Cannot reach library server</div>';
   });
+}
+
+function loadRemainingPages(){
+  var totalPages=Math.ceil(libraryTotal/PAGE_SIZE);
+  if(totalPages<=1){libraryLoading=false;finishLoading();return}
+  // Load pages in batches of 4 to avoid overwhelming the server
+  var batch=[];
+  for(var p=2;p<=totalPages;p++) batch.push('/api/library/list?page='+p+'&limit='+PAGE_SIZE);
+  var loaded=0;
+  batch.forEach(function(url){
+    apiGet(url).then(function(d){
+      if(d&&d.videos){for(var i=0;i<d.videos.length;i++)allVideos.push(d.videos[i])}
+      loaded++; libraryLoadedPages++;
+      if(loaded===batch.length){libraryLoading=false;finishLoading()}
+    }).catch(function(){loaded++;if(loaded===batch.length){libraryLoading=false;finishLoading()}});
+  });
+}
+
+function finishLoading(){
+  document.getElementById('videoCount').textContent=allVideos.length;
+  document.getElementById('apiLabel').textContent='online';
+  populateYearFilter();
+  renderVideos();
+}
+
+function populateYearFilterFromSample(){
+  var years={};
+  for(var i=0;i<allVideos.length;i++){var yr=allVideos[i].year;if(yr&&String(yr).trim())years[yr]=true}
+  var sorted=Object.keys(years).sort(function(a,b){return parseInt(a)-parseInt(b)});
+  var sel=document.getElementById('yearFilter'),cur=sel.value;
+  sel.innerHTML='<option value="">All years</option>';
+  for(var j=0;j<sorted.length;j++){sel.innerHTML+='<option value="'+sorted[j]+'">'+sorted[j]+'</option>'}
+  if(cur)sel.value=cur;
 }
 
 function populateYearFilter(){

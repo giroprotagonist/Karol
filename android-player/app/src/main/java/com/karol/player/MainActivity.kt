@@ -19,7 +19,13 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.SimpleCache
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -45,13 +51,14 @@ class MainActivity : AppCompatActivity() {
 	private var localPlaybackActive = false
 	private var currentLocalVideoId: String? = null
 	private var downloadingVideoId: String? = null
+	private var preloadingVideoId: String? = null // next video being preloaded
 	private var progressJob: Job? = null
 
 	private val notificationPermissionLauncher =
 		registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-	// Queue marquee — scrolls upcoming singers
-	private lateinit var queueMarquee: TextView
+	// Queue marquee — continuously scrolls upcoming singers
+	private lateinit var queueMarquee: MarqueeView
 	private var marqueeJob: Job? = null
 
 	// Karaoke lyric overlay
@@ -99,7 +106,27 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	private fun initExoPlayer() {
-		exoPlayer = ExoPlayer.Builder(this).build()
+		// Disk cache: 500MB for video data — makes replays instant
+		val cacheDir = File(cacheDir, "exoplayer-cache")
+		if (!cacheDir.exists()) cacheDir.mkdirs()
+		var cache: SimpleCache? = null
+		try {
+			cache = SimpleCache(cacheDir, androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(500 * 1024 * 1024), StandaloneDatabaseProvider(this))
+		} catch (e: Exception) {
+		}
+		val upstreamFactory = DefaultDataSource.Factory(this,
+			DefaultHttpDataSource.Factory().setUserAgent("KarolPlayer/1.0"))
+		val builder = if (cache != null) {
+			val cacheFactory = CacheDataSource.Factory()
+				.setCache(cache)
+				.setUpstreamDataSourceFactory(upstreamFactory)
+				.setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+			ExoPlayer.Builder(this).setMediaSourceFactory(DefaultMediaSourceFactory(cacheFactory))
+		} else {
+			ExoPlayer.Builder(this)
+		}
+
+		exoPlayer = builder.build()
 		playerView.player = exoPlayer
 		playerView.useController = false
 		playerView.visibility = View.GONE
@@ -111,6 +138,8 @@ class MainActivity : AppCompatActivity() {
 					(application as PlayerApp).playbackSupervisor.clearLoadState()
 					hideLoading()
 					startProgressReporter()
+					// Preload next video while current plays
+					preloadNextVideo()
 				}
 				if (state == Player.STATE_ENDED) {
 					progressJob?.cancel()
@@ -185,6 +214,7 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	private fun loadVideo(videoId: String) {
+		val t0 = System.currentTimeMillis()
 		Log.i("MainActivity", "loadVideo: $videoId")
 		stopPlayback()
 		downloadingVideoId = null
@@ -198,30 +228,65 @@ class MainActivity : AppCompatActivity() {
 			return
 		}
 
-		// Stream immediately (ExoPlayer range requests — starts in 1-2s)
-		// Background download so video is cached for next time
+		// ── Download from Mac then play locally (avoids unreliable live yt-dlp stream)
 		downloadingVideoId = videoId
-		val streamUrl = "${videoDownloadManager.getServerBaseUrl()}/api/library/stream/$videoId"
-		playStream(streamUrl, videoId)
+		showLoading()
+		updateLoadingText(videoId, "Syncing from Mac...")
 		fetchLyricsIfKaraoke(videoId)
 		videoDownloadManager.download(videoId,
-			onProgress = { pct -> },
+			onProgress = { pct ->
+				runOnUiThread {
+					val pctInt = (pct * 100).toInt().coerceIn(0, 100)
+					loadingPercentText.text = "$pctInt%"
+					loadingProgressBar.progress = pctInt
+					if (pctInt < 100) {
+						updateLoadingText(videoId, "Downloading from Mac...")
+					} else {
+						updateLoadingText(videoId, "Caching on device...")
+					}
+				}
+			},
 			onReady = { file, subs ->
 				runOnUiThread {
-					Log.i("MainActivity", "Background cached: $videoId (${file.length()} bytes)")
+					Log.i("MainActivity", "Downloaded: $videoId (${file.length()} bytes)")
 					downloadingVideoId = null
-					// Switch to local file for smoother replay, but only
-					// if we're still playing the same video (not already on next)
-					if (currentLocalVideoId == videoId && localPlaybackActive) {
-						Log.i("MainActivity", "Switching from stream to local file for $videoId")
-						playFile(file, videoId)
-					}
+					hideLoading()
+					playFile(file, videoId)
 				}
 			},
 			onError = { msg ->
 				runOnUiThread {
-					Log.w("MainActivity", "Background cache failed: $msg")
+					Log.w("MainActivity", "Download failed, retrying: $msg")
 					downloadingVideoId = null
+					// Retry once immediately — yt-dlp may still be downloading on Mac
+					updateLoadingText(videoId, "Retrying download...")
+					if (videoId == currentLocalVideoId || downloadingVideoId != videoId) {
+						videoDownloadManager.download(videoId,
+							onProgress = { pct ->
+								runOnUiThread {
+									val pctInt = (pct * 100).toInt().coerceIn(0, 100)
+									loadingPercentText.text = "$pctInt%"
+									loadingProgressBar.progress = pctInt
+								}
+							},
+							onReady = { file, subs ->
+								runOnUiThread {
+									downloadingVideoId = null
+									hideLoading()
+									playFile(file, videoId)
+								}
+							},
+							onError = { msg2 ->
+								runOnUiThread {
+									Log.e("MainActivity", "Second attempt failed: $msg2")
+									downloadingVideoId = null
+									hideLoading()
+									val app = application as PlayerApp
+									app.queueEngine.skipNext("download-failed-2x")
+								}
+							}
+						)
+					}
 				}
 			}
 		)
@@ -265,6 +330,31 @@ class MainActivity : AppCompatActivity() {
 			currentLocalVideoId = null
 			playerView.visibility = View.GONE
 		}
+	}
+
+	/** Preload next video into cache while current is playing */
+	private fun preloadNextVideo() {
+		try {
+			val app = application as PlayerApp
+			val nextId = app.queueEngine.getNextVideoId() ?: return
+			if (nextId == preloadingVideoId) return // already preloading
+			// Only preload if not already cached
+			val local = videoDownloadManager.getLocalFile(nextId)
+			if (local != null) return // already cached, instant
+			preloadingVideoId = nextId
+			Log.i("MainActivity", "Preloading next: $nextId")
+			videoDownloadManager.download(nextId,
+				onProgress = { _ -> },
+				onReady = { _, _ ->
+					Log.i("MainActivity", "Preload complete: $nextId")
+					preloadingVideoId = null
+				},
+				onError = { msg ->
+					Log.w("MainActivity", "Preload failed: $msg")
+					preloadingVideoId = null
+				}
+			)
+		} catch (_: Exception) {}
 	}
 
 	private fun disableSubtitles() {
@@ -430,9 +520,8 @@ class MainActivity : AppCompatActivity() {
 		super.onDestroy()
 	}
 
-	/** Update the bottom marquee with current queue showing singer + song */
+	/** Update the bottom marquee with current queue showing singer + song with numbered order */
 	private fun startMarqueeUpdater() {
-		queueMarquee.isSelected = true // enable scrolling marquee
 		marqueeJob = lifecycleScope.launch {
 			while (isActive) {
 				val app = application as PlayerApp
@@ -440,37 +529,38 @@ class MainActivity : AppCompatActivity() {
 				val ci = app.queueEngine.currentIndex
 				val sb = StringBuilder()
 
-				// Current: "NOW: [Requester] --- [Title]"
+				// Current: "NOW: [Requester] — [Title]"
 				if (ci in q.indices) {
 					val cur = q[ci]
-					val displayTitle = cur.title.take(80)
+					val displayTitle = cur.title.take(70)
 					val reqName = cur.requester?.take(25)
 					sb.append("NOW: ")
 					if (!reqName.isNullOrBlank()) {
 						sb.append(reqName)
-						sb.append(" --- ")
+						sb.append("  \u2014  ")
 					}
 					sb.append(displayTitle)
-				} else if (q.isEmpty()) {
-					sb.append("Karol Player — Queue empty")
-				} else {
-					sb.append("Karol Player — Ready")
 				}
 
-				// Upcoming (next few)
+				// Upcoming (next 8) with numbered order
 				val upcomingStart = ci + 1
 				if (upcomingStart in q.indices) {
-					sb.append("  |  NEXT: ")
-					val upcoming = q.drop(upcomingStart).take(5)
-					sb.append(upcoming.joinToString("  •  ") { item ->
-						val name = item.requester?.take(15)
-						val t = item.title.take(45)
-						if (!name.isNullOrBlank()) "$name: $t" else t
+					sb.append("     \u25B6  UP NEXT: ")
+					val upcoming = q.drop(upcomingStart).take(8)
+					sb.append(upcoming.joinToString("     ") { item ->
+						val idx = q.indexOf(item) + 1
+						val name = item.requester?.take(18)
+						val t = item.title.take(40)
+						val prefix = "#$idx "
+						if (!name.isNullOrBlank()) "$prefix$name: $t" else "$prefix$t"
 					})
 				}
 
-				runOnUiThread { queueMarquee.text = sb.toString() }
-				delay(5000L)
+				// Tip appended inline — scrolls as part of same continuous loop
+				sb.append("     \uD83D\uDCB8  Tips: Venmo @karolpdx  |  CashApp \$karolpdx  \uD83D\uDCB8")
+
+				runOnUiThread { queueMarquee.setMarqueeText(sb.toString()) }
+				delay(4000L)
 			}
 		}
 	}

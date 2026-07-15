@@ -58,3 +58,6 @@ __pycache__/
 # Keep these in git
 !.deskreen/tags.json
 !.deskreen/schema.sql
+
+# Cursor IDE
+.cursor/

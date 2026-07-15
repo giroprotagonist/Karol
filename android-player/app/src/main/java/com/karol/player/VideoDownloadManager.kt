@@ -93,9 +93,9 @@ class VideoDownloadManager(
 				val mp4Url = "$baseUrl/api/library/file/$videoId"
 				val statusUrl = "$baseUrl/api/library/status/$videoId"
 
-				// Poll status for up to 120s (check immediately, then every 5s)
-				for (attempt in 0..23) {
-					if (attempt > 0) delay(5000L) // skip delay on first poll
+				// Poll status for up to 120s (check immediately, then every 2s)
+				for (attempt in 0..59) {
+					if (attempt > 0) delay(2000L) // skip delay on first poll
 					val statusRes = client.newCall(Request.Builder().url(statusUrl).build()).execute()
 					val body = statusRes.body?.string() ?: ""
 					if (body.contains("\"ready\":true")) {
@@ -112,7 +112,7 @@ class VideoDownloadManager(
 						return@launch
 					}
 					// Update progress: show polling status as fraction of attempts
-					onProgress((attempt + 1).toFloat() / 24f)
+					onProgress((attempt + 1).toFloat() / 60f)
 				}
 				Log.w(TAG, "download: timed out waiting for $videoId")
 				onError("Download timed out — try again")

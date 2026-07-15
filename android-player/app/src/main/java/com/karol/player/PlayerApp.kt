@@ -110,6 +110,14 @@ class PlayerApp : Application() {
 			override fun setCaptionOff() {
 				localPlayerController?.setCaptionOff()
 			}
+
+			override fun loadLyrics(json: String) {
+				localPlayerController?.loadLyrics(json)
+			}
+
+			override fun clearLyrics() {
+				localPlayerController?.clearLyrics()
+			}
 		}
 
 		djHttpServer =

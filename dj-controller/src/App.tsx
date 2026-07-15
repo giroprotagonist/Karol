@@ -80,6 +80,9 @@ export default function App() {
 	const [showConnection, setShowConnection] = useState(false);
 	const [isDraggingQueue, setIsDraggingQueue] = useState(false);
 	const [reconnecting, setReconnecting] = useState(false);
+	const [reconnectAttempt, setReconnectAttempt] = useState(0); // exponential backoff counter
+	const reconnectTimerRef = useRef<number | null>(null);
+	const BACKOFF_BASE = 2000; // start at 2s, double each attempt, max 30s
 	const [displayTime, setDisplayTime] = useState(0);
 	const [activeTab, setActiveTab] = useState<'queue' | 'library' | 'playlists' | 'player' | 'add'>('queue');
 	const [libraryStatus, setLibraryStatus] = useState<'checking' | 'downloading' | 'ready' | 'fallback' | ''>('');
@@ -154,20 +157,29 @@ export default function App() {
 			hasLoadedRef.current = true;
 			setConnected(true);
 			setReconnecting(false);
+			setReconnectAttempt(0);
 			setConnecting(false);
 			setError('');
 			setShowConnection(false);
 		} catch (err) {
+			const wasConnected = hasLoadedRef.current;
 			setConnected(false);
 			setConnecting(false);
-			if (hasLoadedRef.current) {
+			if (wasConnected) {
+				// Auto-reconnect with exponential backoff: 2s → 4s → 8s → 16s → 30s cap
+				const attempt = reconnectAttempt + 1;
+				setReconnectAttempt(attempt);
 				setReconnecting(true);
+				const delay = Math.min(BACKOFF_BASE * Math.pow(2, attempt - 1), 30_000);
+				if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+				reconnectTimerRef.current = window.setTimeout(() => { void refreshAll(); }, delay);
 			} else {
 				setReconnecting(false);
+				setReconnectAttempt(0);
 				setError(err instanceof Error ? err.message : 'Connection failed');
 			}
 		}
-	}, [host]);
+	}, [host, reconnectAttempt]);
 
 	// Fetch library data once on connect (cached; re-fetches only on manual trigger)
 	useEffect(() => {
@@ -231,23 +243,39 @@ export default function App() {
 		return () => clearInterval(interval);
 	}, [pollEnabled, refreshAll]);
 
-	// Poll now-playing for smooth time updates
+	// Poll now-playing for smooth time updates + auto-reconnect trigger
 	useEffect(() => {
 		if (!pollEnabled || !host) return;
 		let cancelled = false;
+		let consecutiveFailures = 0;
 		const pollNowPlaying = async () => {
 			try {
 				const next = await fetchNowPlaying(host);
-				if (!cancelled) setNowPlaying(next);
-				if (!cancelled) { setConnected(true); setReconnecting(false); }
+				if (!cancelled) {
+					consecutiveFailures = 0;
+					setNowPlaying(next);
+					setConnected(true);
+					setReconnecting(false);
+					setReconnectAttempt(0);
+				}
 			} catch {
-				if (!cancelled && hasLoadedRef.current) setReconnecting(true);
+				if (!cancelled) {
+					consecutiveFailures++;
+					// After 3 consecutive now-playing failures (~1.5s), trigger refreshAll reconnect
+					if (consecutiveFailures >= 3 && hasLoadedRef.current && !reconnecting) {
+						setReconnecting(true);
+						setReconnectAttempt(1);
+						const delay = BACKOFF_BASE;
+						if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+						reconnectTimerRef.current = window.setTimeout(() => { void refreshAll(); }, delay);
+					}
+				}
 			}
 		};
 		void pollNowPlaying();
 		const interval = setInterval(() => { void pollNowPlaying(); }, 500);
 		return () => { cancelled = true; clearInterval(interval); };
-	}, [host, pollEnabled]);
+	}, [host, pollEnabled, reconnecting, refreshAll]);
 
 	// Sync mode from queue state
 	useEffect(() => {
@@ -442,7 +470,7 @@ export default function App() {
 						onClick={() => setShowConnection((open) => !open)}
 					>
 						<span className="status-dot" />
-						{connected ? 'Connected' : reconnecting ? 'Reconnecting…' : error ? 'Offline' : 'Setup'}
+						{connected ? 'Connected' : reconnecting ? `Reconnecting${reconnectAttempt > 0 ? ` (${reconnectAttempt})` : '…'}` : error ? 'Offline' : 'Setup'}
 					</button>
 				</div>
 			</header>
@@ -451,8 +479,8 @@ export default function App() {
 
 			{reconnecting && hasLoadedRef.current ? (
 				<div className="banner reconnect-banner" role="status">
-					<span>Reconnecting to host… queue data may be stale</span>
-					<button type="button" className="btn small" onClick={() => void refreshAll()}>Retry now</button>
+					<span>Reconnecting{reconnectAttempt > 0 ? ` (attempt ${reconnectAttempt})…` : '…'} queue data may be stale</span>
+					<button type="button" className="btn small" onClick={() => { setReconnectAttempt(0); void refreshAll(); }}>Retry now</button>
 				</div>
 			) : null}
 
