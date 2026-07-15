@@ -60,7 +60,7 @@ function youtubeThumb(videoId: string, thumbnail?: string): string {
 		return thumbnail;
 	}
 	if (videoId) {
-		return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+		return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 	}
 	return '';
 }
@@ -122,27 +122,6 @@ export default function NowPlayingCard({
 		}
 	}, [serverTime, duration, videoId, isScrubbing]);
 
-	const logScrub = (message: string, data: Record<string, unknown>) => {
-		// #region agent log
-		window.KarolNative?.ctrlDbg?.('H10', message, JSON.stringify(data));
-		fetch('http://127.0.0.1:7592/ingest/808d4931-5ef3-48a2-9797-d856a57d6e0a', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Debug-Session-Id': '25b906',
-			},
-			body: JSON.stringify({
-				sessionId: '25b906',
-				hypothesisId: 'H10',
-				location: 'NowPlayingCard.tsx',
-				message,
-				data,
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
-	};
-
 	const armScrub = (initial?: number) => {
 		if (!connected || !hasTrack || duration <= 0) {
 			return false;
@@ -151,7 +130,6 @@ export default function NowPlayingCard({
 			setIsScrubbing(true);
 			commitGuardRef.current = false;
 			onScrubActiveChange?.(true);
-			logScrub('scrub-begin', { serverTime, initial: initial ?? scrubValue });
 		}
 		if (initial !== undefined) {
 			setScrubTime(initial);
@@ -189,7 +167,6 @@ export default function NowPlayingCard({
 			return;
 		}
 		commitGuardRef.current = true;
-		logScrub('scrub-commit', { target, serverTime, inputValue, scrubTime });
 		setIsScrubbing(false);
 		setScrubTime(null);
 		onScrubActiveChange?.(false);

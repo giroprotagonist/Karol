@@ -729,8 +729,5 @@ class MainActivity : AppCompatActivity() {
 		private const val MIN_RELOAD_INTERVAL_MS = 30_000L
 		private const val STARTUP_HEALTH_CHECK_TIMEOUT_MS = 15_000L
 		private const val STARTUP_HEALTH_CHECK_POLL_MS = 2_000L
-		// If auto-discovery can't find the Mac, fall back to this URL.
-		// Set via DHCP reservation so it never changes.
-		private const val DEFAULT_HOST_URL = "http://192.168.68.50:3131/dj-controller/"
 	}
 }

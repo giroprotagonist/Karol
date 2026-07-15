@@ -7,17 +7,14 @@ test.describe('Playback flow (API seed + UI)', () => {
 		await openController(page);
 	});
 
-	test('queue tab reflects seeded tracks', async ({ page }) => {
-		await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Queue' }).click();
+	test('queue section reflects seeded tracks', async ({ page }) => {
 		await expect(page.locator('.queue-item')).toHaveCount(3, { timeout: 15_000 });
-		await expect(page.getByText(/3 tracks/)).toBeVisible();
 		await expect(page.locator('.status-chip').filter({ hasText: 'Now' })).toBeVisible();
 	});
 
 	test('skip next from UI advances without error', async ({ page, request }) => {
 		const beforeRes = await apiGet(request, '/queue');
 		const before = (await beforeRes.json()) as { currentIndex?: number };
-		await ensurePlayerTab(page);
 		await page.getByRole('button', { name: 'Next' }).click();
 		await expect(page.locator('.error-banner')).toHaveCount(0);
 		await expect
@@ -33,14 +30,12 @@ test.describe('Playback flow (API seed + UI)', () => {
 	});
 
 	test('seek relative buttons do not surface errors', async ({ page }) => {
-		await ensurePlayerTab(page);
 		await page.getByRole('button', { name: '+10' }).click();
 		await page.getByRole('button', { name: '−10' }).click();
 		await expect(page.locator('.error-banner')).toHaveCount(0);
 	});
 
 	test('volume slider updates display immediately', async ({ page }) => {
-		await ensurePlayerTab(page);
 		const volume = page.locator('input.volume[type="range"]');
 		await expect(volume).toBeEnabled();
 		await volume.fill('0.75');
@@ -49,7 +44,6 @@ test.describe('Playback flow (API seed + UI)', () => {
 	});
 
 	test('mode toggles shuffle and manual DJ without errors', async ({ page }) => {
-		await ensurePlayerTab(page);
 		const shuffle = page.getByRole('checkbox', { name: 'Shuffle' });
 		const manual = page.getByRole('checkbox', { name: 'Manual DJ' });
 		await shuffle.check();
@@ -61,7 +55,6 @@ test.describe('Playback flow (API seed + UI)', () => {
 	});
 
 	test('API volume change reflected after status poll', async ({ page, request }) => {
-		await ensurePlayerTab(page);
 		const res = await apiPost(request, '/transport/volume', { level: 0.25 });
 		expect(res.ok()).toBeTruthy();
 		await expect(page.locator('.volume-value')).toHaveText('25%', { timeout: 18_000 });

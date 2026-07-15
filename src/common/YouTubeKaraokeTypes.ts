@@ -15,6 +15,7 @@ export type YouTubeQueueItem = {
 	publishedAtMs?: number;
 	viewCount?: number;
 	channelTitle?: string;
+	requester?: string;
 };
 
 export type YouTubeKaraokeMode = 'queue' | 'hotswap' | 'manual';

@@ -33,12 +33,12 @@
 			if (form) { form.submit(); return true; }
 			return false;
 		}
-		// Try immediately, then retry once after 100ms
+		// Try immediately, then retry
 		setTimeout(function() {
 			if (!acceptConsent()) {
-				setTimeout(acceptConsent, 100);
+				setTimeout(acceptConsent, 1000);
 			}
-		}, 0);
+		}, 500);
 	})();
 
 	function isPlayerMode() {
@@ -49,7 +49,6 @@
 	}
 
 	var HIDE = [
-		// Desktop YouTube (ytd-* prefix)
 		'#masthead-container',
 		'#masthead',
 		'ytd-masthead',
@@ -78,9 +77,6 @@
 		'ytd-merch-shelf-renderer',
 		'.ytp-chrome-top',
 		'.ytp-gradient-top',
-		'.ytp-chrome-bottom',
-		'.ytp-gradient-bottom',
-		'.ytp-progress-bar-container',
 		'.ytp-show-cards-title',
 		'.ytp-ce-element',
 		'.ytp-endscreen-content',
@@ -99,84 +95,48 @@
 		'ytd-in-feed-ad-layout-renderer',
 		'ytd-promoted-sparkles-web-renderer',
 		'ytd-banner-promo-renderer',
-		// Mobile YouTube (m.youtube.com, ytm-* prefix)
-		'ytm-mobile-topbar-renderer',
-		'.mobile-topbar-header',
-		'.mobile-topbar-header-content',
-		'.mobile-topbar-logo',
-		'.mobile-topbar-title',
-		'ytm-header',
-		'ytm-header-bar',
-		'ytm-pivot-bar-renderer',
-		'ytm-pivot-bar',
-		'ytm-watch',
-		'ytm-single-column-watch-next-results-renderer',
-		'ytm-item-section-renderer',
-		'ytm-comment-section-renderer',
-		'ytm-comment-thread-renderer',
-		'ytm-slim-video-metadata-renderer',
-		'ytm-video-description-transcript-section-renderer',
-		'ytm-engagement-panel-section-list-renderer',
-		'ytm-suggestion-set',
-		'ytm-rich-section-renderer',
-		'ytm-compact-promoted-item-renderer',
-		'ytm-banner-promo-renderer',
-		'ytm-companion-slot',
-		'ytm-companion-ad-renderer',
-		'#header-bar',
 	].join(',');
 
 	(function injectMinimalCss() {
 		var style = document.createElement('style');
 		style.id = 'karol-yt-kiosk-css';
 		style.textContent =
-			'html,body,ytd-app,ytm-app{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}' +
-			'#movie_player,.html5-video-player{background:#000!important}' +
-			// Mobile YouTube: force player container to top of viewport
-			'.player-container{margin-top:0!important;top:0!important;position:absolute!important}' +
-			'ytm-watch,ytm-watch-flexy,ytm-single-column-watch-next-results-renderer{margin-top:0!important;padding-top:0!important}';
+			'html,body,ytd-app{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important}' +
+			'#movie_player,.html5-video-player{background:#000!important}';
 		document.head.appendChild(style);
 	})();
 
 	function hidePanels() {
 		try {
-			// Light DOM hiding
 			document.querySelectorAll(HIDE).forEach(function (el) {
 				el.style.setProperty('display', 'none', 'important');
 				el.style.setProperty('visibility', 'hidden', 'important');
 			});
-			// Walk all shadow roots and inject hiding CSS directly
-			(function walkShadows(root) {
-				root.querySelectorAll('*').forEach(function (el) {
-					if (el.shadowRoot) {
-						try {
-							var ss = el.shadowRoot.querySelector('#__karol-sh-root-css');
-							if (!ss) {
-								ss = document.createElement('style');
-								ss.id = '__karol-sh-root-css';
-								ss.textContent = 'ytm-mobile-topbar-renderer,.mobile-topbar-header,.mobile-topbar-header-content,.mobile-topbar-logo,.mobile-topbar-title,' +
-									'ytm-header-bar,ytm-header,#masthead-container,#masthead,ytd-masthead,#header,#container,#start,#header-bar,' +
-									'#background{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important}' +
-									// Hide YouTube player controls (chrome bottom, progress bar, control buttons)
-									'.ytp-chrome-bottom,.ytp-gradient-bottom,.ytp-progress-bar-container,.ytp-chrome-controls,.ytp-play-progress,' +
-									'.ytp-load-progress,.ytp-scrubber-container,.ytp-scrubber-button,.ytp-scrubber-pull-indicator,' +
-									'.ytp-time-display,.ytp-time-current,.ytp-time-separator,.ytp-time-duration,' +
-									'.ytp-live-badge,.ytp-settings-button,.ytp-fullscreen-button,.ytp-size-button,' +
-									'.ytp-autonav-toggle-button-container,.ytp-next-button,.ytp-prev-button,' +
-									'{display:none!important;visibility:hidden!important}';
-								el.shadowRoot.appendChild(ss);
-							}
-							walkShadows(el.shadowRoot);
-						} catch (e) {}
+			// Traverse YouTube shadow roots to hide masthead/header
+			try {
+				var mastheadEl = document.querySelector('ytd-masthead') || document.querySelector('ytd-app');
+				if (mastheadEl && mastheadEl.shadowRoot) {
+					var shadowHide = mastheadEl.shadowRoot.querySelectorAll(
+						'#container,#masthead-container,#header,ytd-masthead,#background,' +
+						'#guide-inner-content,#start,#header-bar'
+					);
+					shadowHide.forEach(function (el) {
+						el.style.setProperty('display', 'none', 'important');
+						el.style.setProperty('visibility', 'hidden', 'important');
+					});
+				}
+			} catch (e) { /* ignore shadow DOM errors */ }
+			// Brute-force: find any top-level element at the very top with small height
+			try {
+				var all = document.querySelectorAll('body > *, ytd-app > *');
+				for (var i = 0; i < all.length; i++) {
+					var r = all[i].getBoundingClientRect();
+					if (r.top <= 2 && r.height > 10 && r.height < 100 && r.width > 100) {
+						all[i].style.setProperty('display', 'none', 'important');
+						all[i].style.setProperty('visibility', 'hidden', 'important');
 					}
-				});
-			})(document.documentElement);
-			// Also force player-container to top
-			var pc = document.querySelector('.player-container');
-			if (pc) {
-				pc.style.setProperty('top', '0', 'important');
-				pc.style.setProperty('margin-top', '0', 'important');
-			}
+				}
+			} catch (e) { /* ignore */ }
 		} catch (e) {
 			/* ignore */
 		}

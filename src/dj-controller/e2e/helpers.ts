@@ -70,13 +70,9 @@ export async function waitForConnected(page: Page) {
 	});
 }
 
-/** Switch to Player tab only when needed (avoids arming the 500ms UI action guard). */
-export async function ensurePlayerTab(page: Page) {
-	const btn = page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Player' });
-	const isActive = await btn.evaluate((el) => el.classList.contains('active'));
-	if (!isActive) {
-		await btn.click();
-	}
+/** No-op: all sections are visible in the unified single-view layout. */
+export async function ensurePlayerTab(_page: Page) {
+	// Player section is always visible — no tab switching needed
 }
 
 export async function expectNoErrorBanner(page: Page) {

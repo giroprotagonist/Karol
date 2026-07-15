@@ -57,6 +57,8 @@
     "test:karol": "bash scripts/verify-karol-e2e.sh",
     "test:karol:controller": "bash scripts/verify-karol-controller.sh",
     "test:karol:all": "bash scripts/verify-karol-e2e.sh && bash scripts/verify-karol-controller.sh",
+    "karaoke:make": "python3 scripts/make-karaoke-video.py",
+    "karaoke:install-deps": "pip3 install --break-system-packages demucs requests",
     "test": "cd src/dj-controller && npm test"
   },
   "dependencies": {
@@ -95,6 +97,7 @@
     "koa-static": "^5.0.0",
     "lodash": "^4.17.21",
     "music-metadata": "^11.13.0",
+    "mysql2": "^3.23.0",
     "node-forge": "^1.3.1",
     "normalize.css": "^8.0.1",
     "osc": "^2.4.5",

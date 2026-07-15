@@ -35,6 +35,10 @@ import {
 	isYouTubeQueueWindowOpen,
 	openYouTubeQueueWindow,
 } from '../main/helpers/youtubeQueueWindow';
+import {
+	openDjControllerWindow,
+	isDjControllerWindowOpen,
+} from '../main/helpers/djControllerWindow';
 import { signalingServer } from './index';
 import { store } from '../common/deskreen-electron-store';
 import { ElectronStoreKeys } from '../common/ElectronStoreKeys.enum';
@@ -190,12 +194,22 @@ export function registerYouTubeKaraokeApi(router: Router): void {
 
 	router.get('/api/youtube-dj/health', async (ctx) => {
 		setCors(ctx);
-		ctx.body = await getDjStatus();
+		try {
+			ctx.body = await getDjStatus();
+		} catch (err) {
+			ctx.status = 500;
+			ctx.body = { ok: false, error: err instanceof Error ? err.message : 'Health check failed' };
+		}
 	});
 
 	router.get('/api/youtube-dj/status', async (ctx: Context) => {
 		setCors(ctx);
-		ctx.body = await getDjStatus();
+		try {
+			ctx.body = await getDjStatus();
+		} catch (err) {
+			ctx.status = 500;
+			ctx.body = { ok: false, error: err instanceof Error ? err.message : 'Status check failed' };
+		}
 	});
 
 	router.get('/api/youtube-dj/now-playing', async (ctx: Context) => {
@@ -226,6 +240,12 @@ export function registerYouTubeKaraokeApi(router: Router): void {
 		setCors(ctx);
 		openYouTubeQueueWindow();
 		ctx.body = { ok: true, open: isYouTubeQueueWindowOpen() };
+	});
+
+	router.post('/api/youtube-dj/controller-window/open', (ctx: Context) => {
+		setCors(ctx);
+		openDjControllerWindow(signalingServer.port);
+		ctx.body = { ok: true, open: isDjControllerWindowOpen() };
 	});
 
 	router.get('/api/youtube-dj/playlist', (ctx: Context) => {

@@ -16,5 +16,7 @@ export function getQueueItemDisplayTitle(title: string, videoId: string): string
 	if (!isPlaceholderQueueTitle(title, videoId)) {
 		return title;
 	}
-	return 'Loading title…';
+	// Strip "YouTube: " prefix if present; server resolves real titles on next poll
+	if (title.startsWith('YouTube: ')) return title.slice(9);
+	return title || videoId;
 }

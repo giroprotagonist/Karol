@@ -5,13 +5,11 @@ import android.os.Looper
 import android.util.Log
 
 /**
- * Watches playback health: nudges, soft recovery (no page reload), then hard reload as last resort.
+ * Watches playback health: nudges, soft recovery, then hard reload as last resort.
  */
 class PlaybackSupervisor(
 	private val queueEngine: QueueEngine,
-	private val onNudgePlayback: () -> Unit,
-	private val onSoftRecover: () -> Unit,
-	private val onHardReload: () -> Unit,
+	private val localPlayer: LocalPlayerController,
 ) {
 	private val mainHandler = Handler(Looper.getMainLooper())
 	private var loadStartedAt = 0L
@@ -45,53 +43,6 @@ class PlaybackSupervisor(
 		interstitialMessage = null
 	}
 
-	fun onInterstitial(url: String) {
-		interstitialMessage =
-			when {
-				url.contains("consent.youtube") -> "YouTube consent required on tablet"
-				url.contains("accounts.google") -> "YouTube sign-in required on tablet"
-				else -> "YouTube needs attention on tablet"
-			}
-	}
-
-	fun onSnapshot(snapshot: PlayerSnapshot) {
-		if (snapshot.videoId.isNotBlank() && snapshot.videoId != currentVideoId) {
-			val midTrack = snapshot.hasVideo && snapshot.currentTime > 5.0
-			if (!midTrack) {
-				onLoadStarted(snapshot.videoId)
-			} else {
-				currentVideoId = snapshot.videoId
-			}
-		}
-		val trackLoaded =
-			snapshot.hasVideo &&
-				snapshot.currentTime > 1.0 &&
-				snapshot.videoId.isNotBlank()
-		val playbackStarted =
-			trackLoaded &&
-				(
-					snapshot.state == 1 ||
-						snapshot.state == 2 ||
-						(!snapshot.paused && snapshot.state != 0)
-				)
-		if (playbackStarted && (snapshot.layoutOk || snapshot.currentTime > 3.0)) {
-			loadStartedAt = 0L
-			nudgeSent = false
-			softRecoverSent = false
-			hardReloadSent = false
-			failMarked = false
-			if (interstitialMessage?.contains("load") == true ||
-				interstitialMessage?.contains("nudging") == true ||
-				interstitialMessage?.contains("Retrying") == true
-			) {
-				interstitialMessage = null
-			}
-			if (currentVideoId != null && snapshot.videoId == currentVideoId) {
-				queueEngine.clearCurrentError()
-			}
-		}
-	}
-
 	fun stop() {
 		tickRunnable?.let { mainHandler.removeCallbacks(it) }
 		tickRunnable = null
@@ -120,20 +71,22 @@ class PlaybackSupervisor(
 		if (!nudgeSent && elapsed > NUDGE_MS) {
 			nudgeSent = true
 			Log.i(TAG, "nudge playback for $currentVideoId")
-			onNudgePlayback()
+			localPlayer.play()
 			interstitialMessage = "Still loading — nudging playback…"
 		}
 		if (!softRecoverSent && elapsed > SOFT_RECOVER_MS) {
 			softRecoverSent = true
-			Log.w(TAG, "soft recover $currentVideoId (no page reload)")
-			onSoftRecover()
+			Log.w(TAG, "soft recover $currentVideoId")
+			// ExoPlayer: just ensure volume and try play
+			localPlayer.setVolume(1.0)
+			localPlayer.play()
 			interstitialMessage = "Recovering playback…"
 			loadStartedAt = now
 		}
 		if (!hardReloadSent && elapsed > HARD_RELOAD_MS) {
 			hardReloadSent = true
 			Log.w(TAG, "hard reload current video $currentVideoId")
-			onHardReload()
+			currentVideoId?.let { localPlayer.loadVideo(it) }
 			interstitialMessage = "Retrying video load…"
 			loadStartedAt = now
 		}

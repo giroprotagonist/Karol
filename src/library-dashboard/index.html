@@ -50,10 +50,11 @@ header h1{font-size:1.2rem;font-weight:700}
 .player-actions{display:flex;gap:4px;flex-shrink:0}
 .player-actions .player-btn{width:28px;height:28px;font-size:0.7rem}
 
-nav.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--bg2);padding:0 24px}
-nav.tabs button{padding:10px 20px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text2);font-size:0.85rem;cursor:pointer;font-weight:500;transition:all .15s}
+nav.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--bg2);padding:0 24px;overflow-x:auto}
+nav.tabs button{padding:10px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text2);font-size:0.85rem;cursor:pointer;font-weight:500;transition:all .15s;white-space:nowrap}
 nav.tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
 nav.tabs button:hover{color:var(--text)}
+nav.tabs button.tab-karaoke.active{color:#a855f7;border-bottom-color:#a855f7}
 main{padding:20px 24px;max-width:1400px;margin:0 auto}
 .toolbar{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center}
 .toolbar input{flex:1;min-width:200px;max-width:400px;padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.9rem;outline:none}
@@ -224,7 +225,9 @@ main{padding:20px 24px;max-width:1400px;margin:0 auto}
 </div>
 
 <nav class="tabs">
-<button id="tabVideos" class="active" onclick="switchTab('videos')">All Videos</button>
+<button id="tabKaraoke" class="active" onclick="switchTab('karaoke')">Karaoke</button>
+<button id="tabSongs" onclick="switchTab('songs')">Songs</button>
+<button id="tabVideos" onclick="switchTab('videos')">All</button>
 <button id="tabPlaylists" onclick="switchTab('playlists')">Playlists</button>
 <button id="tabQueue" onclick="switchTab('queue')">Queue</button>
 </nav>
@@ -516,17 +519,19 @@ function startClockTick(){
 
 // ── loadAll (existing, modified to also poll player) ──
 function loadAll(){
+  // Fetch local library (primary) + tags + optionally S8 data
   Promise.all([
     fetch(API+'/list').then(function(r){return r.json()}),
     fetch(API+'/scan').then(function(r){return r.json()}),
+    fetch(API+'/tags').then(function(r){return r.json()}).catch(function(){return {tags:{}}}),
+    // S8 data — these may fail when S8 is offline, that's OK
     fetch(YTAPI+'/playlist').then(function(r){return r.json()}).catch(function(){return {config:{playlists:[]}}}),
-    fetch(YTAPI+'/queue').then(function(r){return r.json()}).catch(function(){return {queue:[]}}),
-    fetch(API+'/tags').then(function(r){return r.json()}).catch(function(){return {tags:{}}})
+    fetch(YTAPI+'/queue').then(function(r){return r.json()}).catch(function(){return {queue:[]}})
   ]).then(function(d){
     var localList=d[0].videos||[]; stats=d[1];
-    var cfg=(d[2].config)||{}; playlists=cfg.playlists||[]; activePlaylistId=cfg.activePlaylistId||'';
-    var queueItems=(d[3].queue||d[3])||[];
-    var tagsResp=d[4]; tags=tagsResp.tags||{};
+    var tagsResp=d[2]; tags=tagsResp.tags||{};
+    var cfg=(d[3].config)||{}; playlists=cfg.playlists||[]; activePlaylistId=cfg.activePlaylistId||'';
+    var queueItems=(d[4].queue||d[4])||[];
 
     // Build queueMap: videoId -> {title, thumbnail} from S8 queue
     var queueMap={};
@@ -537,98 +542,97 @@ function loadAll(){
       }
     }
 
-    // Build localMap: videoId -> metadata
-    localMap={};
-    for(var i=0;i<localList.length;i++){
-      var v=localList[i];
-      localMap[v.videoId]=v;
-    }
-
-    // Build merged allVideos: every videoId tracked by any playlist
-    var seen={};
-    var merged=[];
+    // Build playlist membership map: videoId -> [{id,name}]
+    var playlistMap={};
     for(var i=0;i<playlists.length;i++){
       var pl=playlists[i];
       var ids=pl.syncedVideoIds||[];
       for(var j=0;j<ids.length;j++){
-        var vid=ids[j];
-        if(seen[vid]){
-          var existing=merged[seen[vid]-1];
-          if(existing){
-            existing.playlists=existing.playlists||[];
-            existing.playlists.push({id:pl.playlistId,name:pl.name||pl.playlistId});
-          }
-          continue;
-        }
-        seen[vid]=merged.length+1;
-        var local=localMap[vid];
-        var qi=queueMap[vid];
-        merged.push({
-          videoId:vid,
-          title:(local && local.title !== vid) ? local.title : (qi ? qi.title : vid),
-          duration:local?local.duration:0,
-          size:local?local.size:0,
-          subtitles:local?local.subtitles:[],
-          thumbnail:(local && local.thumbnail) ? local.thumbnail : (qi ? qi.thumb : ''),
-          downloaded:!!local,
-          tag: (tags[vid] && tags[vid].tag) ? tags[vid].tag : (typeof tags[vid] === 'string' ? tags[vid] : 'music'),
-          year: (tags[vid] && tags[vid].year) ? tags[vid].year : '',
-          artist: (tags[vid] && tags[vid].artist) ? tags[vid].artist : '',
-          source: (tags[vid] && tags[vid].source) ? tags[vid].source : '',
-          playlists:[{id:pl.playlistId,name:pl.name||pl.playlistId}]
-        });
+        if(!playlistMap[ids[j]]) playlistMap[ids[j]]=[];
+        playlistMap[ids[j]].push({id:pl.playlistId,name:pl.name||pl.playlistId});
       }
     }
 
-    // Merge queue-only items (in queue but not in any playlist)
-    for(var vId in queueMap){
-      if(!seen[vId] && queueMap.hasOwnProperty(vId)){
-        seen[vId]=merged.length+1;
-        var qi=queueMap[vId];
-        var local=localMap[vId];
+    // PRIMARY SOURCE: build allVideos from local library list + tags
+    localMap={};
+    var merged=[];
+    for(var i=0;i<localList.length;i++){
+      var v=localList[i];
+      localMap[v.videoId]=v;
+      var t=(tags[v.videoId] && tags[v.videoId].tag) ? tags[v.videoId].tag : (typeof tags[v.videoId] === 'string' ? tags[v.videoId] : 'music');
+      merged.push({
+        videoId:v.videoId,
+        title:(v.title && v.title !== v.videoId) ? v.title : (queueMap[v.videoId] ? queueMap[v.videoId].title : v.videoId),
+        duration:v.duration||0,
+        size:v.size||0,
+        subtitles:v.subtitles||[],
+        thumbnail:v.thumbnail||(queueMap[v.videoId]?queueMap[v.videoId].thumb:'')||'',
+        uploaded:v.upload_date||'',
+        downloaded:true,
+        tag: t,
+        year: (tags[v.videoId]&&tags[v.videoId].year)||(tags[v.videoId]&&typeof tags[v.videoId]!=='string'?tags[v.videoId].year:'')||'',
+        artist: (tags[v.videoId]&&tags[v.videoId].artist)||(tags[v.videoId]&&typeof tags[v.videoId]!=='string'?tags[v.videoId].artist:'')||'',
+        source: (tags[v.videoId]&&tags[v.videoId].source)||(tags[v.videoId]&&typeof tags[v.videoId]!=='string'?tags[v.videoId].source:'')||'',
+        playlists: playlistMap[v.videoId]||[]
+      });
+    }
+
+    // Also include tagged karaoke videos that aren't downloaded yet (from CSVs)
+    var seen={};
+    for(var k=0;k<merged.length;k++) seen[merged[k].videoId]=true;
+    
+    for(var tagVid in tags){
+      if(!seen[tagVid] && tags.hasOwnProperty(tagVid)){
+        var tv=tags[tagVid];
+        var tVal = (tv && tv.tag) ? tv.tag : (typeof tv === 'string' ? tv : 'music');
+        var tYear = (tv && tv.year) || '';
+        var tArtist = (tv && tv.artist) || '';
+        var tSource = (tv && tv.source) || '';
         merged.push({
-          videoId:vId,
-          title:(local && local.title !== vId) ? local.title : (qi ? qi.title : vId),
-          duration:local?local.duration:0,
-          size:local?local.size:0,
-          subtitles:local?local.subtitles:[],
-          thumbnail:(local && local.thumbnail) ? local.thumbnail : (qi ? qi.thumb : ''),
-          downloaded:!!local,
-          tag: (tags[vId] && tags[vId].tag) ? tags[vId].tag : (typeof tags[vId] === 'string' ? tags[vId] : 'music'),
-          year: (tags[vId] && tags[vId].year) ? tags[vId].year : '',
-          artist: (tags[vId] && tags[vId].artist) ? tags[vId].artist : '',
-          source: (tags[vId] && tags[vId].source) ? tags[vId].source : '',
-          playlists:[{id:'_queue_',name:'Queue'}]
+          videoId: tagVid,
+          title: queueMap[tagVid] ? queueMap[tagVid].title : tagVid,
+          duration: 0,
+          size: 0,
+          subtitles: [],
+          thumbnail: queueMap[tagVid] ? queueMap[tagVid].thumb : '',
+          uploaded: '',
+          downloaded: false,
+          tag: tVal,
+          year: tYear,
+          artist: tArtist,
+          source: tSource,
+          playlists: playlistMap[tagVid]||[]
         });
+        seen[tagVid]=true;
       }
     }
+
     allVideos=merged;
 
     // Update stats
     var dlCount=merged.filter(function(v){return v.downloaded}).length;
-    // Track new downloads since last poll
+    var karaokeCount=merged.filter(function(v){return v.tag==='karaoke'}).length;
+    var songsCount=merged.length-karaokeCount;
     if(prevDownloaded<0) prevDownloaded=dlCount;
     var nNew=dlCount-prevDownloaded;
     if(nNew>0){
       document.getElementById('livePill').style.display='inline';
       document.getElementById('liveCount').textContent=nNew+' new';
-      // Flash: hide after 4s
       setTimeout(function(){document.getElementById('livePill').style.display='none'},4000);
     }
     prevDownloaded=dlCount;
-    // Collect just-downloaded videoIds for animation
-    if(nNew>0 && allVideos.length>0){
-      var prevMap={};
-      document.querySelectorAll('.card').forEach(function(el){prevMap[el.dataset.vid||'']=true});
-      justDownloaded=[];
-      for(var k=0;k<merged.length;k++){
-        if(merged[k].downloaded && !prevMap[merged[k].videoId]) justDownloaded.push(merged[k].videoId);
-      }
-    }
     document.getElementById('statTracked').textContent=merged.length;
     document.getElementById('statDl').textContent=dlCount;
     document.getElementById('statSize').textContent=stats.totalSizeFormatted||'0 MB';
     document.getElementById('statPl').textContent=playlists.length;
+    
+    // Show karaoke vs songs in stats too
+    var statsRow=document.getElementById('stats');
+    if(!document.getElementById('statKaraoke')){
+      statsRow.innerHTML+='<span>Karaoke: <span class="val" id="statKaraoke">0</span></span><span>Songs: <span class="val" id="statSongs">0</span></span>';
+    }
+    document.getElementById('statKaraoke').textContent=karaokeCount;
+    document.getElementById('statSongs').textContent=songsCount;
 
     // Populate playlist filter
     var pf=document.getElementById('playlistFilter');
@@ -645,14 +649,24 @@ function loadAll(){
   });
 }
 
+var activeTab='karaoke'; // karaoke | songs | videos | playlists | queue
+
 function switchTab(tab){
-  document.getElementById('tabVideos').className=tab==='videos'?'active':'';
-  document.getElementById('tabPlaylists').className=tab==='playlists'?'active':'';
-  document.getElementById('tabQueue').className=tab==='queue'?'active':'';
-  document.getElementById('panelVideos').className=tab==='videos'?'':'hidden';
+  activeTab=tab;
+  // Update nav button active states
+  document.querySelectorAll('nav.tabs button').forEach(function(b){b.classList.remove('active')});
+  var tabIdMap={karaoke:'tabKaraoke',songs:'tabSongs',videos:'tabVideos',playlists:'tabPlaylists',queue:'tabQueue'};
+  var btnId=tabIdMap[tab];
+  if(btnId) document.getElementById(btnId).classList.add('active');
+  
+  // Show/hide panels: karaoke/songs/videos all use panelVideos
+  var videoTabs=['karaoke','songs','videos'];
+  document.getElementById('panelVideos').className=videoTabs.indexOf(tab)>=0?'':'hidden';
   document.getElementById('panelPlaylists').className=tab==='playlists'?'':'hidden';
   document.getElementById('panelQueue').className=tab==='queue'?'':'hidden';
+  
   if(tab==='queue') renderQueue();
+  else if(videoTabs.indexOf(tab)>=0) renderVideos();
 }
 
 // ── Grid/List view switching ──
@@ -702,9 +716,16 @@ function renderVideos(){
   if(dlF==='missing') filtered=filtered.filter(function(v){return !v.downloaded});
   if(subF==='has-subs') filtered=filtered.filter(function(v){return (v.subtitles||[]).length>0});
   if(subF==='no-subs') filtered=filtered.filter(function(v){return (v.subtitles||[]).length===0});
-  var tagF=document.getElementById('tagFilter').value;
-  if(tagF==='karaoke') filtered=filtered.filter(function(v){return v.tag==='karaoke'});
-  if(tagF==='music') filtered=filtered.filter(function(v){return v.tag==='music'});
+
+  // Auto-filter by active tab (overrides tagFilter dropdown)
+  if(activeTab==='karaoke') filtered=filtered.filter(function(v){return v.tag==='karaoke'});
+  else if(activeTab==='songs') filtered=filtered.filter(function(v){return v.tag!=='karaoke'});
+  else {
+    // All tab: respect the tagFilter dropdown
+    var tagF=document.getElementById('tagFilter').value;
+    if(tagF==='karaoke') filtered=filtered.filter(function(v){return v.tag==='karaoke'});
+    if(tagF==='music') filtered=filtered.filter(function(v){return v.tag==='music'});
+  }
   if(sort==='title') filtered.sort(function(a,b){return a.title.localeCompare(b.title)});
   else if(sort==='duration') filtered.sort(function(a,b){return b.duration-a.duration});
   else filtered.sort(function(a,b){return (b.downloaded?1:0)-(a.downloaded?1:0)});

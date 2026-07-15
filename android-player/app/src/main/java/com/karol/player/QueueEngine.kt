@@ -489,16 +489,18 @@ class QueueEngine(context: Context) {
 		isPlaying = playing
 	}
 
-	fun addFromUrl(url: String, action: String): String? {
+	fun addFromUrl(url: String, action: String, requester: String? = null, songTitle: String? = null): String? {
 		val videoId = extractVideoId(url) ?: return null
+		val displayTitle = songTitle ?: "YouTube: $videoId"
 		val item =
 			QueueItem(
 				id = "manual-${System.currentTimeMillis()}-$videoId",
 				url = "https://www.youtube.com/watch?v=$videoId",
 				videoId = videoId,
-				title = "YouTube: $videoId",
-				thumbnail = "https://i.ytimg.com/vi/$videoId/default.jpg",
+				title = displayTitle,
+				thumbnail = "https://i.ytimg.com/vi/$videoId/maxresdefault.jpg",
 				status = if (action == "play-now") "loading" else "queued",
+				requester = requester,
 			)
 		queue.add(item)
 		if (action == "play-now") {

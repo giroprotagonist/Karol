@@ -23,24 +23,12 @@ const HOST_KEY = 'deskreen_dj_host';
 export function getDefaultHost(): string {
 	if (typeof window !== 'undefined' && window.location.pathname.includes('dj-controller')) {
 		const origin = window.location.origin.replace(/\/+$/, '');
-		const saved = normalizeHost(getSavedHost());
-		if (saved && hostsMatch(saved, origin)) {
-			return saved;
-		}
+		// Always prefer the page origin — avoids stale saved host
+		saveHost(origin);
 		return origin;
 	}
 	const saved = normalizeHost(getSavedHost());
 	return saved;
-}
-
-function hostsMatch(a: string, b: string): boolean {
-	try {
-		const urlA = new URL(a.startsWith('http') ? a : `http://${a}`);
-		const urlB = new URL(b.startsWith('http') ? b : `http://${b}`);
-		return urlA.host === urlB.host;
-	} catch {
-		return false;
-	}
 }
 
 export function getSavedHost(): string {
@@ -89,19 +77,29 @@ async function request<T>(
 	useVlc?: boolean,
 ): Promise<T> {
 	const base = useVlc ? vlcApiBase(host) : apiBase(host);
+	const url = `${base}${path}`;
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		const res = await fetch(`${base}${path}`, {
+		const res = await fetch(url, {
 			...init,
 			signal: controller.signal,
 			headers: {
-				'Content-Type': 'application/json',
+				...(init?.method && init.method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
 				'X-Karol-Client': 'KarolController/1.0',
 				...(init?.headers ?? {}),
 			},
 		});
-		const data = (await res.json()) as T & { error?: string; ok?: boolean };
+		const text = await res.text();
+		let data: T & { error?: string; ok?: boolean };
+		try {
+			data = JSON.parse(text) as T & { error?: string; ok?: boolean };
+		} catch (parseErr) {
+			if (!text.trim()) {
+				throw new Error(`Empty response from ${base} (status ${res.status})`);
+			}
+			throw new Error(`Invalid response from ${base}: ${text.slice(0, 100)}`);
+		}
 		if (!res.ok) {
 			throw new Error(data.error || `Request failed (${res.status})`);
 		}
@@ -639,4 +637,194 @@ export async function fetchLibraryStatus(
 	);
 	if (!resp.ok) return { ok: true, ready: false, metadata: null, subtitles: [] };
 	return resp.json();
+}
+
+// ─── Library Dashboard API ───────────────────────────────────
+
+function libraryApiBase(host: string): string {
+	return `${normalizeHost(host)}/api/library`;
+}
+
+async function libraryRequest<T>(
+	host: string,
+	path: string,
+	init?: RequestInit,
+	timeoutMs: number = FETCH_TIMEOUT_MS,
+): Promise<T> {
+	const base = libraryApiBase(host);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const res = await fetch(`${base}${path}`, {
+			...init,
+			signal: controller.signal,
+			headers: {
+				'Content-Type': 'application/json',
+				...(init?.headers ?? {}),
+			},
+		});
+		const data = (await res.json()) as T & { error?: string; ok?: boolean };
+		if (!res.ok) {
+			throw new Error(data.error || `Request failed (${res.status})`);
+		}
+		return data;
+	} catch (error) {
+		if (error instanceof Error && error.name === 'AbortError') {
+			throw new Error('Request timed out');
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+export interface LibraryVideoMeta {
+	videoId: string;
+	title: string;
+	duration: number;
+	size: number;
+	subtitles: string[];
+	thumbnail: string;
+	upload_date: string;
+	cached: boolean;
+	tag?: string;
+	year?: string;
+	artist?: string;
+	source?: string;
+}
+
+export interface LibraryListResponse {
+	ok: boolean;
+	count: number;
+	videos: LibraryVideoMeta[];
+}
+
+export interface LibraryScanStats {
+	ok: boolean;
+	totalVideos: number;
+	totalMp4Files: number;
+	totalSize: number;
+	totalSizeFormatted: string;
+	subtitleLanguages: string[];
+}
+
+export interface LibraryTagEntry {
+	tag: string;
+	year: string;
+	artist: string;
+	source: string;
+}
+
+export interface LibraryTagsResponse {
+	ok: boolean;
+	tags: Record<string, LibraryTagEntry>;
+}
+
+/** Merged video entry used by the Library tab UI */
+export interface LibraryVideo {
+	videoId: string;
+	title: string;
+	duration: number;
+	size: number;
+	subtitles: string[];
+	thumbnail: string;
+	uploaded: string;
+	downloaded: boolean;
+	tag: string;
+	year: string;
+	artist: string;
+	source: string;
+	playlists: { id: string; name: string }[];
+}
+
+export async function fetchLibraryList(host: string): Promise<LibraryListResponse> {
+	return libraryRequest<LibraryListResponse>(host, '/list', undefined, 30_000);
+}
+
+export async function fetchLibraryScan(host: string): Promise<LibraryScanStats> {
+	return libraryRequest<LibraryScanStats>(host, '/scan');
+}
+
+export async function fetchLibraryTags(host: string): Promise<LibraryTagsResponse> {
+	return libraryRequest<LibraryTagsResponse>(host, '/tags');
+}
+
+export async function setLibraryTag(
+	host: string,
+	videoId: string,
+	tag: string,
+	year?: string,
+	artist?: string,
+	source?: string,
+): Promise<{ ok: boolean }> {
+	return libraryRequest<{ ok: boolean }>(host, '/tags', {
+		method: 'POST',
+		body: JSON.stringify({ videoId, tag, year, artist, source }),
+	});
+}
+
+export async function downloadPlaylist(
+	host: string,
+	playlistUrl: string,
+): Promise<{ ok: boolean }> {
+	return libraryRequest<{ ok: boolean }>(host, '/download-playlist', {
+		method: 'POST',
+		body: JSON.stringify({ playlistUrl }),
+	});
+}
+
+export async function checkLibraryVideoStatus(
+	host: string,
+	videoId: string,
+): Promise<LibraryStatus> {
+	return fetchLibraryStatus(host, videoId);
+}
+
+export interface AddVideoResponse {
+	ok: boolean;
+	videoId?: string;
+	status?: 'downloading' | 'complete';
+	message?: string;
+	error?: string;
+}
+
+export interface DownloadStatusResponse {
+	ok: boolean;
+	videoId: string;
+	status: 'downloading' | 'complete' | 'failed' | 'not_found';
+	progress: number;
+	error?: string;
+}
+
+export async function addVideoToLibrary(
+	host: string,
+	url: string,
+): Promise<AddVideoResponse> {
+	return libraryRequest<AddVideoResponse>(host, '/add-video', {
+		method: 'POST',
+		body: JSON.stringify({ url }),
+	});
+}
+
+export async function fetchDownloadStatus(
+	host: string,
+	videoId: string,
+): Promise<DownloadStatusResponse> {
+	return libraryRequest<DownloadStatusResponse>(host, '/download-status/' + videoId);
+}
+
+export interface DeleteVideoResponse {
+	ok: boolean;
+	videoId: string;
+	deleted: { mp4: boolean; info: boolean; subs: number };
+	warnings?: string[];
+}
+
+export async function deleteLibraryVideo(
+	host: string,
+	videoId: string,
+): Promise<DeleteVideoResponse> {
+	return libraryRequest<DeleteVideoResponse>(host, '/video/' + encodeURIComponent(videoId), {
+		method: 'DELETE',
+	});
 }

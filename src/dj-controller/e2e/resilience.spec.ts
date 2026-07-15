@@ -7,20 +7,17 @@ test.describe('UI resilience', () => {
 		await openController(page);
 	});
 
-	test('rapid tab switching stays stable', async ({ page }) => {
-		const nav = page.getByRole('navigation', { name: 'Sections' });
-		const tabs = ['Player', 'Queue', 'Add', 'Playlist'] as const;
+	test('rapid scrolling stays stable', async ({ page }) => {
+		// Scroll up and down rapidly to exercise the single-view layout
 		for (let round = 0; round < 3; round++) {
-			for (const tab of tabs) {
-				await nav.getByRole('button', { name: tab }).click();
-			}
+			await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+			await page.evaluate(() => window.scrollTo(0, 0));
 		}
 		await expect(page.locator('.error-banner')).toHaveCount(0);
 		await expect(page.getByRole('heading', { name: 'Karol' })).toBeVisible();
 	});
 
 	test('rapid transport taps do not break connection', async ({ page }) => {
-		await ensurePlayerTab(page);
 		const playPause = page.getByRole('button', { name: /Pause|Play/ }).first();
 		const next = page.getByRole('button', { name: 'Next' });
 		for (let i = 0; i < 4; i++) {
@@ -31,13 +28,12 @@ test.describe('UI resilience', () => {
 		await expect(page.locator('.error-banner')).toHaveCount(0);
 	});
 
-	test('tab nav and transport fit viewport (no horizontal overflow)', async ({ page }) => {
+	test('transport controls fit viewport (no horizontal overflow)', async ({ page }) => {
 		const overflow = await page.evaluate(() => {
 			const doc = document.documentElement;
 			return doc.scrollWidth > doc.clientWidth + 2;
 		});
 		expect(overflow).toBe(false);
-		await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
 		await expect(page.locator('.transport')).toBeVisible();
 	});
 
@@ -46,7 +42,6 @@ test.describe('UI resilience', () => {
 		await pill.click();
 		await expect(page.locator('.connection-card')).toBeVisible();
 		await pill.click();
-		// Panel may stay open if disconnected; when connected, second click toggles closed
 		await expect(page.locator('.error-banner')).toHaveCount(0);
 	});
 });

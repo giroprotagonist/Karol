@@ -17,6 +17,7 @@ data class QueueItem(
 	val publishedAtMs: Long? = null,
 	val viewCount: Long? = null,
 	val channelTitle: String? = null,
+	val requester: String? = null,
 ) {
 	fun toJson(): JSONObject =
 		JSONObject()
@@ -33,6 +34,7 @@ data class QueueItem(
 			.put("publishedAtMs", publishedAtMs ?: JSONObject.NULL)
 			.put("viewCount", viewCount ?: JSONObject.NULL)
 			.put("channelTitle", channelTitle ?: JSONObject.NULL)
+			.put("requester", requester ?: JSONObject.NULL)
 
 	companion object {
 		fun fromJson(obj: JSONObject): QueueItem =
@@ -50,6 +52,7 @@ data class QueueItem(
 				publishedAtMs = obj.optionalLong("publishedAtMs"),
 				viewCount = obj.optionalLong("viewCount"),
 				channelTitle = obj.optString("channelTitle").ifBlank { null },
+				requester = obj.optString("requester").ifBlank { null },
 			)
 	}
 }

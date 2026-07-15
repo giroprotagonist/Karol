@@ -2453,23 +2453,40 @@ function saveTags(tags) {
   } catch (e) { console.error('[library/tags] save error:', e.message); }
 }
 
-// Sync tags to MySQL (non-blocking, fire-and-forget)
-async function syncTagsToMySQL() {
-  try {
-    const tags = loadTags();
-    const remoteTags = await mysql.tagListAll(10000);
-    // Upsert local tags that are missing or newer to MySQL
-    for (const [vid, meta] of Object.entries(tags)) {
-      try {
-        await mysql.tagSet(vid, meta.tag || 'music', meta.artist || '', meta.year || '', meta.source || '');
-      } catch (e) { /* individual failure shouldn't stop the batch */ }
-    }
-    console.log(`[library/tags] Synced ${Object.keys(tags).length} tags to MySQL`);
-  } catch (e) { console.error('[library/tags] MySQL sync error:', e.message); }
+// Sync tags to MySQL (deferred background task, avoid blocking startup)
+// The migration script already synced everything; this catches any writes
+// that happened while the server was down.
+let _tagsSyncScheduled = false;
+function scheduleTagsSyncToMySQL() {
+  if (_tagsSyncScheduled) return;
+  _tagsSyncScheduled = true;
+  setTimeout(async () => {
+    try {
+      const remoteCounts = await mysql.tagCountByTag();
+      const remoteTotal = Object.values(remoteCounts || {}).reduce((a, b) => a + b, 0);
+      const local = loadTags();
+      const localTotal = Object.keys(local).length;
+      if (Math.abs(localTotal - remoteTotal) < 50) {
+        console.log(`[library/tags] MySQL already in sync (${remoteTotal} remote, ${localTotal} local)`);
+        return;
+      }
+      console.log(`[library/tags] Syncing ${localTotal} tags to MySQL (${remoteTotal} remote)...`);
+      let count = 0;
+      for (const [vid, meta] of Object.entries(local)) {
+        try {
+          await mysql.tagSet(vid, meta.tag || 'music', meta.artist || '', meta.year || '', meta.source || '');
+          count++;
+        } catch (e) { /* skip */ }
+        // Yield every 50 writes to avoid flooding the event loop
+        if (count % 50 === 0) await new Promise(r => setTimeout(r, 100));
+      }
+      console.log(`[library/tags] Synced ${count} tags to MySQL`);
+    } catch (e) { console.error('[library/tags] MySQL sync error:', e.message); }
+  }, 30_000); // 30-second delay after startup
 }
 
-// On startup, sync tags to MySQL and pull remote tags into local cache
-syncTagsToMySQL();
+// On startup, schedule a deferred sync (auto-detects if needed)
+scheduleTagsSyncToMySQL();
 
 router.get('/api/library/tags', async (ctx) => {
   ctx.body = { ok: true, tags: loadTags() };

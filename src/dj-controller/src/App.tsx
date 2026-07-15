@@ -39,19 +39,22 @@ import {
 	transportSkipPrev,
 	transportVolume,
 	fetchLibraryStatus,
+	fetchLibraryList,
+	fetchLibraryScan,
+	fetchLibraryTags,
+	addVideoToLibrary,
+	fetchDownloadStatus,
 } from './api';
+import type { LibraryVideoMeta, LibraryScanStats, LibraryTagEntry } from './api';
 import type { PlaylistDownloadStatus } from './components/PlaylistLibrary';
 import NowPlayingCard from './components/NowPlayingCard';
 import PlaylistLibrary from './components/PlaylistLibrary';
+import LibraryBrowser from './components/LibraryBrowser';
 import QueueList, { reorderItemsLocally } from './components/QueueList';
 import SearchResults from './components/SearchResults';
-import VlcPlayerTab from './components/VlcPlayerTab';
 import { useYouTubePreview } from './useYouTubePreview';
-import { hapticLight, isNativeAndroidController, notifyNativeConnection, publishNowPlayingToNative, registerNativeNowPlayingListener, registerNativeVolumeListener } from './nativeBridge';
 import { syncPlaybackAnchor } from './playbackClock';
 import { IconPause, IconPlay } from './components/TransportIcons';
-
-type AppTab = 'player' | 'queue' | 'add' | 'playlist' | 'vlc';
 
 export default function App() {
 	const initialHost = getDefaultHost();
@@ -62,9 +65,7 @@ export default function App() {
 	const [status, setStatus] = useState<YouTubeDjStatus | null>(null);
 	const [nowPlaying, setNowPlaying] = useState<YouTubeDjNowPlaying | null>(null);
 	const [queueState, setQueueState] = useState<YouTubeKaraokeState | null>(null);
-	const [playlistConfig, setPlaylistConfig] = useState<YouTubeDjPlaylistModeConfig | null>(
-		null,
-	);
+	const [playlistConfig, setPlaylistConfig] = useState<YouTubeDjPlaylistModeConfig | null>(null);
 	const [newPlaylistUrl, setNewPlaylistUrl] = useState('');
 	const [inputUrl, setInputUrl] = useState('');
 	const [importUrl, setImportUrl] = useState('');
@@ -79,10 +80,19 @@ export default function App() {
 	const [showConnection, setShowConnection] = useState(false);
 	const [isDraggingQueue, setIsDraggingQueue] = useState(false);
 	const [reconnecting, setReconnecting] = useState(false);
-	const [activeTab, setActiveTab] = useState<AppTab>('player');
 	const [displayTime, setDisplayTime] = useState(0);
+	const [activeTab, setActiveTab] = useState<'queue' | 'library' | 'playlists' | 'player' | 'add'>('queue');
 	const [libraryStatus, setLibraryStatus] = useState<'checking' | 'downloading' | 'ready' | 'fallback' | ''>('');
 	const [playlistDlStatuses, setPlaylistDlStatuses] = useState<PlaylistDownloadStatus[]>([]);
+	const [libraryVideos, setLibraryVideos] = useState<LibraryVideoMeta[]>([]);
+	const [libraryTags, setLibraryTags] = useState<Record<string, LibraryTagEntry>>({});
+	const [libraryScanStats, setLibraryScanStats] = useState<LibraryScanStats | null>(null);
+	const [libraryLoading, setLibraryLoading] = useState(false);
+	const [libraryFetchTrigger, setLibraryFetchTrigger] = useState(0);
+	const [libraryDlQueueAfter, setLibraryDlQueueAfter] = useState(false);
+	const [libraryDlJob, setLibraryDlJob] = useState<{ videoId: string; status: string; error?: string; queueAfter?: boolean } | null>(null);
+	const hostRef = useRef(host);
+	hostRef.current = host;
 	const { previewVideoId, previewLoading, handlePreviewPlay, handlePreviewStop } = useYouTubePreview(host);
 	const playbackAnchor = useRef({
 		time: 0,
@@ -93,75 +103,41 @@ export default function App() {
 	});
 	const lastVideoIdRef = useRef('');
 	const hasLoadedRef = useRef(false);
-	const uiGuardUntil = useRef(0);
-	const nowPlayingRef = useRef<HTMLDivElement>(null);
-	const [showMiniPlayer, setShowMiniPlayer] = useState(false);
-	const volumeFromNativeRef = useRef(false);
-	const nowPlayingFromNativeRef = useRef(false);
 	const scrubbingRef = useRef(false);
 	const lastSeekAnchorRef = useRef({ at: 0, time: 0 });
-
-	const canApplyNativeDisplayTime = useCallback(() => !scrubbingRef.current, []);
-
-	const setDisplayTimeUnlessScrubbing = useCallback(
-		(time: number, force = false) => {
-			if (force || canApplyNativeDisplayTime()) {
-				setDisplayTime(time);
-				return true;
-			}
-			// #region agent log
-			window.KarolNative?.ctrlDbg?.(
-				'H10',
-				'skip-native-display-time',
-				JSON.stringify({
-					time,
-					scrubbing: scrubbingRef.current,
-				}),
-			);
-			fetch('http://127.0.0.1:7592/ingest/808d4931-5ef3-48a2-9797-d856a57d6e0a', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'X-Debug-Session-Id': '25b906',
-				},
-				body: JSON.stringify({
-					sessionId: '25b906',
-					hypothesisId: 'H10',
-					location: 'App.tsx:setDisplayTimeUnlessScrubbing',
-					message: 'skip-native-display-time',
-					data: {
-						time,
-						scrubbing: scrubbingRef.current,
-					},
-					timestamp: Date.now(),
-				}),
-			}).catch(() => {});
-			// #endregion
-			return false;
-		},
-		[canApplyNativeDisplayTime],
-	);
-
 	const pollEnabled = Boolean(host) && !isDraggingQueue;
 
-	const armUiGuard = useCallback(() => {
-		uiGuardUntil.current = Date.now() + 500;
-	}, []);
+	const currentItem = queueState?.queue[queueState?.currentIndex];
+	const currentTitle = useMemo(() => {
+		const fromQueue = currentItem?.title;
+		const fromNowPlaying = nowPlaying?.title;
+		if (fromQueue && fromNowPlaying && fromQueue !== fromNowPlaying) return fromQueue;
+		return fromNowPlaying || fromQueue || queueState?.currentTitle || 'Nothing playing';
+	}, [nowPlaying?.title, currentItem?.title, queueState?.currentTitle]);
+	const currentVideoId = nowPlaying?.videoId || currentItem?.videoId || '';
+	const currentThumbnail = currentItem?.thumbnail || queueState?.currentThumbnail || '';
 
-	const isUiGuarded = useCallback(() => Date.now() < uiGuardUntil.current, []);
-
-	const changeTab = useCallback(
-		(tab: AppTab) => {
-			armUiGuard();
-			setActiveTab(tab);
+	const applyPlaybackSample = useCallback(
+		(videoId: string, time: number, duration: number, playing: boolean) => {
+			const result = syncPlaybackAnchor({
+				anchor: playbackAnchor.current,
+				lastVideoId: lastVideoIdRef.current,
+				videoId,
+				time,
+				duration,
+				playing,
+			});
+			lastVideoIdRef.current = result.lastVideoId;
+			playbackAnchor.current = result.anchor;
+			if (result.displayTime !== null) {
+				setDisplayTime(result.displayTime);
+			}
 		},
-		[armUiGuard],
+		[],
 	);
 
 	const refreshAll = useCallback(async () => {
-		if (!host) {
-			return;
-		}
+		if (!host) return;
 		try {
 			const [nextStatus, nextNowPlaying, nextQueue, nextPlaylist] = await Promise.all([
 				fetchStatus(host),
@@ -173,23 +149,17 @@ export default function App() {
 			setNowPlaying(nextNowPlaying);
 			setQueueState(nextQueue);
 			setPlaylistConfig(nextPlaylist.config);
-			if (typeof nextStatus.volumeLevel === 'number') {
-				setVolume(nextStatus.volumeLevel);
-			}
-			if (typeof nextNowPlaying.volumeLevel === 'number') {
-				setVolume(nextNowPlaying.volumeLevel);
-			}
+			if (typeof nextStatus.volumeLevel === 'number') setVolume(nextStatus.volumeLevel);
+			if (typeof nextNowPlaying.volumeLevel === 'number') setVolume(nextNowPlaying.volumeLevel);
 			hasLoadedRef.current = true;
 			setConnected(true);
 			setReconnecting(false);
 			setConnecting(false);
 			setError('');
 			setShowConnection(false);
-			notifyNativeConnection(true);
 		} catch (err) {
 			setConnected(false);
 			setConnecting(false);
-			notifyNativeConnection(false);
 			if (hasLoadedRef.current) {
 				setReconnecting(true);
 			} else {
@@ -199,489 +169,146 @@ export default function App() {
 		}
 	}, [host]);
 
+	// Fetch library data once on connect (cached; re-fetches only on manual trigger)
+	useEffect(() => {
+		if (!host || !connected) return;
+		setLibraryLoading(true);
+		fetchLibraryList(host)
+			.then((list) => setLibraryVideos(list.videos))
+			.catch(() => {})
+			.finally(() => setLibraryLoading(false));
+		fetchLibraryTags(host).then((t) => setLibraryTags(t.tags ?? {})).catch(() => {});
+		fetchLibraryScan(host).then((s) => setLibraryScanStats(s)).catch(() => {});
+	}, [host, connected, libraryFetchTrigger]);
+
+	// Poll download status when a library download is in progress
+	useEffect(() => {
+		if (!libraryDlJob || !hostRef.current || libraryDlJob.status !== 'downloading') return;
+		const h = hostRef.current;
+		const videoId = libraryDlJob.videoId;
+		const queueAfter = libraryDlJob.queueAfter;
+		const timer = setInterval(async () => {
+			try {
+				const status = await fetchDownloadStatus(h, videoId);
+				if (status.status === 'complete') {
+					setLibraryDlJob({ videoId, status: 'complete', queueAfter });
+					setLibraryFetchTrigger((t) => t + 1);
+					clearInterval(timer);
+					// Auto-queue after download if requested
+					if (queueAfter) {
+						try {
+							const result = await queueUrl(h, 'https://www.youtube.com/watch?v=' + videoId, 'queue');
+							console.log('[dl-poll] Auto-queued ' + videoId, result);
+						} catch (e) {
+							console.error('[dl-poll] Auto-queue failed for ' + videoId, e);
+						}
+					}
+				} else if (status.status === 'failed') {
+					setLibraryDlJob({ videoId, status: 'failed', error: status.error, queueAfter });
+					clearInterval(timer);
+				}
+			} catch (e) {
+				console.error('[dl-poll] Status check failed', e);
+			}
+		}, 3000);
+		return () => clearInterval(timer);
+	}, [libraryDlJob]);
+
+	// Auto-detect host from page origin
 	useEffect(() => {
 		const autoHost = getDefaultHost();
-		if (!autoHost) {
-			return;
-		}
+		if (!autoHost) return;
 		saveHost(autoHost);
 		setHostInput(autoHost);
 		setHost(autoHost);
 	}, []);
 
+	// Poll for state changes
 	useEffect(() => {
-		if (!pollEnabled) {
-			return;
-		}
+		if (!pollEnabled) return;
 		void refreshAll();
-		// On Android, the native bridge pushes now-playing/volume updates in real time
-		// so we only need occasional full refreshes to sync queue/status changes.
-		const intervalMs = isNativeAndroidController() ? 10_000 : 2_500;
-		const interval = setInterval(() => {
-			void refreshAll();
-		}, intervalMs);
+		const interval = setInterval(() => { void refreshAll(); }, 2_500);
 		return () => clearInterval(interval);
 	}, [pollEnabled, refreshAll]);
 
+	// Poll now-playing for smooth time updates
 	useEffect(() => {
-		if (queueState?.mode === 'manual') {
-			setManualMode(true);
-			setAutoAdvance(false);
-		} else if (queueState?.mode === 'queue') {
-			setManualMode(false);
-			setAutoAdvance(true);
-		}
-	}, [queueState?.mode]);
-
-	useEffect(() => {
-		setShuffleEnabledState(Boolean(queueState?.shuffleEnabled));
-	}, [queueState?.shuffleEnabled]);
-
-	useEffect(() => {
-		if (!pollEnabled || !host) {
-			return;
-		}
-		// Android native bridge pushes now-playing updates via __karolNativeNowPlaying —
-		// the JS poll is redundant and causes 4 API calls/sec in dual-poll mode.
-		if (isNativeAndroidController()) {
-			return;
-		}
+		if (!pollEnabled || !host) return;
 		let cancelled = false;
 		const pollNowPlaying = async () => {
 			try {
 				const next = await fetchNowPlaying(host);
-				if (!cancelled) {
-					setNowPlaying((prev) => {
-						if (!next) {
-							return next;
-						}
-						if (!isNativeAndroidController()) {
-							return next;
-						}
-						const sameTrack = prev?.videoId === next.videoId;
-						return {
-							...next,
-							currentTime: sameTrack
-								? (prev?.currentTime ?? next.currentTime)
-								: next.currentTime,
-						};
-					});
-					setConnected(true);
-					setReconnecting(false);
-					notifyNativeConnection(true);
-				}
+				if (!cancelled) setNowPlaying(next);
+				if (!cancelled) { setConnected(true); setReconnecting(false); }
 			} catch {
-				if (!cancelled && hasLoadedRef.current) {
-					setReconnecting(true);
-					notifyNativeConnection(false);
-				}
+				if (!cancelled && hasLoadedRef.current) setReconnecting(true);
 			}
 		};
 		void pollNowPlaying();
-		const interval = setInterval(() => {
-			void pollNowPlaying();
-		}, 500);
-		return () => {
-			cancelled = true;
-			clearInterval(interval);
-		};
+		const interval = setInterval(() => { void pollNowPlaying(); }, 500);
+		return () => { cancelled = true; clearInterval(interval); };
 	}, [host, pollEnabled]);
 
-	const applyPlaybackSample = useCallback(
-		(
-			videoId: string,
-			time: number,
-			duration: number,
-			playing: boolean,
-			opts?: { updateDisplay?: boolean },
-		) => {
-			const result = syncPlaybackAnchor({
-				anchor: playbackAnchor.current,
-				lastVideoId: lastVideoIdRef.current,
-				videoId,
-				time,
-				duration,
-				playing,
-			});
-			lastVideoIdRef.current = result.lastVideoId;
-			playbackAnchor.current = result.anchor;
-			// #region agent log
-			if (result.keptLocalClock && playing) {
-				window.KarolNative?.ctrlDbg?.(
-					'H6',
-					'kept-local-clock',
-					JSON.stringify({
-						serverTime: time,
-						estimated: result.anchor.time,
-						videoId: result.anchor.videoId,
-					}),
-				);
-			}
-			// #endregion
-			if (opts?.updateDisplay !== false && result.displayTime !== null) {
-				setDisplayTime(result.displayTime);
-			}
-		},
-		[],
-	);
-
+	// Sync mode from queue state
 	useEffect(() => {
-		if (isNativeAndroidController()) {
-			return;
-		}
+		if (queueState?.mode === 'manual') { setManualMode(true); setAutoAdvance(false); }
+		else if (queueState?.mode === 'queue') { setManualMode(false); setAutoAdvance(true); }
+	}, [queueState?.mode]);
+
+	useEffect(() => { setShuffleEnabledState(Boolean(queueState?.shuffleEnabled)); }, [queueState?.shuffleEnabled]);
+
+	// Playback clock sync from now-playing
+	useEffect(() => {
 		const videoId = nowPlaying?.videoId ?? '';
 		const duration = nowPlaying?.duration ?? queueState?.duration ?? 0;
 		const time = nowPlaying?.currentTime ?? queueState?.currentTime ?? 0;
 		const playing = nowPlaying?.state === 1;
 		applyPlaybackSample(videoId, time, duration, playing);
-	}, [
-		applyPlaybackSample,
-		nowPlaying?.currentTime,
-		nowPlaying?.duration,
-		nowPlaying?.state,
-		nowPlaying?.videoId,
-		queueState?.currentTime,
-		queueState?.duration,
-	]);
+	}, [applyPlaybackSample, nowPlaying?.currentTime, nowPlaying?.duration, nowPlaying?.state, nowPlaying?.videoId, queueState?.currentTime, queueState?.duration]);
 
+	// Client-side clock tick
 	useEffect(() => {
 		const id = window.setInterval(() => {
-			if (scrubbingRef.current) {
-				return;
-			}
+			if (scrubbingRef.current) return;
 			const anchor = playbackAnchor.current;
-			if (!anchor.playing) {
-				if (!isNativeAndroidController()) {
-					setDisplayTime(anchor.time);
-				}
-				return;
-			}
+			if (!anchor.playing) { setDisplayTime(anchor.time); return; }
 			const elapsed = (Date.now() - anchor.at) / 1000;
-			const next = anchor.time + elapsed;
-			const capped = anchor.duration > 0 ? Math.min(next, anchor.duration) : next;
+			const capped = anchor.duration > 0 ? Math.min(anchor.time + elapsed, anchor.duration) : anchor.time + elapsed;
 			setDisplayTime(capped);
 		}, 200);
 		return () => window.clearInterval(id);
 	}, []);
 
+	// Mini player visibility — show when not on Player tab and there's something playing
+	const showMiniPlayer = connected && currentTitle && activeTab !== 'player';
+
+	// Library download status for current video
 	useEffect(() => {
-		const node = nowPlayingRef.current;
-		if (!node || !connected) {
-			setShowMiniPlayer(false);
-			return;
-		}
-		const observer = new IntersectionObserver(
-			([entry]) => {
-				setShowMiniPlayer(!entry.isIntersecting);
-			},
-			{ threshold: 0.12, rootMargin: '-56px 0px 0px 0px' },
-		);
-		observer.observe(node);
-		return () => observer.disconnect();
-	}, [connected, activeTab]);
-
-	useEffect(() => {
-		return registerNativeVolumeListener((level) => {
-			volumeFromNativeRef.current = true;
-			setVolume(level);
-			window.setTimeout(() => {
-				volumeFromNativeRef.current = false;
-			}, 200);
-		});
-	}, []);
-
-	const resetPlaybackClock = useCallback(() => {
-		playbackAnchor.current = {
-			time: 0,
-			at: Date.now(),
-			playing: false,
-			videoId: lastVideoIdRef.current,
-			duration: 0,
-		};
-		setDisplayTime(0);
-	}, []);
-
-	const bumpPlaybackTime = useCallback((seconds: number) => {
-		const duration = playbackAnchor.current.duration;
-		const resolved =
-			duration > 0
-				? Math.min(Math.max(0, seconds), duration)
-				: Math.max(0, seconds);
-		playbackAnchor.current = {
-			...playbackAnchor.current,
-			time: resolved,
-			at: Date.now(),
-		};
-		setDisplayTimeUnlessScrubbing(resolved, true);
-	}, [setDisplayTimeUnlessScrubbing]);
-
-	const applyNowPlaying = useCallback((
-		next: YouTubeDjNowPlaying | null | undefined,
-		opts?: { fromNative?: boolean },
-	) => {
-		if (!next) {
-			return;
-		}
-		setNowPlaying(next);
-		if (next.videoId) {
-			lastVideoIdRef.current = next.videoId;
-		}
-		if (isNativeAndroidController()) {
-			// Only reset the JS clock anchor for fresh server responses,
-			// not for native-extrapolated position ticks (they disagree with JS)
-			if (!opts?.fromNative) {
-				playbackAnchor.current = {
-					time: next.currentTime,
-					at: Date.now(),
-					playing: next.state === 1,
-					videoId: next.videoId || lastVideoIdRef.current,
-					duration: next.duration,
-				};
-			}
-			setDisplayTimeUnlessScrubbing(next.currentTime, !opts?.fromNative);
-		} else {
-			applyPlaybackSample(
-				next.videoId || lastVideoIdRef.current,
-				next.currentTime,
-				next.duration,
-				next.state === 1,
-			);
-		}
-		if (!opts?.fromNative && !nowPlayingFromNativeRef.current) {
-			publishNowPlayingToNative(next);
-		}
-	}, [applyPlaybackSample, setDisplayTimeUnlessScrubbing]);
-
-	useEffect(() => {
-		return registerNativeNowPlayingListener((next) => {
-			nowPlayingFromNativeRef.current = true;
-			const trackChanged =
-				lastVideoIdRef.current &&
-				next.videoId &&
-				lastVideoIdRef.current !== next.videoId;
-			if (next.videoId) {
-				lastVideoIdRef.current = next.videoId;
-			}
-			setNowPlaying((prev) => ({ ...prev, ...next }));
-			const seekAnchor = lastSeekAnchorRef.current;
-			const staleAfterSeek =
-				Date.now() - seekAnchor.at < 2000 &&
-				seekAnchor.time > 0 &&
-				next.currentTime < seekAnchor.time - 2;
-			if (!staleAfterSeek) {
-				playbackAnchor.current = {
-					time: next.currentTime,
-					at: Date.now(),
-					playing: next.state === 1,
-					videoId: next.videoId || lastVideoIdRef.current,
-					duration: next.duration,
-				};
-				setDisplayTimeUnlessScrubbing(next.currentTime);
-			}
-			// #region agent log
-			if (trackChanged) {
-				window.KarolNative?.ctrlDbg?.(
-					'H9',
-					'native-track-change',
-					JSON.stringify({
-						videoId: next.videoId,
-						time: next.currentTime,
-					}),
-				);
-			}
-			window.KarolNative?.ctrlDbg?.(
-				'H7',
-				'native-now-playing',
-				JSON.stringify({
-					time: next.currentTime,
-					state: next.state,
-					videoId: next.videoId,
-				}),
-			);
-			// #endregion
-			window.setTimeout(() => {
-				nowPlayingFromNativeRef.current = false;
-			}, 100);
-		});
-	}, [setDisplayTimeUnlessScrubbing]);
-
-	const handleScrubActiveChange = useCallback((active: boolean) => {
-		scrubbingRef.current = active;
-		// #region agent log
-		window.KarolNative?.ctrlDbg?.(
-			'H10',
-			'scrub-active',
-			JSON.stringify({ active }),
-		);
-		fetch('http://127.0.0.1:7592/ingest/808d4931-5ef3-48a2-9797-d856a57d6e0a', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Debug-Session-Id': '25b906',
-			},
-			body: JSON.stringify({
-				sessionId: '25b906',
-				hypothesisId: 'H10',
-				location: 'App.tsx:handleScrubActiveChange',
-				message: 'scrub-active',
-				data: { active },
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
-	}, []);
-
-	const connect = useCallback(() => {
-		const nextHost = hostInput.trim();
-		if (!nextHost) {
-			return;
-		}
-		setConnecting(true);
-		saveHost(nextHost);
-		setHost(nextHost);
-		void refreshAll();
-	}, [hostInput, refreshAll]);
-
-	const runAction = useCallback(
-		async (label: string, action: () => Promise<unknown>) => {
-			if (!host) {
-				return;
-			}
-			if (isUiGuarded() && (label.includes('skip') || label === 'play')) {
-				return;
-			}
-			setBusy(label);
-			try {
-				await action();
-				await refreshAll();
-				if (label === 'play' || label === 'pause' || label.includes('skip') || label === 'seek') {
-					const latest = await fetchNowPlaying(host);
-					if (latest) {
-						publishNowPlayingToNative(latest);
-					}
-				}
-			} catch (err) {
-				setError(err instanceof Error ? err.message : 'Action failed');
-			} finally {
-				setBusy('');
-			}
-		},
-		[host, refreshAll, isUiGuarded],
-	);
-
-	const handleReorder = useCallback(
-		async (fromIndex: number, toIndex: number) => {
-			if (!host || !queueState) {
-				return;
-			}
-			const previous = queueState;
-			const optimisticQueue = reorderItemsLocally(queueState.queue, fromIndex, toIndex);
-			let nextCurrentIndex = queueState.currentIndex;
-			if (nextCurrentIndex === fromIndex) {
-				nextCurrentIndex = toIndex;
-			} else if (fromIndex < nextCurrentIndex && toIndex >= nextCurrentIndex) {
-				nextCurrentIndex -= 1;
-			} else if (fromIndex > nextCurrentIndex && toIndex <= nextCurrentIndex) {
-				nextCurrentIndex += 1;
-			}
-			setQueueState({
-				...queueState,
-				queue: optimisticQueue,
-				currentIndex: nextCurrentIndex,
-			});
-			setBusy('reorder');
-			try {
-				const nextState = await moveQueueItem(host, fromIndex, toIndex);
-				if (nextState) {
-					setQueueState(nextState);
-				} else {
-					await refreshAll();
-				}
-				setError('');
-			} catch (err) {
-				setQueueState(previous);
-				setError(err instanceof Error ? err.message : 'Reorder failed');
-			} finally {
-				setBusy('');
-			}
-		},
-		[host, queueState, refreshAll],
-	);
-
-	const currentItem = queueState?.queue[queueState.currentIndex];
-	const currentTitle = useMemo(() => {
-		// Prefer queue item at currentIndex — it's authoritative on what SHOULD be playing
-		// nowPlaying.title is derived from a WebView snapshot that lags during transitions
-		const fromQueue = currentItem?.title;
-		const fromNowPlaying = nowPlaying?.title;
-		if (fromQueue && fromNowPlaying && fromQueue !== fromNowPlaying) {
-			return fromQueue;
-		}
-		return fromNowPlaying || fromQueue || queueState?.currentTitle || 'Nothing playing';
-	}, [nowPlaying?.title, currentItem?.title, queueState?.currentTitle]);
-
-	const currentVideoId =
-		nowPlaying?.videoId || currentItem?.videoId || '';
-	const currentThumbnail =
-		currentItem?.thumbnail || queueState?.currentThumbnail || '';
-
-	// Poll library download status whenever the video changes
-	useEffect(() => {
-		if (!host || !currentVideoId) {
-			setLibraryStatus('');
-			return;
-		}
+		if (!host || !currentVideoId) { setLibraryStatus(''); return; }
 		let cancelled = false;
 		setLibraryStatus('checking');
-
 		const check = async () => {
 			try {
 				const st = await fetchLibraryStatus(host, currentVideoId);
 				if (cancelled) return;
-				if (st.ready) {
-					setLibraryStatus('ready');
-				} else {
-					setLibraryStatus('downloading');
-				}
-			} catch {
-				if (!cancelled) setLibraryStatus('fallback');
-			}
+				setLibraryStatus(st.ready ? 'ready' : 'downloading');
+			} catch { if (!cancelled) setLibraryStatus('fallback'); }
 		};
-
-		// First check immediately, then poll every 5s until ready
 		check();
 		const interval = setInterval(async () => {
 			try {
 				const st = await fetchLibraryStatus(host, currentVideoId);
 				if (cancelled) return;
-				if (st.ready) {
-					setLibraryStatus('ready');
-					clearInterval(interval);
-				} else {
-					setLibraryStatus('downloading');
-				}
-			} catch {
-				if (!cancelled) setLibraryStatus('fallback');
-			}
+				if (st.ready) { setLibraryStatus('ready'); clearInterval(interval); }
+				else setLibraryStatus('downloading');
+			} catch { if (!cancelled) setLibraryStatus('fallback'); }
 		}, 5000);
-
-		// Timeout after 90s — mark as fallback (YouTube WebView)
-		const timeout = setTimeout(() => {
-			if (cancelled) return;
-			clearInterval(interval);
-			setLibraryStatus('fallback');
-		}, 90000);
-
-		return () => {
-			cancelled = true;
-			clearInterval(interval);
-			clearTimeout(timeout);
-		};
+		const timeout = setTimeout(() => { if (!cancelled) { clearInterval(interval); setLibraryStatus('fallback'); } }, 90000);
+		return () => { cancelled = true; clearInterval(interval); clearTimeout(timeout); };
 	}, [host, currentVideoId]);
 
-	// Track aggregate library stats + which playlists are being batch-downloaded
+	// Playlist download statuses
 	const [activeBatchDownloads, setActiveBatchDownloads] = useState<Set<string>>(new Set());
-
 	useEffect(() => {
 		if (!host || !playlistConfig?.playlists?.length) return;
 		let cancelled = false;
@@ -705,6 +332,71 @@ export default function App() {
 		return () => { cancelled = true; clearInterval(interval); };
 	}, [host, playlistConfig?.playlists?.length]);
 
+	const resetPlaybackClock = useCallback(() => {
+		playbackAnchor.current = { time: 0, at: Date.now(), playing: false, videoId: lastVideoIdRef.current, duration: 0 };
+		setDisplayTime(0);
+	}, []);
+
+	const bumpPlaybackTime = useCallback((seconds: number) => {
+		const resolved = playbackAnchor.current.duration > 0
+			? Math.min(Math.max(0, seconds), playbackAnchor.current.duration)
+			: Math.max(0, seconds);
+		playbackAnchor.current = { ...playbackAnchor.current, time: resolved, at: Date.now() };
+		setDisplayTime(resolved);
+	}, []);
+
+	const connect = useCallback(() => {
+		const nextHost = hostInput.trim();
+		if (!nextHost) return;
+		setConnecting(true);
+		saveHost(nextHost);
+		setHost(nextHost);
+		void refreshAll();
+	}, [hostInput, refreshAll]);
+
+	const runAction = useCallback(
+		async (label: string, action: () => Promise<unknown>) => {
+			if (!host) return;
+			setBusy(label);
+			try {
+				await action();
+				await refreshAll();
+				// Refetch now-playing after transport actions
+				if (label === 'play' || label === 'pause' || label.includes('skip') || label === 'seek') {
+					const latest = await fetchNowPlaying(host);
+					if (latest) setNowPlaying(latest);
+				}
+			} catch (err) {
+				setError(err instanceof Error ? err.message : 'Action failed');
+			} finally { setBusy(''); }
+		},
+		[host, refreshAll],
+	);
+
+	const handleReorder = useCallback(
+		async (fromIndex: number, toIndex: number) => {
+			if (!host || !queueState) return;
+			const previous = queueState;
+			const optimisticQueue = reorderItemsLocally(queueState.queue, fromIndex, toIndex);
+			let nextCurrentIndex = queueState.currentIndex;
+			if (nextCurrentIndex === fromIndex) nextCurrentIndex = toIndex;
+			else if (fromIndex < nextCurrentIndex && toIndex >= nextCurrentIndex) nextCurrentIndex -= 1;
+			else if (fromIndex > nextCurrentIndex && toIndex <= nextCurrentIndex) nextCurrentIndex += 1;
+			setQueueState({ ...queueState, queue: optimisticQueue, currentIndex: nextCurrentIndex });
+			setBusy('reorder');
+			try {
+				const nextState = await moveQueueItem(host, fromIndex, toIndex);
+				if (nextState) setQueueState(nextState);
+				else await refreshAll();
+				setError('');
+			} catch (err) {
+				setQueueState(previous);
+				setError(err instanceof Error ? err.message : 'Reorder failed');
+			} finally { setBusy(''); }
+		},
+		[host, queueState, refreshAll],
+	);
+
 	const handleDownloadPlaylist = useCallback(async (playlistId: string) => {
 		const pl = playlistConfig?.playlists?.find(p => p.playlistId === playlistId);
 		if (!pl || !host) return;
@@ -712,9 +404,17 @@ export default function App() {
 		try {
 			await fetch(host + '/api/library/download-playlist', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ playlistUrl: pl.playlistUrl }) });
 		} catch {}
-		// Leave as "loading" until next poll clears it
 		setTimeout(() => setActiveBatchDownloads(prev => { const s = new Set(prev); s.delete(playlistId); return s; }), 30000);
 	}, [host, playlistConfig]);
+
+	const handlePopOut = useCallback(() => {
+		// Open the dj-controller in a floating window via the host API
+		if (host) {
+			void fetch(`${host}/api/youtube-dj/controller-window/open`, { method: 'POST', body: '{}' }).catch(() => {});
+		}
+		// Fallback: open in a new browser tab
+		window.open(window.location.href, 'karol-controller', 'width=480,height=800');
+	}, [host]);
 
 	const isDirectHost = status?.hostMode === 'direct';
 
@@ -726,51 +426,44 @@ export default function App() {
 					<div>
 						<h1>Karol</h1>
 						<p className="header-sub">
-							{connected
-								? isDirectHost
-									? 'Tablet player'
-									: 'Mac cast host'
-								: 'Remote controller'}
+							{connected ? (isDirectHost ? 'Tablet player' : 'Mac cast host') : 'Remote controller'}
 						</p>
 					</div>
 				</div>
-				<button
-					type="button"
-					className={`status-pill ${connected ? 'ok' : reconnecting ? 'reconnecting' : error ? 'error' : ''}`}
-					onClick={() => setShowConnection((open) => !open)}
-				>
-					<span className="status-dot" />
-					{connected ? 'Connected' : reconnecting ? 'Reconnecting…' : error ? 'Offline' : 'Setup'}
-				</button>
+				<div className="header-actions">
+					{connected && (
+						<button type="button" className="btn small icon popout-btn" onClick={handlePopOut} title="Pop out as floating window">
+							⇱
+						</button>
+					)}
+					<button
+						type="button"
+						className={`status-pill ${connected ? 'ok' : reconnecting ? 'reconnecting' : error ? 'error' : ''}`}
+						onClick={() => setShowConnection((open) => !open)}
+					>
+						<span className="status-dot" />
+						{connected ? 'Connected' : reconnecting ? 'Reconnecting…' : error ? 'Offline' : 'Setup'}
+					</button>
+				</div>
 			</header>
 
-			{busy ? (
-				<div className="busy-bar" role="status" aria-live="polite">
-					Working…
-				</div>
-			) : null}
+			{busy ? <div className="busy-bar" role="status" aria-live="polite">Working…</div> : null}
 
 			{reconnecting && hasLoadedRef.current ? (
 				<div className="banner reconnect-banner" role="status">
 					<span>Reconnecting to host… queue data may be stale</span>
-					<button type="button" className="btn small" onClick={() => void refreshAll()}>
-						Retry now
-					</button>
+					<button type="button" className="btn small" onClick={() => void refreshAll()}>Retry now</button>
 				</div>
 			) : null}
 
 			{status?.interstitialMessage || status?.lastPlaybackError ? (
-				<div className="banner tablet-alert-banner" role="alert">
-					{status.interstitialMessage || status.lastPlaybackError}
-				</div>
+				<div className="banner tablet-alert-banner" role="alert">{status.interstitialMessage || status.lastPlaybackError}</div>
 			) : null}
 
 			{error && !reconnecting ? (
 				<div className="banner error-banner" role="alert">
 					{error}
-					<button type="button" className="banner-dismiss" onClick={() => setError('')}>
-						×
-					</button>
+					<button type="button" className="banner-dismiss" onClick={() => setError('')}>×</button>
 				</div>
 			) : null}
 
@@ -787,424 +480,407 @@ export default function App() {
 						placeholder="192.168.1.42:3131"
 						value={hostInput}
 						onChange={(e) => setHostInput(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter') {
-								connect();
-							}
-						}}
+						onKeyDown={(e) => { if (e.key === 'Enter') connect(); }}
 					/>
-					<button
-						className="btn primary block"
-						type="button"
-						onClick={connect}
-						disabled={connecting}
-					>
+					<button className="btn primary block" type="button" onClick={connect} disabled={connecting}>
 						{connecting ? 'Connecting…' : 'Connect'}
 					</button>
 					{status ? (
 						<div className="status-grid">
 							{!isDirectHost ? (
-								<div className={`status-chip-lg ${status.castConnected ? 'ok' : ''}`}>
-									Cast {status.castConnected ? 'live' : 'waiting'}
-								</div>
+								<div className={`status-chip-lg ${status.castConnected ? 'ok' : ''}`}>Cast {status.castConnected ? 'live' : 'waiting'}</div>
 							) : null}
-							<div className={`status-chip-lg ${status.captureReady ? 'ok' : ''}`}>
-								{isDirectHost ? 'Player' : 'Capture'}{' '}
-								{status.captureReady ? 'ready' : 'pending'}
-							</div>
-							<div className={`status-chip-lg ${status.djActive ? 'ok' : ''}`}>
-								DJ {status.djActive ? 'on' : 'off'}
-							</div>
+							<div className={`status-chip-lg ${status.captureReady ? 'ok' : ''}`}>{isDirectHost ? 'Player' : 'Capture'} {status.captureReady ? 'ready' : 'pending'}</div>
+							<div className={`status-chip-lg ${status.djActive ? 'ok' : ''}`}>DJ {status.djActive ? 'on' : 'off'}</div>
 						</div>
 					) : null}
 				</div>
 			) : null}
 
-			<div ref={nowPlayingRef}>
-			{activeTab === 'player' && (
-			<div className="tab-panel">
-			<NowPlayingCard
-				title={currentTitle}
-				videoId={currentVideoId}
-				thumbnail={currentThumbnail}
-				nowPlaying={nowPlaying}
-				queueState={queueState}
-				connected={connected}
-				busy={Boolean(busy)}
-				volume={volume}
-				autoAdvance={autoAdvance}
-				manualMode={manualMode}
-				shuffleEnabled={shuffleEnabled}
-				displayTime={displayTime}
-				onPlayPause={() => {
-					if (isUiGuarded()) {
-						return;
-					}
-					hapticLight();
-					void runAction('play', () =>
-						nowPlaying?.state === 1 ? transportPause(host) : transportPlay(host),
-					);
-				}}
-				onSkipPrev={() => {
-					if (isUiGuarded()) {
-						return;
-					}
-					resetPlaybackClock();
-					void runAction('skip-prev', async () => {
-						const result = await transportSkipPrev(host);
-						if (result.state) {
-							setQueueState(result.state);
-						}
-						applyNowPlaying(result.nowPlaying);
-					});
-				}}
-				onSkipNext={() => {
-					if (isUiGuarded()) {
-						return;
-					}
-					hapticLight();
-					resetPlaybackClock();
-					void runAction('skip-next', async () => {
-						const result = await transportSkipNext(host);
-						if (result.state) {
-							setQueueState(result.state);
-						}
-						applyNowPlaying(result.nowPlaying);
-					});
-				}}
-				onSeekRelative={(delta) => {
-					const base = playbackAnchor.current.time;
-					const target = base + delta;
-					lastSeekAnchorRef.current = { at: Date.now(), time: target };
-					bumpPlaybackTime(target);
-					void runAction('seek', async () => {
-						const result = await transportSeekRelative(host, delta);
-						if (result) {
-							applyNowPlaying(result);
-							lastSeekAnchorRef.current = {
-								at: Date.now(),
-								time: result.currentTime,
-							};
-						}
-					});
-				}}
-				onScrubActiveChange={handleScrubActiveChange}
-				onSeek={(seconds) => {
-					lastSeekAnchorRef.current = { at: Date.now(), time: seconds };
-					bumpPlaybackTime(seconds);
-					void runAction('seek', async () => {
-						const result = await transportSeek(host, seconds);
-						if (result) {
-							applyNowPlaying(result);
-							lastSeekAnchorRef.current = {
-								at: Date.now(),
-								time: result.currentTime,
-							};
-						}
-					});
-				}}
-				onVolumeChange={(level) => {
-					setVolume(level);
-					if (!host || volumeFromNativeRef.current) {
-						return;
-					}
-					if (window.KarolNative?.setRemoteVolume) {
-						window.KarolNative.setRemoteVolume(level);
-						return;
-					}
-					void transportVolume(host, level).catch((err) => {
-						setError(err instanceof Error ? err.message : 'Volume failed');
-					});
-				}}
-				onAutoAdvanceChange={(enabled) => {
-					setAutoAdvance(enabled);
-					void runAction('mode', () => setMode(host, enabled ? 'queue' : 'hotswap'));
-				}}
-				onManualModeChange={(enabled) => {
-					setManualMode(enabled);
-					void runAction('mode', () => setMode(host, enabled ? 'manual' : 'queue'));
-				}}
-				onShuffleChange={(enabled) => {
-					setShuffleEnabledState(enabled);
-					void runAction('shuffle', async () => {
-						const state = await setShuffleEnabled(host, enabled);
-						setQueueState(state);
-					});
-				}}
-				libraryStatus={libraryStatus}
-			/>
-			</div>
-			)}
-			</div>
-
-			<nav className="tab-nav" aria-label="Sections">
+			<main className="main-content">
+			{/* Tab bar */}
+			<div className="tab-bar">
 				<button
-					type="button"
-					className={`tab-btn ${activeTab === 'player' ? 'active' : ''}`}
-					onClick={() => changeTab('player')}
+					className={`tab-btn ${activeTab === 'queue' ? 'tab-btn--active' : ''}`}
+					onClick={() => setActiveTab('queue')}
+				>
+					Queue
+					{queueState?.queue?.length ? (
+						<span className="tab-badge">{queueState.queue.length}</span>
+					) : null}
+				</button>
+				<button
+					className={`tab-btn ${activeTab === 'library' ? 'tab-btn--active' : ''}`}
+					onClick={() => setActiveTab('library')}
+				>
+					Library
+				</button>
+				<button
+					className={`tab-btn ${activeTab === 'playlists' ? 'tab-btn--active' : ''}`}
+					onClick={() => setActiveTab('playlists')}
+				>
+					Playlists
+				</button>
+				<button
+					className={`tab-btn ${activeTab === 'player' ? 'tab-btn--active' : ''}`}
+					onClick={() => setActiveTab('player')}
 				>
 					Player
 				</button>
 				<button
-					type="button"
-					className={`tab-btn ${activeTab === 'queue' ? 'active' : ''}`}
-					onClick={() => changeTab('queue')}
-				>
-					Queue
-				</button>
-				<button
-					type="button"
-					className={`tab-btn ${activeTab === 'add' ? 'active' : ''}`}
-					onClick={() => changeTab('add')}
+					className={`tab-btn ${activeTab === 'add' ? 'tab-btn--active' : ''}`}
+					onClick={() => setActiveTab('add')}
 				>
 					Add
 				</button>
-			<button
-				type="button"
-				className={`tab-btn ${activeTab === 'playlist' ? 'active' : ''}`}
-				onClick={() => changeTab('playlist')}
-			>
-				Playlist
-				{playlistConfig?.playlists?.length ? (
-					<span className="tab-badge">{playlistConfig.playlists.length}</span>
-				) : null}
-			</button>
-			<button
-				type="button"
-				className={`tab-btn ${activeTab === 'vlc' ? 'active' : ''}`}
-				onClick={() => changeTab('vlc')}
-			>
-				VLC
-			</button>
-		</nav>
-
-			{activeTab === 'queue' ? (
-			<div className="tab-panel">
-			<QueueList
-				items={queueState?.queue ?? []}
-				currentIndex={queueState?.currentIndex ?? -1}
-				connected={connected}
-				busy={Boolean(busy)}
-				shuffleEnabled={shuffleEnabled}
-				previewVideoId={previewVideoId}
-				previewLoading={previewLoading}
-				onPreview={(videoId) => handlePreviewPlay(videoId)}
-				onStopPreview={handlePreviewStop}
-				onReorder={handleReorder}
-				onPlay={(id) => void runAction('play-item', () => playQueueItem(host, id))}
-				onRemove={(id) => void runAction('remove', () => removeQueueItem(host, id))}
-				onClear={() => void runAction('clear', () => clearQueue(host))}
-				onShuffleUpcoming={() =>
-					void runAction('shuffle-upcoming', async () => {
-						const state = await shuffleUpcoming(host);
-						setQueueState(state);
-					})
-				}
-				onSort={(mode) =>
-					void runAction('sort', async () => {
-						const state = await sortQueue(host, mode);
-						if (state) {
-							setQueueState(state);
-						}
-					})
-				}
-				onDragActiveChange={setIsDraggingQueue}
-			/>
 			</div>
-			) : null}
 
-			{activeTab === 'add' ? (
-			<div className="tab-panel">
-			<div className="card">
-				<h2>Add Music</h2>
-				<div className="input-group">
-					<input
-						className="field"
-						placeholder="Paste YouTube URL or video ID"
-						value={inputUrl}
-						onChange={(e) => setInputUrl(e.target.value)}
-					/>
-					<div className="btn-row">
-						<button
-							className="btn"
-							type="button"
-							disabled={!connected || !inputUrl.trim() || Boolean(busy)}
-							onClick={() =>
-								void runAction('queue', async () => {
-									await queueUrl(host, inputUrl.trim(), 'queue');
-									setInputUrl('');
-								})
-							}
-						>
-							+ Queue
-						</button>
-						<button
-							className="btn primary"
-							type="button"
-							disabled={!connected || !inputUrl.trim() || Boolean(busy)}
-							onClick={() =>
-								void runAction('play-now', async () => {
-									await queueUrl(host, inputUrl.trim(), 'play-now');
-									setInputUrl('');
-								})
-							}
-						>
-							▶ Play now
-						</button>
-					</div>
-				</div>
+			<div className="tab-content">
+				{/* Tab: Queue */}
+				{activeTab === 'queue' && (
+					<>
+						{queueState?.queue?.length ? (
+							<QueueList
+								items={queueState.queue}
+								currentIndex={queueState.currentIndex ?? -1}
+								connected={connected}
+								busy={Boolean(busy)}
+								shuffleEnabled={shuffleEnabled}
+								previewVideoId={previewVideoId}
+								previewLoading={previewLoading}
+								onPreview={(videoId) => handlePreviewPlay(videoId)}
+								onStopPreview={handlePreviewStop}
+								onReorder={handleReorder}
+								onPlay={(id) => void runAction('play-item', () => playQueueItem(host, id))}
+								onRemove={(id) => void runAction('remove', () => removeQueueItem(host, id))}
+								onClear={() => void runAction('clear', () => clearQueue(host))}
+								onShuffleUpcoming={() =>
+									void runAction('shuffle-upcoming', async () => {
+										const state = await shuffleUpcoming(host);
+										setQueueState(state);
+									})
+								}
+								onSort={(mode) =>
+									void runAction('sort', async () => {
+										const state = await sortQueue(host, mode);
+										if (state) setQueueState(state);
+									})
+								}
+								onDragActiveChange={setIsDraggingQueue}
+							/>
+						) : (
+							<div className="card">
+								<h2>Queue</h2>
+								<div className="empty-state">
+									<div className="empty-icon">📋</div>
+									<p>Queue is empty</p>
+									<span className="muted">Add videos below or import a playlist</span>
+								</div>
+							</div>
+						)}
+					</>
+				)}
 
-				<div className="input-group">
-					<input
-						className="field"
-						placeholder="Search YouTube…"
-						value={searchQuery}
-						onChange={(e) => setSearchQuery(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' && searchQuery.trim() && connected && !busy) {
-								void runAction('search', async () => {
-									const results = await searchVideos(host, searchQuery.trim());
-									setSearchResults(results);
-								});
-							}
+				{/* Tab: Library — browse all downloaded videos */}
+				{activeTab === 'library' && (
+					<LibraryBrowser
+						host={host}
+						connected={connected}
+						busy={busy}
+						videos={libraryVideos}
+						tags={libraryTags}
+						scanStats={libraryScanStats}
+						loading={libraryLoading}
+						onRefresh={() => setLibraryFetchTrigger((t) => t + 1)}
+						onVideoDeleted={(videoId) => {
+							setLibraryVideos((prev) => prev.filter((v) => v.videoId !== videoId));
 						}}
 					/>
-					<button
-						className="btn block"
-						type="button"
-						disabled={!connected || !searchQuery.trim() || Boolean(busy)}
-						onClick={() =>
-							void runAction('search', async () => {
-								const results = await searchVideos(host, searchQuery.trim());
-								setSearchResults(results);
-							})
-						}
-					>
-						Search
-					</button>
-				</div>
+				)}
 
-				<SearchResults
-					results={searchResults}
-					connected={connected}
-					previewVideoId={previewVideoId}
-					previewLoading={previewLoading}
-					onPreview={(videoId) => handlePreviewPlay(videoId)}
-					onStopPreview={handlePreviewStop}
-					onQueue={(url) => void runAction('queue-search', () => queueUrl(host, url, 'queue'))}
-					onPlayNow={(url) =>
-						void runAction('play-search', () => queueUrl(host, url, 'play-now'))
-					}
-				/>
+				{/* Tab: Playlists — manage saved playlists */}
+				{activeTab === 'playlists' && (
+					<PlaylistLibrary
+							config={playlistConfig}
+							connected={connected}
+							busy={busy}
+							newPlaylistUrl={newPlaylistUrl}
+							onNewPlaylistUrlChange={setNewPlaylistUrl}
+							onAddPlaylist={() =>
+								void runAction('add-playlist', async () => {
+									const result = await addPlaylist(host, newPlaylistUrl.trim());
+									setPlaylistConfig(result.config);
+									setNewPlaylistUrl('');
+								})
+							}
+							onActivate={(playlistId, playFirst) =>
+								void runAction(playFirst ? 'activate-play' : 'activate', async () => {
+									setError('');
+									const result = await activatePlaylist(host, playlistId, playFirst);
+									setPlaylistConfig(result.config);
+								})
+							}
+							onRemove={(playlistId) =>
+								void runAction('remove-playlist', async () => {
+									const result = await removePlaylist(host, playlistId);
+									setPlaylistConfig(result.config);
+								})
+							}
+							onSyncToggle={(enabled) =>
+								void runAction('playlist-mode', async () => {
+									const result = await setPlaylistMode(host, enabled);
+									setPlaylistConfig(result.config);
+								})
+							}
+							onSyncNow={() =>
+								void runAction('sync', async () => {
+									const result = await syncPlaylist(host);
+									setPlaylistConfig(result.config);
+								})
+							}
+							onDownloadPlaylist={handleDownloadPlaylist}
+							libraryStatuses={playlistDlStatuses}
+						/>
+				)}
 
-				<div className="divider" />
+				{/* Tab: Player — full-screen transport controls */}
+				{activeTab === 'player' && (
+					<NowPlayingCard
+						title={currentTitle}
+						videoId={currentVideoId}
+						thumbnail={currentThumbnail}
+						nowPlaying={nowPlaying}
+						queueState={queueState}
+						connected={connected}
+						busy={Boolean(busy)}
+						volume={volume}
+						autoAdvance={autoAdvance}
+						manualMode={manualMode}
+						shuffleEnabled={shuffleEnabled}
+						displayTime={displayTime}
+						onPlayPause={() => {
+							void runAction('play', () => nowPlaying?.state === 1 ? transportPause(host) : transportPlay(host));
+						}}
+						onSkipPrev={() => {
+							resetPlaybackClock();
+							void runAction('skip-prev', async () => {
+								const result = await transportSkipPrev(host);
+								if (result.state) setQueueState(result.state);
+								if (result.nowPlaying) setNowPlaying(result.nowPlaying);
+							});
+						}}
+						onSkipNext={() => {
+							resetPlaybackClock();
+							void runAction('skip-next', async () => {
+								const result = await transportSkipNext(host);
+								if (result.state) setQueueState(result.state);
+								if (result.nowPlaying) setNowPlaying(result.nowPlaying);
+							});
+						}}
+						onSeekRelative={(delta) => {
+							const target = playbackAnchor.current.time + delta;
+							lastSeekAnchorRef.current = { at: Date.now(), time: target };
+							bumpPlaybackTime(target);
+							void runAction('seek', async () => {
+								const result = await transportSeekRelative(host, delta);
+								if (result) setNowPlaying(result);
+							});
+						}}
+						onScrubActiveChange={(active) => { scrubbingRef.current = active; }}
+						onSeek={(seconds) => {
+							lastSeekAnchorRef.current = { at: Date.now(), time: seconds };
+							bumpPlaybackTime(seconds);
+							void runAction('seek', async () => {
+								const result = await transportSeek(host, seconds);
+								if (result) setNowPlaying(result);
+							});
+						}}
+						onVolumeChange={(level) => {
+							setVolume(level);
+							if (!host) return;
+							void transportVolume(host, level).catch((err) => {
+								setError(err instanceof Error ? err.message : 'Volume failed');
+							});
+						}}
+						onAutoAdvanceChange={(enabled) => {
+							setAutoAdvance(enabled);
+							void runAction('mode', () => setMode(host, enabled ? 'queue' : 'hotswap'));
+						}}
+						onManualModeChange={(enabled) => {
+							setManualMode(enabled);
+							void runAction('mode', () => setMode(host, enabled ? 'manual' : 'queue'));
+						}}
+						onShuffleChange={(enabled) => {
+							setShuffleEnabledState(enabled);
+							void runAction('shuffle', async () => {
+								const state = await setShuffleEnabled(host, enabled);
+								setQueueState(state);
+							});
+						}}
+						libraryStatus={libraryStatus}
+					/>
+				)}
 
-				<p className="card-subtitle">Import a full playlist at once</p>
-				<input
-					className="field"
-					placeholder="YouTube playlist URL"
-					value={importUrl}
-					onChange={(e) => setImportUrl(e.target.value)}
-				/>
-				<div className="btn-row">
-					<button
-						className="btn"
-						type="button"
-						disabled={!connected || !importUrl.trim() || Boolean(busy)}
-						onClick={() =>
-							void runAction('import', async () => {
-								await importPlaylist(host, importUrl.trim(), false);
-								setImportUrl('');
-							})
-						}
-					>
-						Import queue
-					</button>
-					<button
-						className="btn primary"
-						type="button"
-						disabled={!connected || !importUrl.trim() || Boolean(busy)}
-						onClick={() =>
-							void runAction('import-play', async () => {
-								await importPlaylist(host, importUrl.trim(), true);
-								setImportUrl('');
-							})
-						}
-					>
-						Import & play
-					</button>
-				</div>
+				{/* Tab: Add — search, queue URL, import playlist */}
+				{activeTab === 'add' && (
+					<>
+					<div className="card">
+						<h2>Add Music</h2>
+						<div className="input-group">
+							<input
+								className="field"
+								placeholder="Paste YouTube URL or video ID"
+								value={inputUrl}
+								onChange={(e) => setInputUrl(e.target.value)}
+							/>
+							<div className="btn-row">
+								<button className="btn" type="button"
+									disabled={!connected || !inputUrl.trim() || Boolean(busy)}
+									onClick={() => void runAction('queue', async () => { await queueUrl(host, inputUrl.trim(), 'queue'); setInputUrl(''); })}>
+									+ Queue
+								</button>
+								<button className="btn primary" type="button"
+									disabled={!connected || !inputUrl.trim() || Boolean(busy)}
+									onClick={() => void runAction('play-now', async () => { await queueUrl(host, inputUrl.trim(), 'play-now'); setInputUrl(''); })}>
+									▶ Play now
+								</button>
+							</div>
+						</div>
+
+						<div className="divider" />
+						<p className="card-subtitle">Download to Library</p>
+						{libraryDlJob ? (
+							<div className={`lib-dl-status lib-dl-status--${libraryDlJob.status}`}>
+								{libraryDlJob.status === 'downloading' && (
+									<>
+										<span className="lib-dl-spinner" />
+										<span>Downloading {libraryDlJob.videoId}…{libraryDlJob.queueAfter ? ' (queued after)' : ''}</span>
+										<span className="muted" style={{ marginLeft: 'auto' }}>30–90s</span>
+									</>
+								)}
+								{libraryDlJob.status === 'complete' && (
+									<>
+										<span>✅ Downloaded to library{libraryDlJob.queueAfter ? ' & queued' : ''}</span>
+										<button className="btn small" onClick={() => setLibraryDlJob(null)}>OK</button>
+									</>
+								)}
+								{libraryDlJob.status === 'failed' && (
+									<>
+										<span>❌ Failed: {libraryDlJob.error || 'Unknown error'}</span>
+										<button className="btn small" onClick={() => setLibraryDlJob(null)}>Dismiss</button>
+									</>
+								)}
+							</div>
+						) : (
+							<>
+								<label className="checkbox-row" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+									<input
+										type="checkbox"
+										checked={libraryDlQueueAfter}
+										onChange={(e) => setLibraryDlQueueAfter(e.target.checked)}
+									/>
+									<span>Also add to queue when ready</span>
+								</label>
+								<button
+									className="btn block"
+									type="button"
+									disabled={!connected || !inputUrl.trim() || Boolean(busy)}
+									onClick={() => {
+										const url = inputUrl.trim();
+										if (!url) return;
+										setBusy('downloading');
+										void addVideoToLibrary(host, url).then((res) => {
+											if (res.ok && res.videoId) {
+												setLibraryDlJob({ videoId: res.videoId, status: 'downloading', queueAfter: libraryDlQueueAfter });
+												setInputUrl('');
+												setLibraryFetchTrigger((t) => t + 1);
+											}
+										}).catch((err) => {
+											setError(err instanceof Error ? err.message : 'Download failed');
+										}).finally(() => setBusy(''));
+									}}
+								>
+									⬇ Download to Library
+								</button>
+							</>
+						)}
+					</div>
+
+					<div className="card">
+						<div className="input-group">
+							<input
+								className="field"
+								placeholder="Search YouTube…"
+								value={searchQuery}
+								onChange={(e) => setSearchQuery(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' && searchQuery.trim() && connected && !busy) {
+										void runAction('search', async () => {
+											const results = await searchVideos(host, searchQuery.trim());
+											setSearchResults(results);
+										});
+									}
+								}}
+							/>
+							<button className="btn block" type="button"
+								disabled={!connected || !searchQuery.trim() || Boolean(busy)}
+								onClick={() => void runAction('search', async () => {
+									const results = await searchVideos(host, searchQuery.trim());
+									setSearchResults(results);
+								})}>
+								Search
+							</button>
+						</div>
+
+						<SearchResults
+							results={searchResults}
+							connected={connected}
+							previewVideoId={previewVideoId}
+							previewLoading={previewLoading}
+							onPreview={(videoId) => handlePreviewPlay(videoId)}
+							onStopPreview={handlePreviewStop}
+							onQueue={(url) => void runAction('queue-search', () => queueUrl(host, url, 'queue'))}
+							onPlayNow={(url) => void runAction('play-search', () => queueUrl(host, url, 'play-now'))}
+						/>
+
+						<div className="divider" />
+
+						<p className="card-subtitle">Import a full playlist at once</p>
+						<input
+							className="field"
+							placeholder="YouTube playlist URL"
+							value={importUrl}
+							onChange={(e) => setImportUrl(e.target.value)}
+						/>
+						<div className="btn-row">
+							<button className="btn" type="button"
+								disabled={!connected || !importUrl.trim() || Boolean(busy)}
+								onClick={() => void runAction('import', async () => { await importPlaylist(host, importUrl.trim(), false); setImportUrl(''); })}>
+								Import queue
+							</button>
+							<button className="btn primary" type="button"
+								disabled={!connected || !importUrl.trim() || Boolean(busy)}
+								onClick={() => void runAction('import-play', async () => { await importPlaylist(host, importUrl.trim(), true); setImportUrl(''); })}>
+								Import & play
+							</button>
+						</div>
+					</div>
+					</>
+				)}
 			</div>
-			</div>
-			) : null}
+			</main>
 
-			{activeTab === 'playlist' ? (
-			<div className="tab-panel">
-			<PlaylistLibrary
-				config={playlistConfig}
-				connected={connected}
-				busy={busy}
-				newPlaylistUrl={newPlaylistUrl}
-				onNewPlaylistUrlChange={setNewPlaylistUrl}
-				onAddPlaylist={() =>
-					void runAction('add-playlist', async () => {
-						const result = await addPlaylist(host, newPlaylistUrl.trim());
-						setPlaylistConfig(result.config);
-						setNewPlaylistUrl('');
-					})
-				}
-				onActivate={(playlistId, playFirst) =>
-					void runAction(playFirst ? 'activate-play' : 'activate', async () => {
-						setError('');
-						const result = await activatePlaylist(host, playlistId, playFirst);
-						setPlaylistConfig(result.config);
-					})
-				}
-				onRemove={(playlistId) =>
-					void runAction('remove-playlist', async () => {
-						const result = await removePlaylist(host, playlistId);
-						setPlaylistConfig(result.config);
-					})
-				}
-				onSyncToggle={(enabled) =>
-					void runAction('playlist-mode', async () => {
-						const result = await setPlaylistMode(host, enabled);
-						setPlaylistConfig(result.config);
-					})
-				}
-				onSyncNow={() =>
-					void runAction('sync', async () => {
-						const result = await syncPlaylist(host);
-						setPlaylistConfig(result.config);
-					})
-				}
-				onDownloadPlaylist={handleDownloadPlaylist}
-				libraryStatuses={playlistDlStatuses}
-			/>
-			</div>
-			) : null}
-
-			<div className="tab-panel" style={{ display: activeTab === 'vlc' ? 'flex' : 'none' }}>
-			<VlcPlayerTab host={host} connected={connected} />
-			</div>
-
+			{/* Sticky mini player */}
 			{showMiniPlayer && connected && currentTitle ? (
 				<div className="sticky-mini-player" role="region" aria-label="Now playing">
-					<button
-						type="button"
-						className="btn transport-btn primary"
+					<button type="button" className="btn transport-btn primary"
 						disabled={Boolean(busy)}
 						onClick={() => {
-							if (isUiGuarded()) {
-								return;
-							}
-							hapticLight();
 							void runAction('play', () =>
 								nowPlaying?.state === 1 ? transportPause(host) : transportPlay(host),
 							);
 						}}
-						aria-label={nowPlaying?.state === 1 ? 'Pause' : 'Play'}
-					>
+						aria-label={nowPlaying?.state === 1 ? 'Pause' : 'Play'}>
 						{nowPlaying?.state === 1 ? (
 							<IconPause className="transport-icon" />
 						) : (

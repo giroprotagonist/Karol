@@ -164,6 +164,9 @@ function QueueRowContent({
 			</button>
 			<div className="queue-item-body">
 				<p className="queue-title-full">{title}</p>
+				{item.requester ? (
+					<p className="queue-requester">🎤 {item.requester}</p>
+				) : null}
 				<div className="queue-meta-row">
 					<span className={`status-chip status-${isActive ? 'playing' : item.status === 'error' ? 'error' : item.status === 'ended' ? 'ended' : 'queued'}`}>
 						{statusLabel(item.status, isActive)}
