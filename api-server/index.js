@@ -975,7 +975,15 @@ router.post('/api/queue/request', async (ctx) => {
     return;
   }
 
-  const cleanTitle = title ? String(title).trim().substring(0, 120) : '';
+  let cleanTitle = title ? String(title).trim().substring(0, 120) : '';
+  // Resolve title from local tags if not provided
+  if (!cleanTitle) {
+    try {
+      const tags = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
+      const karaokeTag = tags[videoId + '-karaoke'];
+      if (karaokeTag && karaokeTag.title) cleanTitle = karaokeTag.title;
+    } catch {}
+  }
 
   // ── Karaoke custom URL: start the pipeline, return immediately ──
   if (karaokeify) {

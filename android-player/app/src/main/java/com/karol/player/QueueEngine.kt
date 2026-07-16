@@ -505,13 +505,15 @@ class QueueEngine(context: Context) {
 		// Never show a raw video ID — use a loading placeholder that gets enriched later
 		val displayTitle = songTitle?.takeIf { it.isNotBlank() && !it.startsWith("YouTube:") }
 			?: "Loading title..."
+		// Strip -karaoke suffix for thumbnail lookups (it's not a real YouTube ID)
+		val cleanVideoId = videoId.removeSuffix("-karaoke")
 		val item =
 			QueueItem(
 				id = "manual-${System.currentTimeMillis()}-$videoId",
 				url = "https://www.youtube.com/watch?v=$videoId",
 				videoId = videoId,
 				title = displayTitle,
-				thumbnail = "https://i.ytimg.com/vi/$videoId/maxresdefault.jpg",
+				thumbnail = "https://i.ytimg.com/vi/$cleanVideoId/maxresdefault.jpg",
 				status = if (action == "play-now") "loading" else "queued",
 				requester = requester,
 			)
