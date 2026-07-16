@@ -37,19 +37,21 @@ import requests  # type: ignore[import-untyped]
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-LIBRARY_DIR = PROJECT_ROOT / ".deskreen" / "library"
-LIBRARY_KARAOKE_DIR = LIBRARY_DIR / "karaoke"
-TAGS_PATH = PROJECT_ROOT / ".deskreen" / "tags.json"
-ARCHIVE_PATH = PROJECT_ROOT / ".deskreen" / "youtube-download-archive.txt"
-TEMP_BASE = PROJECT_ROOT / ".deskreen" / "karaoke-temp"
+EXTERNAL_DRIVE = Path('/Volumes/maxone')
+LIBRARY_DIR = EXTERNAL_DRIVE / 'Deskreen'
+LIBRARY_KARAOKE_DIR = LIBRARY_DIR / 'karaoke'
+TAGS_PATH = LIBRARY_DIR / 'tags.json'
+ARCHIVE_PATH = LIBRARY_DIR / 'youtube-download-archive.txt'
+TEMP_BASE = PROJECT_ROOT / '.deskreen' / 'karaoke-temp'  # internal SSD for fast transcoding
 LRCLIB_API = "https://lrclib.net/api/get"
 # ffmpeg-full (keg-only on macOS) has drawtext/libfreetype compiled in
-# Regular Homebrew ffmpeg does not. Try full first, fall back to system.
-_FFMPEG_BIN = shutil.which("ffmpeg") or "ffmpeg"
-_FFMPEG_FULL_BIN = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
-if shutil.which(_FFMPEG_FULL_BIN):
-    _FFMPEG_BIN = _FFMPEG_FULL_BIN
-_FFPROBE_BIN = shutil.which("ffprobe") or "ffprobe"
+# Regular Homebrew ffmpeg does not. Try full first, fall back to Homebrew.
+_FFMPEG_BIN = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg" if os.path.exists("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg") else "/opt/homebrew/bin/ffmpeg"
+_FFMPEG_BIN = shutil.which(_FFMPEG_BIN) or shutil.which("ffmpeg") or "ffmpeg"
+_FFPROBE_BIN = "/opt/homebrew/bin/ffprobe"
+if not shutil.which(_FFPROBE_BIN):
+    _FFPROBE_BIN = shutil.which("ffprobe") or "ffprobe"
+_YTDLP_BIN = "/opt/homebrew/bin/yt-dlp"
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -120,7 +122,7 @@ def step_download(video_id: str, out_dir: str) -> str:
         return mp4_candidate
 
     cmd = [
-        "yt-dlp",
+        _YTDLP_BIN,
         "-f", "b[height<=1080]",
         "--merge-output-format", "mp4",
         "--write-info-json",
@@ -633,12 +635,12 @@ def main() -> None:
         return
 
     # ── Check prerequisites ──
-    if not shutil.which("yt-dlp"):
-        fatal("yt-dlp not found in PATH. Install it first (brew install yt-dlp).")
-    if not shutil.which(_FFMPEG_BIN) and not shutil.which("ffmpeg"):
-        fatal("ffmpeg not found in PATH. Install it first (brew install ffmpeg or ffmpeg-full).")
-    if not shutil.which(_FFPROBE_BIN) and not shutil.which("ffprobe"):
-        fatal("ffprobe not found in PATH.")
+    if not os.access(_YTDLP_BIN, os.X_OK):
+        fatal(f"yt-dlp not found at {_YTDLP_BIN}. Install it first (brew install yt-dlp).")
+    if not shutil.which(_FFMPEG_BIN) and not os.access(_FFMPEG_BIN, os.X_OK) and not shutil.which("ffmpeg"):
+        fatal("ffmpeg not found. Install it first (brew install ffmpeg or ffmpeg-full).")
+    if not shutil.which(_FFPROBE_BIN):
+        fatal(f"ffprobe not found at {_FFPROBE_BIN}.")
 
     # Check demucs is importable
     try:

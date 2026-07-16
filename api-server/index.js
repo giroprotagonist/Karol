@@ -102,9 +102,35 @@ function discoverPlayerViaMdns() {
 
 function getPlayerHost() {
   if (process.env.PLAYER_HOST) return process.env.PLAYER_HOST;
+  
+  // Fresh mDNS cache — return immediately
   if (_mdnsPlayerHost && Date.now() - _mdnsPlayerHost.at < MDNS_PLAYER_TTL)
     return _mdnsPlayerHost.host;
-  return null; // No fallback — must discover via mDNS
+  
+  // TTL expired but we still have a cached hostname — return it and refresh in background.
+  // NEVER return null here; that causes all proxy routes to serve empty stubs
+  // and the queue/songs disappear even though the S8 is still reachable.
+  if (_mdnsPlayerHost) {
+    // Prolong TTL so we don't keep re-triggering this for every request
+    _mdnsPlayerHost.at = Date.now();
+    refreshPlayerHostAsync().catch(() => {});
+    return _mdnsPlayerHost.host;
+  }
+  
+  // No in-memory cache at all — try disk cache as last resort
+  try {
+    const cached = fs.readFileSync('/tmp/karol-player-mdns.txt', 'utf8').trim();
+    if (cached && cached.length > 3) {
+      _mdnsPlayerHost = { host: cached, port: 3131, at: Date.now() };
+      refreshPlayerHostAsync().catch(() => {});
+      return cached;
+    }
+  } catch {}
+  
+  // No cached hostname anywhere — trigger discovery but return null
+  // (first ever call or cache file deleted)
+  refreshPlayerHostAsync().catch(() => {});
+  return null;
 }
 
 function getPlayerPort() {
@@ -686,7 +712,7 @@ const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
 // All library directories to search for files (root + subdirectories)
 const LIBRARY_SEARCH_DIRS = [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR];
 
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+const PROJECT_ROOT = path.resolve(__dirname, '..');
 const SCRIPTS_DIR = path.resolve(__dirname, '..', 'scripts');
 
 fs.mkdirSync(LIBRARY_DIR, { recursive: true });
@@ -1984,7 +2010,7 @@ router.post('/api/library/make-karaoke', async (ctx) => {
   if (artist) args.push('--artist', artist);
   if (title) args.push('--title', title);
 
-  const proc = require('child_process').spawn('python3', args, {
+  const proc = require('child_process').spawn('/opt/homebrew/bin/python3', args, {
     cwd: PROJECT_ROOT,
     env: { ...process.env, PYTHONUNBUFFERED: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
