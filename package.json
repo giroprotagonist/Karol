@@ -5,16 +5,14 @@
   "description": "Karol — Karaoke DJ system with local library, S8 tablet player, S24 controller, and live lyric overlay",
   "workspaces": [
     "api-server",
-    "dj-controller",
-    "electron"
+    "dj-controller"
   ],
   "scripts": {
     "dev:dj-controller": "cd dj-controller && npm run dev",
     "dev:api-server": "cd api-server && npm run dev",
     "build:dj-controller": "cd dj-controller && npm run build",
-    "build:electron": "cd electron && npm run build",
-    "build:mac": "npm run build:dj-controller && npm run build:electron",
-    "start:electron": "cd electron && npm start",
+    "build:mac": "npm run build:dj-controller",
+    "start": "cd api-server && npm start",
     "test:karol": "bash scripts/verify-karol-e2e.sh",
     "test:karol:controller": "bash scripts/verify-karol-controller.sh",
     "test:karol:all": "npm run test:karol && npm run test:karol:controller",
