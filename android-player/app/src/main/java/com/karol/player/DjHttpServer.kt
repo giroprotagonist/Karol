@@ -66,7 +66,7 @@ class DjHttpServer(
 		HostStatus(false, 0, "", null, null)
 	},
 ) {
-	private val vlcProxyTarget: String
+	private val macProxyTarget: String
 		get() = preferences.getMacProxyBaseUrl()
 	private var engine: ApplicationEngine? = null
 
@@ -584,7 +584,7 @@ class DjHttpServer(
 				}
 				// YouTube audio preview proxy – forward to Mac where yt-dlp is available
 					get("/api/youtube-dj/audio-stream") {
-						val targetUrl = "$vlcProxyTarget/api/youtube-dj/audio-stream?${call.request.queryString()}"
+						val targetUrl = "$macProxyTarget/api/youtube-dj/audio-stream?${call.request.queryString()}"
 						proxyJsonToHost(call, targetUrl)
 					}
 				}

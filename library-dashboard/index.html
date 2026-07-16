@@ -14,16 +14,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .status-bar{display:flex;gap:16px;padding:6px 16px;font-size:0.65rem;color:var(--text2);background:var(--bg2);border-bottom:1px solid var(--border)}
 .status-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle}
 .status-dot.on{background:var(--green)}.status-dot.off{background:var(--red);animation:blink 2s infinite}@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.custom-bar{display:flex;gap:6px;padding:8px 16px;flex-wrap:wrap;align-items:center;background:var(--bg2);border-bottom:1px solid var(--border)}
-.custom-bar input{flex:1;min-width:140px;max-width:360px;padding:5px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.82rem;outline:none}
-.custom-bar input:focus{border-color:var(--accent)}
-.custom-bar label{display:flex;align-items:center;gap:4px;font-size:0.72rem;color:var(--text2);cursor:pointer;white-space:nowrap}
-.custom-bar button{padding:5px 12px;border-radius:var(--radius);border:none;background:var(--accent);color:#fff;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn-custom-url{background:var(--accent);color:#fff;border:none;padding:5px 12px;border-radius:var(--radius);cursor:pointer;font-size:0.78rem;font-weight:600;white-space:nowrap}
+.btn-custom-url:hover{opacity:0.9}
 .toolbar{display:flex;gap:8px;padding:8px 16px;flex-wrap:wrap;align-items:center;position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--border)}
 .toolbar input{flex:1;min-width:140px;max-width:320px;padding:6px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;outline:none}
 .toolbar input:focus{border-color:var(--accent)}
 .toolbar select{padding:6px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.82rem;cursor:pointer;max-width:120px}
-.queue-bar{display:flex;gap:8px;padding:6px 16px;flex-wrap:wrap;align-items:center;font-size:0.7rem;border-bottom:1px solid var(--border);background:var(--bg)}
+.queue-bar{display:none!important;gap:8px;padding:6px 16px;flex-wrap:wrap;align-items:center;font-size:0.7rem;border-bottom:1px solid var(--border);background:var(--bg)}
 .queue-bar .q-title{background:var(--bg2);padding:3px 8px;border-radius:4px;color:var(--text);font-size:0.68rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .queue-bar .q-name{color:var(--accent);font-size:0.68rem;margin-left:4px}
 .video-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;align-items:start;padding:0 16px 16px}
@@ -32,7 +29,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .card:hover{border-color:var(--accent)}.card.q-highlight{border-color:var(--accent);box-shadow:0 0 8px rgba(139,92,246,.2)}
 .card-img{width:100%;aspect-ratio:16/9;background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
 .card-img img{width:100%;height:100%;object-fit:cover}
-.card-img img[data-src]{opacity:0}
+.card-img img[data-src]{opacity:0;will-change:opacity}
+.card-img img.loaded{opacity:1;transition:opacity .15s}
 .card-placeholder{color:var(--text2);font-size:1.4rem}
 .card-overlay{position:absolute;bottom:8px;right:8px;display:flex;align-items:center;justify-content:center;z-index:2}
 .card-q-btn{width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:0.9rem;display:flex;align-items:center;justify-content:center;opacity:.85;transition:transform .1s,opacity .1s}
@@ -68,6 +66,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
 #requestModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;align-items:center;justify-content:center}
 #requestModal.show{display:flex}
+#customUrlModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;align-items:center;justify-content:center}
+#customUrlModal.show{display:flex}
 .modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;width:90%;max-width:360px;text-align:center}
 .modal-box h3{font-size:1rem;margin-bottom:4px}
 .modal-box p{font-size:0.78rem;color:var(--text2);margin-bottom:12px}
@@ -94,18 +94,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   <span><span class="status-dot off" id="playerDot"></span> S8: <span id="playerLabel">checking...</span></span>
   <span><span class="status-dot off" id="apiDot"></span> API: <span id="apiLabel">loading...</span></span>
   <span>Loaded: <strong id="videoCount">0</strong></span>
-  <span>Queue: <strong id="queueCount">0</strong></span>
-</div>
-
-<div class="custom-bar">
-  <input type="text" id="customUrl" placeholder="YouTube URL...">
-  <label><input type="checkbox" id="customKaraokeify"> Karaoke?</label>
-  <button onclick="requestCustom()">Request</button>
-</div>
-
-<div class="queue-bar" id="queueBar" style="display:none">
-  <strong style="color:var(--accent)">Queue:</strong>
-  <div id="queueScroll" style="display:flex;gap:6px;overflow-x:auto;flex:1"></div>
+  <span style="display:none">Queue: <strong id="queueCount">0</strong></span>
 </div>
 
 <div class="toolbar">
@@ -121,6 +110,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
     <option value="title">Title A-Z</option>
     <option value="duration">Duration</option>
   </select>
+  <button class="btn-custom-url" onclick="openCustomUrlModal()">+ Custom URL</button>
 </div>
 <div class="video-grid" id="grid"><div class="loading"><span class="spin"></span> Fetching library...</div></div>
 <table id="listView">
@@ -150,6 +140,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   </div>
 </div>
 
+<div id="customUrlModal">
+  <div class="modal-box">
+    <h3>Custom YouTube URL</h3>
+    <input type="text" id="customUrl" placeholder="https://youtube.com/watch?v=...">
+    <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text2);margin-bottom:8px;cursor:pointer;justify-content:center">
+      <input type="checkbox" id="customKaraokeify"> Karaoke?
+    </label>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeCustomUrlModal()">Cancel</button>
+      <button class="btn-submit" onclick="requestCustom()">Request</button>
+    </div>
+  </div>
+</div>
+
 <div id="paymentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:210;align-items:center;justify-content:center" onclick="event.target===this && closePayment()">
   <div class="modal-box" style="max-width:340px">
     <h3 id="paymentTitle">Almost done!</h3>
@@ -173,6 +177,12 @@ var allVideos=[],currentView='grid',listSort={key:null,asc:true},toastTimer=null
 var imgObserver=null;
 var RENDER_CHUNK=50;
 
+// Filter out bogus ID-only entries (title is raw video ID, no thumbnail)
+var VIDEO_ID_RE=/^[a-zA-Z0-9_-]{11}$/;
+function isBogusEntry(v){
+  return VIDEO_ID_RE.test(v.title||'') && !v.thumbnail;
+}
+
 function showToast(msg){
   var t=document.getElementById('toast');
   t.textContent=msg;t.classList.add('show');
@@ -184,6 +194,11 @@ function fmtSize(b){if(!b)return'0 KB';if(b<1048576)return Math.round(b/1024)+' 
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
 
 // ── Lazy images ──
+function thumbUrl(url){
+  // Downsize YouTube thumbnails to mqdefault (320x180) — much faster on mobile
+  if(!url) return '';
+  return url.replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault');
+}
 function setupLazyImages(){
   imgObserver=new IntersectionObserver(function(entries){
     entries.forEach(function(e){
@@ -220,9 +235,7 @@ function checkStatus(){
 }
 
 function fetchQueue(){
-  apiGet('/api/queue/request/list').then(function(d){
-    if(d.ok){queueVideos=d.requestMap||{};document.getElementById('queueCount').textContent=Object.keys(queueVideos).length;renderQueueBar();updateQueuedHighlights()}
-  }).catch(function(){});
+  // Stubbed out — queue display is hidden on the request site.
 }
 
 function renderQueueBar(){
@@ -278,11 +291,18 @@ function requestCustom(){
   var url=document.getElementById('customUrl').value.trim();
   if(!url){showToast('Paste a YouTube URL first');return}
   var karaoke=document.getElementById('customKaraokeify').checked;
+  closeCustomUrlModal();
   pendingVideoId='__custom__';pendingTitle=url+(karaoke?' [karaoke]':'');
   document.getElementById('modalSongTitle').textContent=pendingTitle;
   document.getElementById('requesterName').value='';
   document.getElementById('requestModal').classList.add('show');
 }
+function openCustomUrlModal(){
+  document.getElementById('customUrl').value='';
+  document.getElementById('customKaraokeify').checked=false;
+  document.getElementById('customUrlModal').classList.add('show');
+}
+function closeCustomUrlModal(){document.getElementById('customUrlModal').classList.remove('show');}
 
 // ── Library loading (paginated: fast first page, background rest) ──
 var PAGE_SIZE=100, libraryLoading=false, libraryTotal=0, libraryLoadedPages=0;
@@ -293,10 +313,10 @@ function loadLibrary(){
   // Load first page fast — user sees results immediately
   apiGet('/api/library/list?page=1&limit='+PAGE_SIZE).then(function(d){
     if(d&&d.videos){
-      allVideos=d.videos;
+      allVideos=d.videos.filter(function(v){return !isBogusEntry(v)});
       libraryTotal=d.count;
       libraryLoadedPages=1;
-      document.getElementById('videoCount').textContent=libraryTotal;
+      document.getElementById('videoCount').textContent=allVideos.length;
       document.getElementById('apiLabel').textContent='loading...'; // still loading more
       document.getElementById('apiDot').className='status-dot on';
       populateYearFilterFromSample();
@@ -325,7 +345,11 @@ function loadRemainingPages(){
   var loaded=0;
   batch.forEach(function(url){
     apiGet(url).then(function(d){
-      if(d&&d.videos){for(var i=0;i<d.videos.length;i++)allVideos.push(d.videos[i])}
+      if(d&&d.videos){
+        for(var i=0;i<d.videos.length;i++){
+          if(!isBogusEntry(d.videos[i])) allVideos.push(d.videos[i]);
+        }
+      }
       loaded++; libraryLoadedPages++;
       if(loaded===batch.length){libraryLoading=false;finishLoading()}
     }).catch(function(){loaded++;if(loaded===batch.length){libraryLoading=false;finishLoading()}});
@@ -345,6 +369,8 @@ function populateYearFilterFromSample(){
   var sorted=Object.keys(years).sort(function(a,b){return parseInt(a)-parseInt(b)});
   var sel=document.getElementById('yearFilter'),cur=sel.value;
   sel.innerHTML='<option value="">All years</option>';
+  // Prepend pre-2009 decades so users can discover older songs
+  for(var d=2008;d>=1960;d--){if(!years[d])sel.innerHTML+='<option value="'+d+'">'+d+'</option>'}
   for(var j=0;j<sorted.length;j++){sel.innerHTML+='<option value="'+sorted[j]+'">'+sorted[j]+'</option>'}
   if(cur)sel.value=cur;
 }
@@ -355,6 +381,7 @@ function populateYearFilter(){
   var sorted=Object.keys(years).sort(function(a,b){return parseInt(a)-parseInt(b)});
   var sel=document.getElementById('yearFilter'),cur=sel.value;
   sel.innerHTML='<option value="">All years</option>';
+  for(var d=2008;d>=1960;d--){if(!years[d])sel.innerHTML+='<option value="'+d+'">'+d+'</option>'}
   for(var j=0;j<sorted.length;j++){sel.innerHTML+='<option value="'+sorted[j]+'">'+sorted[j]+'</option>'}
   if(cur)sel.value=cur;
 }
@@ -365,10 +392,10 @@ function renderGridChunk(videos,start,grid,queued){
   var html='';
   for(var i=start;i<end;i++){
     var v=videos[i],dur=fmtDur(v.duration),sz=fmtSize(v.size),isK=v.tag==='karaoke',hasQ=queued.has(v.videoId),vid=esc(v.videoId);
-    var thumbSrc=v.thumbnail||(v.videoId?'art/'+v.videoId+'.webp':'');
+    var thumbSrc=thumbUrl(v.thumbnail)||(v.videoId?'art/'+v.videoId+'.webp':'');
     html+='<div class="card'+(hasQ?' q-highlight':'')+'" data-video-id="'+vid+'">'+
       '<div class="card-badge-row">'+
-        (v.downloaded?'<span class="badge badge-downloaded">ready</span>':'<span class="badge badge-missing">pending</span>')+
+        (v.cached?'<span class="badge badge-downloaded">ready</span>':'<span class="badge badge-missing">pending</span>')+
         (isK?'<span class="badge badge-karaoke">K</span>':'')+
         (hasQ?'<span class="badge badge-queued">'+esc(queueVideos[v.videoId]||'queued')+'</span>':'')+
       '</div>'+
@@ -380,7 +407,7 @@ function renderGridChunk(videos,start,grid,queued){
       '</div>'+
       '<div class="card-body">'+
         '<div class="card-title">'+esc(v.title)+'</div>'+
-        '<div class="card-meta">'+(v.downloaded&&(v.duration||v.size>0)?'<span>'+dur+'</span><span>'+sz+'</span>':'<span>'+(v.downloaded?'Downloaded':'Pending')+'</span>')+'</div>'+
+        '<div class="card-meta">'+(v.cached&&(v.duration||v.size>0)?'<span>'+dur+'</span><span>'+sz+'</span>':'<span>'+(v.cached?'Downloaded':'Pending')+'</span>')+'</div>'+
       '</div></div>';
   }
   if(start===0) grid.innerHTML=html; else grid.innerHTML+=html;
@@ -430,7 +457,7 @@ function renderListView(videos){
   var queued=new Set(Object.keys(queueVideos));
   body.innerHTML=videos.map(function(v){
     var dur=fmtDur(v.duration),sz=fmtSize(v.size),isK=v.tag==='karaoke',hasQ=queued.has(v.videoId);
-    var thumbSrc=v.thumbnail||(v.videoId?'art/'+v.videoId+'.webp':'');
+    var thumbSrc=thumbUrl(v.thumbnail)||(v.videoId?'art/'+v.videoId+'.webp':'');
     return '<tr>'+
       '<td class="thumb">'+(thumbSrc?'<img src="" data-src="'+esc(thumbSrc)+'" alt="" style="width:48px;height:27px;object-fit:cover;border-radius:3px;opacity:0">':'')+'</td>'+
       '<td class="title">'+esc(v.title)+'</td>'+
@@ -462,8 +489,8 @@ function init(){
   if(savedView==='list')currentView='list';
   switchView(currentView);
   loadLibrary();
-  checkStatus();fetchQueue();
-  setInterval(checkStatus,15000);setInterval(fetchQueue,10000);
+  checkStatus();
+  setInterval(checkStatus,15000);
 }
 
 init();

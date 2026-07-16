@@ -103,9 +103,9 @@ class PlaybackSupervisor(
 	companion object {
 		private const val TAG = "PlaybackSupervisor"
 		private const val TICK_MS = 3_000L
-		private const val NUDGE_MS = 60_000L      // give yt-dlp on Mac time
-		private const val SOFT_RECOVER_MS = 120_000L
-		private const val HARD_RELOAD_MS = 150_000L
-		private const val FAIL_MS = 180_000L        // full download window (YouTube → Mac → S8)
+		private const val NUDGE_MS = 300_000L       // only fire as last resort (video should have started by now)
+		private const val SOFT_RECOVER_MS = 480_000L
+		private const val HARD_RELOAD_MS = 600_000L
+		private const val FAIL_MS = 720_000L         // full recovery window
 	}
 }

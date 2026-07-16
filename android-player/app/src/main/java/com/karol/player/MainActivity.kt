@@ -27,6 +27,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -129,7 +130,9 @@ class MainActivity : AppCompatActivity() {
 		exoPlayer = builder.build()
 		playerView.player = exoPlayer
 		playerView.useController = false
-		playerView.visibility = View.GONE
+		// Keep PlayerView visible but behind the loading overlay instead of toggling
+		// GONE/VISIBLE — surface destruction causes dequeueBuffer leaks.
+		playerView.visibility = View.INVISIBLE
 
 		exoPlayer?.addListener(object : Player.Listener {
 			override fun onPlaybackStateChanged(state: Int) {
@@ -232,7 +235,6 @@ class MainActivity : AppCompatActivity() {
 		downloadingVideoId = videoId
 		showLoading()
 		updateLoadingText(videoId, "Syncing from Mac...")
-		fetchLyricsIfKaraoke(videoId)
 		videoDownloadManager.download(videoId,
 			onProgress = { pct ->
 				runOnUiThread {
@@ -252,6 +254,7 @@ class MainActivity : AppCompatActivity() {
 					downloadingVideoId = null
 					hideLoading()
 					playFile(file, videoId)
+					fetchLyricsIfKaraoke(videoId)
 				}
 			},
 			onError = { msg ->
@@ -296,6 +299,7 @@ class MainActivity : AppCompatActivity() {
 		Log.i("MainActivity", "playFile: $videoId (${file.length()} bytes)")
 		localPlaybackActive = true
 		currentLocalVideoId = videoId
+		// Show the surface (it was INVISIBLE, not GONE, so no destruction/recreation)
 		playerView.visibility = View.VISIBLE
 
 		val vttFiles = videoDownloadManager.getLocalSubtitles(videoId)
@@ -311,12 +315,17 @@ class MainActivity : AppCompatActivity() {
 			.setUri(Uri.fromFile(file)).setSubtitleConfigurations(subConfigs).build())
 		exoPlayer?.prepare()
 		exoPlayer?.playWhenReady = true
+
+		// Clear the playback supervisor watchdog immediately on playFile,
+		// so it doesn't nudge/recover a video that is already queued to play.
+		(application as PlayerApp).playbackSupervisor.clearLoadState()
 	}
 
 	private fun playStream(url: String, videoId: String) {
 		Log.i("MainActivity", "playStream: $videoId <- $url")
 		localPlaybackActive = true
 		currentLocalVideoId = videoId
+		// Surface is already alive (INVISIBLE), just show it
 		playerView.visibility = View.VISIBLE
 		exoPlayer?.setMediaItem(MediaItem.Builder().setUri(Uri.parse(url)).build())
 		exoPlayer?.prepare()
@@ -328,7 +337,9 @@ class MainActivity : AppCompatActivity() {
 			exoPlayer?.stop()
 			localPlaybackActive = false
 			currentLocalVideoId = null
-			playerView.visibility = View.GONE
+			// Keep surface alive (INVISIBLE, not GONE) to avoid surface destruction
+			// which causes dequeueBuffer leaks on recreation.
+			playerView.visibility = View.INVISIBLE
 		}
 	}
 
@@ -437,24 +448,34 @@ class MainActivity : AppCompatActivity() {
 		}
 	}
 
-	/** Auto-fetch karaoke lyrics from the Mac API when a karaoke video loads. */
+	/** Auto-fetch karaoke lyrics from the Mac API when a karaoke video loads.
+	 *  Retries once on failure in case the network isn't fully established yet. */
 	private fun fetchLyricsIfKaraoke(videoId: String) {
-		lifecycleScope.launch {
-			try {
-				val baseUrl = videoDownloadManager.getServerBaseUrl()
-				val urlText = baseUrl + "/api/library/lyrics/" + videoId
-				val url = java.net.URL(urlText)
-				val conn = url.openConnection() as java.net.HttpURLConnection
-				conn.connectTimeout = 8000
-				conn.readTimeout = 8000
-				if (conn.responseCode == 200) {
-					val json = conn.inputStream.bufferedReader().readText()
-					runOnUiThread { lyricEngine.load(json) }
-					Log.i("MainActivity", "Auto-loaded lyrics for " + videoId)
+		lifecycleScope.launch(Dispatchers.IO) {
+			var success = false
+			for (attempt in 0..1) {
+				try {
+					val baseUrl = videoDownloadManager.getServerBaseUrl()
+					val urlText = baseUrl + "/api/library/lyrics/" + videoId
+					val url = java.net.URL(urlText)
+					val conn = url.openConnection() as java.net.HttpURLConnection
+					conn.connectTimeout = 8000
+					conn.readTimeout = 8000
+					if (conn.responseCode == 200) {
+						val json = conn.inputStream.bufferedReader().readText()
+						runOnUiThread { lyricEngine.load(json) }
+						Log.i("MainActivity", "Auto-loaded lyrics for " + videoId)
+						success = true
+					}
+					conn.disconnect()
+					if (success) break
+				} catch (e: Exception) {
+					Log.w("MainActivity", "Lyrics fetch attempt $attempt for $videoId: " + e.message)
+					if (attempt < 1) delay(2000L) // retry after 2s
 				}
-				conn.disconnect()
-			} catch (e: Exception) {
-				Log.i("MainActivity", "No lyrics for " + videoId + ": " + e.message)
+			}
+			if (!success) {
+				Log.i("MainActivity", "No lyrics for " + videoId)
 				runOnUiThread {
 					lyricEngine.clear()
 					lyricOverlay.visibility = View.GONE

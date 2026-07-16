@@ -13,7 +13,7 @@
 		android:layout_width="match_parent"
 		android:layout_height="match_parent"
 		android:background="#000000"
-		android:visibility="gone"
+		android:visibility="invisible"
 		app:use_controller="false"
 		app:surface_type="surface_view"
 		app:resize_mode="fit" />
@@ -45,7 +45,7 @@
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
 			android:layout_gravity="bottom"
-			android:layout_marginBottom="100dp"
+			android:layout_marginBottom="200dp"
 			android:gravity="center"
 			android:paddingStart="24dp"
 			android:paddingEnd="24dp"
@@ -61,7 +61,7 @@
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
 			android:layout_gravity="bottom"
-			android:layout_marginBottom="40dp"
+			android:layout_marginBottom="140dp"
 			android:alpha="0.45"
 			android:gravity="center"
 			android:paddingStart="24dp"
@@ -144,7 +144,8 @@
 	<com.karol.player.MarqueeView
 		android:id="@+id/queueMarquee"
 		android:layout_width="match_parent"
-		android:layout_height="100dp"
+		android:layout_height="60dp"
 		android:layout_gravity="bottom"
 		android:visibility="visible" />
+
 </FrameLayout>

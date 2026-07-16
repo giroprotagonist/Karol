@@ -97,6 +97,8 @@ for (const dir of scanDirs) {
 const videos = [];
 for (const videoId of Object.keys(fileMap)) {
   const f = fileMap[videoId] || { size: 0, subs: [], meta: null };
+  // Skip bogus entries: no metadata title AND no thumbnail = ID-only noise
+  if (!f.meta?.title && !f.meta?.thumbnail) continue;
   // Sanitize title: strip control chars and escape backslashes that would break JSON
   const rawTitle = (f.meta?.title || videoId).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\\/g, '\\\\');
   // Merge tags from base videoId AND karaoke variant (karaoke variant takes priority)
@@ -107,7 +109,7 @@ for (const videoId of Object.keys(fileMap)) {
     duration: f.meta?.duration || 0,
     size: f.size,
     subtitles: f.subs,
-    thumbnail: f.meta?.thumbnail || '',
+    thumbnail: (f.meta?.thumbnail || '').replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault'),
     upload_date: f.meta?.upload_date || '',
     cached: true,
     tag: tagEntry.tag || 'music',

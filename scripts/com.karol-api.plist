@@ -8,10 +8,10 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string>/Users/macdonk/Documents/GitHub/deskreen/scripts/karol-api-server.js</string>
+		<string>/Users/macdonk/Documents/GitHub/Karol/api-server/index.js</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/macdonk/Documents/GitHub/deskreen</string>
+	<string>/Users/macdonk/Documents/GitHub/Karol</string>
 	<key>KeepAlive</key>
 	<true/>
 	<key>RunAtLoad</key>

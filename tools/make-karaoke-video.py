@@ -455,21 +455,31 @@ def step_render(
     with open(lrc_tmp, "w") as f:
         f.write(lrc_text)
 
-    # Get video dimensions for subtitle positioning
+    # Always use landscape (1280×720) for subtitle layout — even if the source
+    # video is square album art. The S8 tablet is landscape, and letterboxed
+    # square video with landscape-laid-out subtitles looks correct on screen.
+    # Probing actual dimensions would trigger square-mode font shrinking,
+    # making lyrics tiny on the tablet.
     width, height = 1280, 720
     try:
         probe = run(
             [_FFPROBE_BIN, "-v", "quiet", "-print_format", "json",
              "-show_entries", "stream=width,height", mp4_path],
-            timeout=15,
+            check=False, timeout=15,
         )
         import json
         info = json.loads(probe.stdout)
         for s in info.get("streams", []):
             if s.get("width") and s.get("height"):
-                width = s["width"]
-                height = s["height"]
-                break
+                w = s["width"]
+                h = s["height"]
+                # Only use probed dimensions if they are actually landscape
+                # (wider than tall). Square or portrait videos get the
+                # default 1280×720 landscape layout.
+                if w > h:
+                    width = w
+                    height = h
+                    break
     except Exception:
         pass
 
@@ -491,15 +501,22 @@ def step_render(
     if not os.path.exists(ass_path) or os.path.getsize(ass_path) < 50:
         fatal("Failed to generate ASS subtitle file")
 
-    # subtitles filter with absolute path (FFmpeg needs absolute path in subtitles filter)
+    # Scale to 1280x720 before applying subtitles — ensures lyrics fill
+    # the full landscape screen regardless of source video dimensions.
+    # Square/portrait gets letterboxed; low-res landscape gets upscaled.
     ass_abs = os.path.abspath(ass_path)
-    subtitles_filter = f"subtitles='{ass_abs}'"
+    vf_chain = (
+        f"scale=1280:720:force_original_aspect_ratio=decrease,"
+        f"pad=1280:720:(ow-iw)/2:(oh-ih)/2,"
+        f"setsar=1,"
+        f"subtitles='{ass_abs}'"
+    )
 
     cmd = [
         _FFMPEG_BIN, "-y",
         "-i", mp4_path,
         "-i", instrumental_path,
-        "-vf", subtitles_filter,
+        "-vf", vf_chain,
         "-map", "0:v",
         "-map", "1:a",
         "-c:v", "libx264",
@@ -700,37 +717,45 @@ def main() -> None:
             # Plain lyrics from LRCLIB — build approximate LRC
             lrc_text = step_build_unsynced_lrc(lrc_text, duration)
 
-        # Step 4.5: Generate .lrc.json for real-time overlay (from synced lyrics)
-        if lrc_text and is_synced:
+        # Step 4a: Generate .lrc.json for the real-time lyric overlay on the S8.
+        # The S8 fetches this from /api/library/lyrics/:videoId and
+        # renders it word-by-word via LyricEngine — no subtitle burn-in needed.
+        if lrc_text:
             step_save_lrc_json(
                 video_id, lrc_text, duration, tmp_dir,
                 artist=args.artist or "",
                 title=args.title or "",
             )
 
-        if lrc_text:
-            karaoke_mp4 = step_render(
-                video_id, mp4_path, instrumental_path,
-                lrc_text, duration, tmp_dir, args.no_cleanup,
-            )
-        else:
-            # No lyrics at all — just mux instrumental audio with original video
-            log("render", "No lyrics found. Muxing instrumental audio into original video.")
-            karaoke_mp4 = os.path.join(tmp_dir, f"{video_id}-karaoke.mp4")
-            cmd = [
-                _FFMPEG_BIN, "-y",
-                "-i", mp4_path,
-                "-i", instrumental_path,
-                "-map", "0:v",
-                "-map", "1:a",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-movflags", "+faststart",
-                "-shortest",
-                karaoke_mp4,
-            ]
-            run(cmd, timeout=600)
+        # Step 4b: Fast re-encode — instrumental audio muxed with video.
+        # Lyrics are handled by the S8 overlay, not burned into the video.
+        # -preset ultrafast gives ~3-5s encode time even for long videos.
+        # -c:v copy doesn't work reliably because YouTube downloads have
+        # broken PTS/DTS that the mp4 muxer can't normalize at container level.
+        log("render", "Re-encoding video with instrumental audio (ultrafast, ~3s)")
+        karaoke_mp4 = os.path.join(tmp_dir, f"{video_id}-karaoke.mp4")
+        cmd = [
+            _FFMPEG_BIN, "-y",
+            "-i", mp4_path,
+            "-i", instrumental_path,
+            "-map", "0:v",
+            "-map", "1:a",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-shortest",
+            karaoke_mp4,
+        ]
+        run(cmd, timeout=600)
+
+        if not os.path.exists(karaoke_mp4) or os.path.getsize(karaoke_mp4) < 10000:
+            fatal("FFmpeg did not produce a valid output file")
+
+        output_size_mb = os.path.getsize(karaoke_mp4) / (1024 * 1024)
+        log("render", f"Karaoke video ready: {karaoke_mp4} ({output_size_mb:.1f} MB)")
 
         # Step 5: Register in library
         step_register(

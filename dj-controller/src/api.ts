@@ -9,13 +9,10 @@ import type {
 	YouTubeSearchResult,
 } from '@common/YouTubeKaraokeTypes';
 import type {
-	HardwareMixerState,
-	LibraryState,
-	LibraryTrack,
-	VlcNowPlaying,
-	VlcPlaylistState,
-	VlcStatus,
-} from '@common/VlcControllerTypes';
+type HardwareMixerState = {
+	micVolume: number;
+	micMuted: boolean;
+};
 
 const HOST_KEY = 'deskreen_dj_host';
 
@@ -62,10 +59,6 @@ function apiBase(host: string): string {
 	return `${normalizeHost(host)}/api/youtube-dj`;
 }
 
-function vlcApiBase(host: string): string {
-	return `${normalizeHost(host)}/api/vlc-dj`;
-}
-
 const FETCH_TIMEOUT_MS = 12000;
 const PLAYLIST_LOAD_TIMEOUT_MS = 180_000;
 
@@ -74,9 +67,8 @@ async function request<T>(
 	path: string,
 	init?: RequestInit,
 	timeoutMs: number = FETCH_TIMEOUT_MS,
-	useVlc?: boolean,
 ): Promise<T> {
-	const base = useVlc ? vlcApiBase(host) : apiBase(host);
+	const base = apiBase(host);
 	const url = `${base}${path}`;
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -114,7 +106,7 @@ async function request<T>(
 			// If the response only has an error field and nothing else of substance,
 			// treat it as a request failure.
 			const meaningfulKeys = Object.keys(data).filter(
-				(k) => k !== 'error' && k !== 'ok' && k !== 'vlcProxyTarget',
+				(k) => k !== 'error' && k !== 'ok',
 			);
 			if (meaningfulKeys.length === 0) {
 				throw new Error(data.error);
@@ -474,127 +466,9 @@ export function formatSyncTime(timestamp: number | null): string {
 	return new Date(timestamp).toLocaleTimeString();
 }
 
-// ─── VLC Controller API ──────────────────────────────────────
-
-// VLC status
-export async function fetchVlcStatus(host: string): Promise<VlcStatus> {
-	return request<VlcStatus>(host, '/status', undefined, undefined, true);
-}
-
-export async function fetchVlcNowPlaying(host: string): Promise<VlcNowPlaying | null> {
-	return request<VlcNowPlaying | null>(host, '/now-playing', undefined, undefined, true);
-}
-
-export async function fetchVlcPlaylist(host: string): Promise<VlcPlaylistState> {
-	return request<VlcPlaylistState>(host, '/playlist', undefined, undefined, true);
-}
-
-export async function fetchVlcLibrary(host: string): Promise<LibraryState> {
-	return request<LibraryState>(host, '/library', undefined, undefined, true);
-}
-
-export async function searchVlcLibrary(host: string, query: string): Promise<LibraryTrack[]> {
-	const data = await request<{ results: LibraryTrack[] }>(
-		host,
-		`/library/search?q=${encodeURIComponent(query)}`,
-		undefined,
-		undefined,
-		true,
-	);
-	return data.results ?? [];
-}
-
-// Transport
-export async function vlcTransportPlay(host: string): Promise<void> {
-	await request(host, '/transport/play', { method: 'POST', body: '{}' }, undefined, true);
-}
-
-export async function vlcTransportPause(host: string): Promise<void> {
-	await request(host, '/transport/pause', { method: 'POST', body: '{}' }, undefined, true);
-}
-
-export async function vlcTransportSkipNext(host: string): Promise<void> {
-	await request(host, '/transport/skip-next', { method: 'POST', body: '{}' }, undefined, true);
-}
-
-export async function vlcTransportSkipPrev(host: string): Promise<void> {
-	await request(host, '/transport/skip-prev', { method: 'POST', body: '{}' }, undefined, true);
-}
-
-export async function vlcTransportSeek(host: string, seconds: number): Promise<void> {
-	await request(
-		host,
-		'/transport/seek',
-		{ method: 'POST', body: JSON.stringify({ seconds }) },
-		undefined,
-		true,
-	);
-}
-
-export async function vlcTransportSeekRelative(host: string, delta: number): Promise<void> {
-	await request(
-		host,
-		'/transport/seek-relative',
-		{ method: 'POST', body: JSON.stringify({ delta }) },
-		undefined,
-		true,
-	);
-}
-
-export async function vlcTransportVolume(host: string, level: number): Promise<void> {
-	await request(
-		host,
-		'/transport/volume',
-		{ method: 'POST', body: JSON.stringify({ level }) },
-		undefined,
-		true,
-	);
-}
-
-// Queue
-export async function vlcEnqueueFile(host: string, path: string): Promise<void> {
-	await request(
-		host,
-		'/queue',
-		{ method: 'POST', body: JSON.stringify({ path }) },
-		undefined,
-		true,
-	);
-}
-
-export async function vlcPlayId(host: string, id: string): Promise<void> {
-	await request(
-		host,
-		`/queue/${encodeURIComponent(id)}/play`,
-		{ method: 'POST', body: '{}' },
-		undefined,
-		true,
-	);
-}
-
-export async function vlcRemoveFromQueue(host: string, id: string): Promise<void> {
-	await request(
-		host,
-		`/queue/${encodeURIComponent(id)}`,
-		{ method: 'DELETE' },
-		undefined,
-		true,
-	);
-}
-
-export async function vlcClearQueue(host: string): Promise<void> {
-	await request(
-		host,
-		'/queue/clear',
-		{ method: 'POST', body: '{}' },
-		undefined,
-		true,
-	);
-}
-
 // Hardware
 export async function fetchHardwareMixer(host: string): Promise<HardwareMixerState> {
-	return request<HardwareMixerState>(host, '/hardware/mic', undefined, undefined, true);
+	return request<HardwareMixerState>(host, '/hardware/mic');
 }
 
 export async function setMicVolume(host: string, level: number): Promise<void> {
@@ -602,8 +476,6 @@ export async function setMicVolume(host: string, level: number): Promise<void> {
 		host,
 		'/hardware/mic',
 		{ method: 'POST', body: JSON.stringify({ level }) },
-		undefined,
-		true,
 	);
 }
 
@@ -612,8 +484,6 @@ export async function setMicMute(host: string, muted: boolean): Promise<void> {
 		host,
 		'/hardware/mic/mute',
 		{ method: 'POST', body: JSON.stringify({ muted }) },
-		undefined,
-		true,
 	);
 }
 

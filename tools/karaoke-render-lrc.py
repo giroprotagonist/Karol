@@ -175,9 +175,9 @@ def generate_ass(
     video_width: int = 1280,
     video_height: int = 720,
     fontname: str = "Arial",
-    fontsize_active: int = 36,
-    fontsize_inactive: int = 21,
-    countdown_fontsize: int = 75,
+    fontsize_active: int = 56,
+    fontsize_inactive: int = 38,
+    countdown_fontsize: int = 120,
     preview_lead_seconds: float = 1.8,
 ) -> str:
     """Generate an ASS subtitle file with progressive karaoke highlighting.
@@ -223,10 +223,10 @@ def generate_ass(
         active_y = int(video_height * 0.82)
         line_offset = int(video_height * 0.06)
     else:
-        bar_top_y = video_height - 140
-        bar_height = 100
-        active_y = video_height - 115
-        line_offset = 52
+        bar_top_y = video_height - 195
+        bar_height = 175
+        active_y = video_height - 145
+        line_offset = 72
 
     # ── Colors (ASS format: &HAABBGGRR; PrimaryColour=fill, SecondaryColour=unfilled) ──
     active_color_ass = "&H0000D7FF"     # opaque gold (filled portion)
@@ -357,8 +357,8 @@ def generate_ass_karaoke(
     video_width: int = 1280,
     video_height: int = 720,
     fontname: str = "Arial",
-    fontsize_active: int = 48,
-    fontsize_inactive: int = 28,
+    fontsize_active: int = 56,
+    fontsize_inactive: int = 38,
 ) -> str:
     """Convenience wrapper — calls generate_ass with karaoke defaults."""
     return generate_ass(
@@ -420,9 +420,9 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1280, help="Video width (px)")
     parser.add_argument("--height", type=int, default=720, help="Video height (px)")
     parser.add_argument("--font", default="Arial", help="Font name for subtitles")
-    parser.add_argument("--font-size-active", type=int, default=36,
+    parser.add_argument("--font-size-active", type=int, default=56,
                        help="Active lyric font size")
-    parser.add_argument("--font-size-inactive", type=int, default=21,
+    parser.add_argument("--font-size-inactive", type=int, default=38,
                        help="Inactive lyric font size")
     parser.add_argument(
         "--output", choices=["ass", "ffmpeg-cmd"], default="ass",

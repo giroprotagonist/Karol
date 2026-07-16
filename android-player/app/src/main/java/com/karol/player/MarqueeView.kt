@@ -27,7 +27,7 @@ class MarqueeView @JvmOverloads constructor(
 	private var textWidth = 0f
 	private var totalScroll = 0f
 	private var animator: ValueAnimator? = null
-	private val SPEED_DP_PER_SEC = 100f
+	private val SPEED_DP_PER_SEC = 80f
 	private var speedPxPerSec = 0f
 	private var gapPx = 0f
 
@@ -35,10 +35,10 @@ class MarqueeView @JvmOverloads constructor(
 		bgPaint.color = Color.argb(221, 0, 0, 0)
 		paint.color = Color.WHITE
 		paint.isFakeBoldText = true
-		paint.textSize = 32f * resources.displayMetrics.scaledDensity
+		paint.textSize = 24f * resources.displayMetrics.scaledDensity
 		paint.textAlign = Paint.Align.LEFT
 		speedPxPerSec = SPEED_DP_PER_SEC * resources.displayMetrics.density
-		gapPx = 80f * resources.displayMetrics.density
+		gapPx = 50f * resources.displayMetrics.density
 	}
 
 	override fun onDraw(canvas: Canvas) {

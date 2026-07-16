@@ -277,29 +277,6 @@ function getMyIps() {
   return ips;
 }
 
-const VLC_PASSWORD = process.env.VLC_PASSWORD || 'karol';
-const VLC_AUTH = 'Basic ' + Buffer.from(':' + VLC_PASSWORD).toString('base64');
-
-// VLC runtime health — updated by ensureVlcRunning on startup and
-// after each vlcGet call. The /api/vlc-dj/health endpoint reads this
-// instead of returning a hardcoded true.
-let vlcAvailable = false;
-let vlcRejections = 0;
-const VLC_MAX_REJECTIONS = 5;
-
-function vlcGet(endpoint) {
-  return new Promise((resolve, reject) => {
-    http.get({
-      hostname: '127.0.0.1', port: 8080, path: endpoint,
-      headers: { Authorization: VLC_AUTH },
-    }, (res) => {
-      let data = '';
-      res.on('data', c => { data += c; });
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve(null); } });
-    }).on('error', () => resolve(null));
-  });
-}
-
 function findCoverPath(filePath) {
   if (!filePath) return null;
   const dir = path.dirname(filePath);
@@ -718,8 +695,6 @@ app.use(async (ctx, next) => {
   await next();
 });
 
-// ── VLC routes ──
-
 // ═══════════════════════════════════════════════════════════════
 //  Library Module — local video download + metadata pipeline
 // ═══════════════════════════════════════════════════════════════
@@ -893,161 +868,6 @@ function downloadVideo(videoId) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════
-
-router.get('/api/vlc-dj/health', async (ctx) => {
-  // Actually probe VLC's HTTP interface instead of returning a hardcoded true.
-  // Also check the consecutive-failure counter so a single transient error
-  // doesn't flip vlcAvailable to false.
-  try {
-    await vlcGet('/requests/status.json');
-    vlcRejections = 0;
-    vlcAvailable = true;
-  } catch {
-    vlcRejections++;
-    if (vlcRejections >= VLC_MAX_REJECTIONS) {
-      vlcAvailable = false;
-    }
-  }
-  ctx.body = { ok: true, vlcAvailable, hardwareAvailable: true };
-});
-
-router.get('/api/vlc-dj/now-playing', async (ctx) => {
-  try {
-    const d = await vlcGet('/requests/status.json');
-    if (!d) { ctx.body = { title: '', artist: '', album: '', duration: 0, position: 0 }; return; }
-    const meta = (d.information && d.information.category && d.information.category.meta) || {};
-    let fullPath = '';
-    if (d.currentplid != null) {
-      const pl = await vlcGet('/requests/playlist.json');
-      if (pl) {
-        const items = (pl.children && pl.children[0] && pl.children[0].children) || [];
-        for (const item of items) {
-          if (String(item.id) === String(d.currentplid)) {
-            fullPath = decodeURIComponent((item.uri || '').replace('file://', ''));
-            break;
-          }
-        }
-      }
-    }
-    ctx.body = {
-      title: meta.filename || '', artist: meta.artist || '', album: meta.album || '',
-      duration: Number(d.length || 0), position: Number(d.time || 0),
-      id: d.currentplid != null ? String(d.currentplid) : undefined,
-      coverUrl: fullPath ? '/api/vlc-dj/cover?path=' + encodeURIComponent(fullPath) : undefined,
-    };
-  } catch (e) { ctx.body = { title: '', artist: '', album: '', duration: 0, position: 0 }; }
-});
-
-router.get('/api/vlc-dj/playlist', async (ctx) => {
-  try {
-    const [pl, st] = await Promise.all([vlcGet('/requests/playlist.json'), vlcGet('/requests/status.json')]);
-    const items = (pl && pl.children && pl.children[0] && pl.children[0].children) || [];
-    const tracks = items.map((item, i) => {
-      const uri = String(item.uri || '');
-      const fullPath = uri.startsWith('file://') ? decodeURIComponent(uri.replace('file://', '')) : String(item.name || '');
-      const cp = findCoverPath(fullPath);
-      return {
-        id: String(item.id || i), name: String(item.name || 'Track ' + (i+1)), uri,
-        duration: typeof item.duration === 'number' ? item.duration : undefined,
-        coverUrl: cp ? '/api/vlc-dj/cover?path=' + encodeURIComponent(fullPath) : undefined,
-      };
-    });
-    const cid = Number(st && st.currentplid);
-    const currentIndex = !isNaN(cid) ? tracks.findIndex(t => Number(t.id) === cid) : -1;
-    ctx.body = { tracks, currentIndex };
-  } catch (e) { ctx.body = { tracks: [], currentIndex: -1 }; }
-});
-
-router.get('/api/vlc-dj/cover', async (ctx) => {
-  const fp = ctx.query.path;
-  if (!fp) { ctx.status = 400; return; }
-  const cp = findCoverPath(fp);
-  if (!cp) { ctx.status = 404; return; }
-  ctx.type = path.extname(cp) === '.png' ? 'image/png' : 'image/jpeg';
-  ctx.body = fs.createReadStream(cp);
-});
-
-function getLibraryFolder() {
-  try {
-    const configPath = path.join(os.homedir(), '.deskreen', 'vlc-config.json');
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    const cfg = JSON.parse(raw);
-    if (cfg.libraryFolder && fs.existsSync(cfg.libraryFolder)) return cfg.libraryFolder;
-  } catch (e) { /* fall through */ }
-  return path.join(os.homedir(), 'Music');
-}
-
-function scanLibraryFolders() {
-  const musicDir = getLibraryFolder();
-  console.log('[vlc-dj] Scanning library folder:', musicDir);
-  const tracks = [];
-  let skipped = 0, errors = 0;
-  try {
-    function walk(dir, depth) {
-      if (depth > 6) return;
-      try {
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          const full = path.join(dir, entry.name);
-          if (entry.isDirectory()) { walk(full, depth + 1); }
-          else if (/\.(mp3|flac|wav|m4a|aiff|ogg)$/i.test(entry.name)) {
-            const cp = findCoverPath(full);
-            tracks.push({
-              title: path.basename(full, path.extname(full)), path: full,
-              artist: path.basename(path.dirname(path.dirname(full))) || '',
-              album: path.basename(path.dirname(full)) || '', duration: 0,
-              coverUrl: cp ? '/api/vlc-dj/cover?path=' + encodeURIComponent(full) : undefined,
-            });
-          } else { skipped++; }
-        }
-      } catch (e) { errors++; }
-    }
-    walk(musicDir, 0);
-    console.log('[vlc-dj] Library scan complete:', tracks.length, 'tracks,', skipped, 'non-audio,', errors, 'errors');
-  } catch (e) { console.error('[vlc-dj] Library scan failed:', e.message); }
-  return tracks;
-}
-
-let _libCache = null;
-let _libCacheAt = 0;
-function getCachedLibrary() {
-  const now = Date.now();
-  if (_libCache && (now - _libCacheAt) < 60000) return _libCache;
-  _libCache = scanLibraryFolders();
-  _libCacheAt = now;
-  return _libCache;
-}
-
-router.get('/api/vlc-dj/library', async (ctx) => {
-  ctx.body = { tracks: getCachedLibrary() };
-});
-
-router.get('/api/vlc-dj/library/search', async (ctx) => {
-  const q = (ctx.query.q || '').toLowerCase();
-  if (!q) { ctx.body = { results: [] }; return; }
-  const tracks = getCachedLibrary();
-  const results = tracks.filter(t =>
-    t.title.toLowerCase().includes(q) ||
-    t.artist.toLowerCase().includes(q) ||
-    t.album.toLowerCase().includes(q)
-  );
-  ctx.body = { results };
-});
-
-router.get('/api/vlc-dj/status', async (ctx) => {
-  try {
-    const d = await vlcGet('/requests/status.json');
-    ctx.body = {
-      state: (d && d.state) || 'stopped',
-      volume: (d && d.volume) || 0,
-      time: (d && d.time) || 0,
-      length: (d && d.length) || 0,
-      position: (d && d.position) || 0,
-      duration: (d && d.length) || 0,
-    };
-  } catch (e) { ctx.body = { state: 'stopped', volume: 0, time: 0, length: 0, position: 0, duration: 0 }; }
-});
-
 // ── Song Request Queue ──
 // Persisted via MySQL on Bluehost (karol.rideyrbike.com/db.php).
 // Local cache for fast lookups; refreshed on startup and periodically.
@@ -1101,26 +921,144 @@ function proxyRequestToS8(videoId, forcePlayNow, requester, songTitle) {
 }
 
 router.post('/api/queue/request', async (ctx) => {
-  const { videoId, name, title } = ctx.request.body || {};
-  if (!videoId || !name) {
-    ctx.status = 400;
-    ctx.body = { ok: false, error: 'videoId and name are required' };
-    return;
-  }
-  const cleanName = String(name).trim().substring(0, 40);
+  const body = ctx.request.body || {};
+  let { videoId, name, title } = body;
+  const url = body.url || '';
+  const karaokeify = !!body.karaokeify;
+
+  const cleanName = String(name || '').trim().substring(0, 40);
   if (!cleanName) {
     ctx.status = 400;
     ctx.body = { ok: false, error: 'name is required' };
     return;
   }
-  if (!/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
+
+  // Custom URL flow: extract videoId from YouTube URL
+  if (!videoId || videoId === '__custom__') {
+    if (!url) {
+      ctx.status = 400;
+      ctx.body = { ok: false, error: 'videoId or YouTube URL is required' };
+      return;
+    }
+    const match = url.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|^)([a-zA-Z0-9_-]{11})/);
+    if (!match) {
+      ctx.status = 400;
+      ctx.body = { ok: false, error: 'Invalid YouTube URL' };
+      return;
+    }
+    videoId = match[1];
+  }
+
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     ctx.status = 400;
     ctx.body = { ok: false, error: 'invalid videoId' };
     return;
   }
 
-  // Persist request to MySQL via Bluehost proxy (fire-and-forget, never blocks)
   const cleanTitle = title ? String(title).trim().substring(0, 120) : '';
+
+  // ── Karaoke custom URL: start the pipeline, return immediately ──
+  if (karaokeify) {
+    const karaokeId = videoId + '-karaoke';
+    const karaokeMp4 = path.join(LIBRARY_KARAOKE_DIR, karaokeId + '.mp4');
+
+    // Already made — add directly to S8 queue
+    if (fs.existsSync(karaokeMp4)) {
+      console.log(`[request] Karaoke exists for ${videoId}, adding to S8 queue`);
+      mysql.requestAdd(karaokeId, cleanName, cleanTitle).catch(e => {});
+      const playerHost = getPlayerHost();
+      if (playerHost) {
+        try {
+          await proxyRequestToS8(karaokeId, false, cleanName, cleanTitle);
+        } catch (e) {
+          console.error(`[request] S8 proxy error for ${karaokeId}: ${e.message}`);
+        }
+      }
+      ctx.body = { ok: true, videoId: karaokeId, requester: cleanName, karaokeify: true, queued: true };
+      return;
+    }
+
+    // Already processing — return status
+    if (karaokeJobs.has(videoId)) {
+      const job = karaokeJobs.get(videoId);
+      mysql.requestAdd(videoId, cleanName, cleanTitle).catch(e => {});
+      ctx.body = { ok: true, videoId, requester: cleanName, karaokeify: true, status: job.status, progress: job.progress };
+      return;
+    }
+
+    // Start the karaoke pipeline in the background — uses the same pipeline as POST /api/library/make-karaoke
+    // but returns immediately so the user isn't blocked.
+    karaokeJobs.set(videoId, { status: 'processing', progress: 0, requester: cleanName, cleanTitle });
+    mysql.requestAdd(videoId, cleanName, cleanTitle).catch(e => {});
+
+    const args = [path.join(PROJECT_ROOT, 'tools', 'make-karaoke-video.py'), url];
+    if (body.artist) args.push('--artist', body.artist);
+    if (body.title_karaoke) args.push('--title', body.title_karaoke);
+
+    const proc = require('child_process').spawn('/opt/homebrew/bin/python3', args, {
+      cwd: PROJECT_ROOT,
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    proc.stdout.on('data', (chunk) => {
+      const lines = chunk.toString().split('\n').filter(Boolean);
+      for (const line of lines) {
+        console.log('[karaoke/req] ' + line);
+        const m = line.match(/^\[\d+\.?\d*\] (\w+): (.+)$/);
+        if (m) {
+          const step = m[1];
+          let p = 0;
+          if (step === 'download') p = 15;
+          else if (step === 'demucs') p = 35;
+          else if (step === 'lyrics') p = 55;
+          else if (step === 'render') p = 80;
+          else if (step === 'library') p = 95;
+          else if (step === 'complete') p = 100;
+          else if (step === 'error') p = -1;
+          const job = karaokeJobs.get(videoId);
+          if (job) job.progress = p;
+        }
+      }
+    });
+
+    proc.stderr.on('data', (chunk) => {
+      console.error('[karaoke/req:stderr] ' + chunk.toString().trim());
+    });
+
+    proc.on('close', async (code) => {
+      if (code === 0) {
+        karaokeJobs.set(videoId, { status: 'complete', progress: 100, karaokeVideoId: karaokeId });
+        console.log('[karaoke/req] Complete: ' + videoId + ', adding to S8 queue');
+
+        // Add the completed karaoke video to the S8 queue
+        const playerHost = getPlayerHost();
+        if (playerHost) {
+          try {
+            const job = karaokeJobs.get(videoId);
+            await proxyRequestToS8(karaokeId, false, job?.requester || cleanName, job?.cleanTitle || cleanTitle);
+            console.log('[karaoke/req] Added ' + karaokeId + ' to S8 queue');
+          } catch (e) {
+            console.error('[karaoke/req] S8 proxy error after render: ' + e.message);
+          }
+        }
+      } else {
+        karaokeJobs.set(videoId, { status: 'failed', progress: -1, error: 'Process exited with code ' + code });
+        console.error('[karaoke/req] Failed: ' + videoId + ' (exit ' + code + ')');
+      }
+    });
+
+    proc.on('error', (err) => {
+      karaokeJobs.set(videoId, { status: 'failed', progress: -1, error: err.message });
+      console.error('[karaoke/req] Spawn error: ' + err.message);
+    });
+
+    ctx.body = { ok: true, videoId, requester: cleanName, karaokeify: true, status: 'processing', progress: 0 };
+    return;
+  }
+
+  // ── Standard (non-karaoke) request ──
+  // Persist request to MySQL via Bluehost proxy (fire-and-forget, never blocks)
   mysql.requestAdd(videoId, cleanName, cleanTitle).catch(e => {
     console.error('[requests] MySQL add error:', e.message);
   });
@@ -1150,103 +1088,6 @@ router.post('/api/queue/request', async (ctx) => {
 router.get('/api/queue/request/list', async (ctx) => {
   const map = await getSongRequestMap();
   ctx.body = { ok: true, requestMap: map, count: Object.keys(map).length };
-});
-
-// ── VLC transport routes (match React SPA paths) ──
-router.post('/api/vlc-dj/transport/play', async (ctx) => {
-  try {
-    await vlcGet('/requests/status.json?command=pl_play');
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.post('/api/vlc-dj/transport/pause', async (ctx) => {
-  try {
-    await vlcGet('/requests/status.json?command=pl_pause');
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.post('/api/vlc-dj/transport/skip-next', async (ctx) => {
-  try {
-    await vlcGet('/requests/status.json?command=pl_next');
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.post('/api/vlc-dj/transport/skip-prev', async (ctx) => {
-  try {
-    await vlcGet('/requests/status.json?command=pl_previous');
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.post('/api/vlc-dj/transport/seek', async (ctx) => {
-  try {
-    const body = ctx.request.body || {};
-    const sec = Number(body.seconds || 0);
-    await vlcGet('/requests/status.json?command=seek&val=' + Math.round(sec));
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.post('/api/vlc-dj/transport/seek-relative', async (ctx) => {
-  try {
-    const body = ctx.request.body || {};
-    const delta = Number(body.delta || 0);
-    if (delta !== 0) {
-      await vlcGet('/requests/status.json?command=seek&val=' + (delta > 0 ? '+' : '') + Math.round(delta) + 's');
-    }
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.post('/api/vlc-dj/transport/volume', async (ctx) => {
-  try {
-    const body = ctx.request.body || {};
-    // React slider sends 0-100 (percentage); VLC HTTP uses 0-256 range
-    const pct = Math.max(0, Math.min(100, Number(body.level || 50)));
-    const vlcVol = Math.round((pct / 100) * 256);
-    await vlcGet('/requests/status.json?command=volume&val=' + vlcVol);
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-// ── VLC queue routes (match React SPA paths) ──
-
-router.post('/api/vlc-dj/queue/clear', async (ctx) => {
-  try {
-    await vlcGet('/requests/status.json?command=pl_empty');
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.post('/api/vlc-dj/queue', async (ctx) => {
-  try {
-    const body = ctx.request.body || {};
-    const fp = body.path;
-    if (!fp) { ctx.status = 400; ctx.body = { ok: false, error: 'path required' }; return; }
-    await vlcGet('/requests/status.json?command=in_enqueue&input=file://' + encodeURIComponent(fp));
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.post('/api/vlc-dj/queue/:id/play', async (ctx) => {
-  try {
-    const id = ctx.params.id;
-    if (!id) { ctx.status = 400; ctx.body = { ok: false, error: 'id required' }; return; }
-    await vlcGet('/requests/status.json?command=pl_play&id=' + encodeURIComponent(id));
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
-});
-
-router.delete('/api/vlc-dj/queue/:id', async (ctx) => {
-  try {
-    const id = ctx.params.id;
-    if (!id) { ctx.status = 400; ctx.body = { ok: false, error: 'id required' }; return; }
-    await vlcGet('/requests/status.json?command=pl_delete&id=' + encodeURIComponent(id));
-    ctx.body = { ok: true };
-  } catch (e) { ctx.body = { ok: false, error: e.message }; }
 });
 
 // ── Minimal OSC bundle builder (plain UDP, no npm dep) ──
@@ -1499,7 +1340,7 @@ const cachedAbletonState = {
   masterMeterRight: 0,
   tracks: [
     { ...defaultTrack(0), name: 'Karol DJ', volume: 0.75 },
-    { ...defaultTrack(1), name: 'VLC Playlist', volume: 0.75 },
+    { ...defaultTrack(1), name: 'Background Music', volume: 0.75 },
   ],
 };
 
@@ -1629,7 +1470,7 @@ router.post('/api/ableton/tempo', (ctx) => {
 
 // Bulk mix update
 router.post('/api/ableton/mix', (ctx) => {
-  const { karaokeVol, karaokeMuted, vlcVol, vlcMuted, masterVol } = ctx.request.body || {};
+  const { karaokeVol, karaokeMuted, musicVol, musicMuted, masterVol } = ctx.request.body || {};
   // Track 0 (Karol DJ)
   if (karaokeVol != null) {
     const v = Math.max(0, Math.min(1, karaokeVol));
@@ -1640,15 +1481,15 @@ router.post('/api/ableton/mix', (ctx) => {
     sendOsc('/live/track/set/mute', 0, karaokeMuted ? 1 : 0);
     ensureTrack(0).muted = !!karaokeMuted;
   }
-  // Track 1 (VLC Playlist)
-  if (vlcVol != null) {
-    const v = Math.max(0, Math.min(1, vlcVol));
+  // Track 1 (Background Music)
+  if (musicVol != null) {
+    const v = Math.max(0, Math.min(1, musicVol));
     sendOsc('/live/track/set/volume', 1, v);
     ensureTrack(1).volume = v;
   }
-  if (vlcMuted != null) {
-    sendOsc('/live/track/set/mute', 1, vlcMuted ? 1 : 0);
-    ensureTrack(1).muted = !!vlcMuted;
+  if (musicMuted != null) {
+    sendOsc('/live/track/set/mute', 1, musicMuted ? 1 : 0);
+    ensureTrack(1).muted = !!musicMuted;
   }
   // Master
   if (masterVol != null) {
@@ -1771,11 +1612,11 @@ router.get('/api/ableton/template', (ctx) => {
         },
         {
           index: 1,
-          name: 'VLC Playlist',
+          name: 'Background Music',
           type: 'Audio',
           input: { device: 'BlackHole 2ch', channels: '3-4' },
           output: 'Master',
-          description: 'Background music from VLC via BlackHole channels 3-4',
+          description: 'Background music via BlackHole channels 3-4',
           recommendedPlugins: ['EQ Eight (slight smile curve)', 'Compressor (gentle)'],
         },
       ],
@@ -1797,19 +1638,6 @@ router.get('/api/ableton/template', (ctx) => {
   };
 });
 
-// ── Hardware routes (match React SPA paths) ──
-router.get('/api/vlc-dj/hardware/mic', (ctx) => {
-  ctx.body = { micVolume: 50, micMuted: false, vlcVolume: 75 };
-});
-
-router.post('/api/vlc-dj/hardware/mic', (ctx) => {
-  ctx.body = { ok: true };
-});
-
-router.post('/api/vlc-dj/hardware/mic/mute', (ctx) => {
-  ctx.body = { ok: true };
-});
-
 // ── Discovery endpoint (required by Android controller health check) ──
 router.get('/api/discover.json', (ctx) => {
   const lanIp = getLanIp();
@@ -1822,7 +1650,6 @@ router.get('/api/discover.json', (ctx) => {
     shareUrl: null,
     djControllerUrl: `http://${lanIp}:${PORT}/dj-controller/`,
     youtubeDjHealthUrl: `http://${lanIp}:${PORT}/api/youtube-dj/health`,
-    vlcDjHealthUrl: `http://${lanIp}:${PORT}/api/vlc-dj/status`,
   };
 });
 
@@ -2110,16 +1937,20 @@ router.get('/api/library/make-karaoke/status/:videoId', async (ctx) => {
 
 // ── Karaoke Lyrics (LRC JSON) for real-time overlay ──
 router.get('/api/library/lyrics/:videoId', async (ctx) => {
-  const videoId = ctx.params.videoId;
+  let videoId = ctx.params.videoId;
   if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
   }
 
+  // Strip -karaoke suffix if present so we don't double it in candidate paths
+  const baseId = videoId.replace(/-karaoke$/, '');
+
   // Try karaoke LRC first, then plain library, then songs
   const candidates = [
-    path.join(LIBRARY_KARAOKE_DIR, videoId + '-karaoke.lrc.json'),
-    path.join(LIBRARY_DIR, videoId + '.lrc.json'),
-    path.join(LIBRARY_SONGS_DIR, videoId + '.lrc.json'),
+    path.join(LIBRARY_KARAOKE_DIR, baseId + '-karaoke.lrc.json'),
+    path.join(LIBRARY_DIR, baseId + '.lrc.json'),
+    path.join(LIBRARY_SONGS_DIR, baseId + '.lrc.json'),
+    path.join(LIBRARY_KARAOKE_DIR, videoId + '.lrc.json'),      // exact match (handles non-standard naming)
   ];
 
   for (const p of candidates) {
@@ -2803,83 +2634,6 @@ if (fs.existsSync(djDistDir)) {
   console.log('SPA: ' + djDistDir);
 }
 
-// ── VLC auto-start: ensure VLC is running with HTTP interface ──
-// Polls the HTTP interface after launch so we don't try to talk to VLC
-// before it's actually ready (race condition on fresh boot).
-async function isVlcHttpReady() {
-  return new Promise((resolve) => {
-    const req = http.get({
-      hostname: '127.0.0.1', port: 8080,
-      path: '/requests/status.json',
-      timeout: 2000,
-      headers: { Authorization: VLC_AUTH },
-    }, (res) => { res.resume(); resolve(true); });
-    req.on('error', () => resolve(false));
-    req.on('timeout', () => { req.destroy(); resolve(false); });
-  });
-}
-
-async function ensureVlcRunning() {
-  const { spawn } = require('child_process');
-  // Quick check: is VLC's HTTP port already responding?
-  const alreadyRunning = await isVlcHttpReady();
-  if (alreadyRunning) {
-    console.log('[vlc-auto] VLC HTTP interface already running on :8080');
-    vlcAvailable = true;
-    return true;
-  }
-
-  console.log('[vlc-auto] Starting VLC with HTTP interface...');
-  const vlcPath = '/Applications/VLC.app/Contents/MacOS/VLC';
-  const vlc = spawn(vlcPath, [
-    '--extraintf', 'http',
-    '--http-password', VLC_PASSWORD,
-    '--http-host', '127.0.0.1',
-    '--http-port', '8080',
-    '--play-and-exit',
-    '--no-video-title-show',
-  ], {
-    stdio: 'ignore',
-    detached: true,
-  });
-  vlc.unref();
-  vlc.on('error', (err) => {
-    console.warn('[vlc-auto] Failed to start VLC: ' + err.message);
-    vlcAvailable = false;
-  });
-
-  // Poll VLC HTTP interface until it responds (up to 30 seconds)
-  for (let i = 0; i < 30; i++) {
-    await new Promise(r => setTimeout(r, 1000));
-    if (await isVlcHttpReady()) {
-      console.log('[vlc-auto] VLC HTTP interface ready after ' + (i + 1) + 's');
-      vlcAvailable = true;
-      return true;
-    }
-  }
-  console.warn('[vlc-auto] VLC HTTP interface did not become ready within 30s');
-  vlcAvailable = false;
-  return false;
-}
-
-// ── VLC playlist auto-restore: write all tracks to a .m3u file so VLC
-// loads them when launched. This replaces sequential HTTP enqueue (35s+)
-// with instant file-based loading. ──
-function writeVlcPlaylistFile() {
-  const playlistFile = '/tmp/karol-vlc-playlist.m3u';
-  console.log('[vlc-restore] Scanning library...');
-  const tracks = scanLibraryFolders();
-  if (!tracks.length) {
-    console.log('[vlc-restore] No tracks found, skipping');
-    try { require('fs').unlinkSync(playlistFile); } catch {}
-    return null;
-  }
-  const m3u = '#EXTM3U\n' + tracks.map(t => t.path).join('\n') + '\n';
-  require('fs').writeFileSync(playlistFile, m3u, 'utf-8');
-  console.log('[vlc-restore] Wrote ' + tracks.length + ' tracks to ' + playlistFile);
-  return playlistFile;
-}
-
 // ── mDNS broadcaster (Bonjour) — advertises _karol-dj._tcp so the
 // S24 controller finds the server without needing a hardcoded IP ──
 let mdnsProc = null;
@@ -2932,7 +2686,8 @@ function alignBlackHoleSampleRate() {
 }
 
 // ── Set Karol as macOS default output device ──
-// Without this, VLC audio goes to UMC404HD directly, bypassing BlackHole → Ableton.
+// Sets the Karol aggregate device as the system default output so audio
+// routes correctly through BlackHole → Ableton → UMC404HD.
 // This Swift binary sets Karol (Multi-Output: BlackHole 2ch + UMC404HD) as default.
 function setDefaultAudioOutput() {
   const { exec } = require('child_process');
@@ -3043,9 +2798,9 @@ server.on('connection', (socket) => {
 server.listen(PORT, '0.0.0.0', async () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
   console.log('  YouTube DJ proxy target: mDNS-discovered');
-  console.log('  VLC, Ableton, Hardware mixer routes ready');
+  console.log('  Ableton, Hardware mixer routes ready');
   alignBlackHoleSampleRate();
-  setDefaultAudioOutput();  // Set Karol as default so VLC → BlackHole → Ableton
+  setDefaultAudioOutput();  // Set Karol as default output device
   tryLoadCacheFromDisk();  // Load pre-built cache if available, avoids re-scanning
   // Auto-recover tags.json if it was lost (deferred to avoid blocking startup)
   try {
@@ -3084,78 +2839,31 @@ server.listen(PORT, '0.0.0.0', async () => {
   // so the first API request doesn't have to wait 20+ seconds for the scan.
   // Now lazy: buildLibraryCache() called on first /api/library/list request.
   // buildLibraryCache().catch(() => {});  // DISABLED — execFile kills server on macOS 26
-  // Write playlist file first, then launch VLC. After VLC is ready,
-  // load the .m3u playlist via HTTP API — this is instant for VLC
-  // (parses the file natively) vs sequential enqueue (35+ seconds).
-  const plFile = writeVlcPlaylistFile();
-  const expectedTrackCount = plFile
-    ? fs.readFileSync(plFile, 'utf-8').split('\n').filter(l => l && l[0] !== '#').length
-    : 0;
-      console.log('[vlc-restore] Expecting ' + expectedTrackCount + ' tracks');
-
-  // Fire-and-forget Ableton launch — doesn't block VLC restore or announcement
+  // Fire-and-forget Ableton launch
   launchAbletonIfNotRunning();
 
-  ensureVlcRunning().then(async (vlcOk) => {
-    let tracksLoaded = 0;
-    if (vlcOk && plFile) {
-      // Clear any stale playlist, then load the .m3u file
-      await vlcGet('/requests/status.json?command=pl_empty');
-      await vlcGet('/requests/status.json?command=in_play&input=file://' + encodeURIComponent(plFile));
-      // VLC parses .m3u asynchronously — poll until all tracks appear
-      console.log('[vlc-restore] Waiting for VLC to parse playlist...');
-      let lastItemCount = 0;
-      for (let attempt = 0; attempt < 25; attempt++) {
-        await new Promise(r => setTimeout(r, 1000));
-        const pl = await vlcGet('/requests/playlist.json');
-        const items = (pl && pl.children && pl.children[0] && pl.children[0].children) || [];
-        if (items.length !== lastItemCount) {
-          console.log('[vlc-restore] Items visible: ' + items.length + '/' + expectedTrackCount);
-          lastItemCount = items.length;
-        }
-        if (items.length >= expectedTrackCount || (items.length >= 10 && items.length === lastItemCount && attempt > 5)) {
-          await vlcGet('/requests/status.json?command=pl_pause');
-          tracksLoaded = items.length;
-          console.log('[vlc-restore] Tracks loaded: ' + tracksLoaded + ', paused');
-          break;
-        }
-      }
-      if (!tracksLoaded) {
-        console.warn('[vlc-restore] Playlist still incomplete after polling — may need manual reload');
-      }
+  // ── Audio cue: announce readiness via macOS 'say' ──
+  const parts = [];
+  // Include library info from the pre-loaded disk cache
+  let videoCount = 0;
+  try {
+    if (fs.existsSync(CACHE_FILE)) {
+      videoCount = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')).count || 0;
     }
+  } catch {}
+  if (videoCount) {
+    parts.push(videoCount + ' videos in library');
+  }
 
-    // ── Audio cue: announce readiness via macOS 'say' ──
-    // Build a status message reflecting what actually came up.
-    const parts = [];
-    if (vlcOk && tracksLoaded) {
-      parts.push(tracksLoaded + ' tracks loaded');
-    } else if (vlcOk) {
-      parts.push('VLC running, playlist loading');
+  const announcement = 'Karol server is running. ' + (parts.length ? parts.join('. ') + '.' : '');
+  const { exec } = require('child_process');
+  exec('say "' + announcement.replace(/"/g, "'") + '"', (err) => {
+    if (err) {
+      console.warn('[announce] say failed: ' + err.message);
+      setTimeout(() => { exec('say "Karol ready"', () => {}); }, 2000);
     } else {
-      parts.push('VLC not available');
+      console.log('[announce] ' + announcement);
     }
-    // Include library info from the pre-loaded disk cache
-    let videoCount = 0;
-    try {
-      if (fs.existsSync(CACHE_FILE)) {
-        videoCount = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')).count || 0;
-      }
-    } catch {}
-    if (videoCount) {
-      parts.push(videoCount + ' videos in library');
-    }
-
-    const announcement = 'Karol server is running. ' + parts.join('. ') + '.';
-    const { exec } = require('child_process');
-    exec('say "' + announcement.replace(/"/g, "'") + '"', (err) => {
-      if (err) {
-        console.warn('[announce] say failed: ' + err.message);
-        setTimeout(() => { exec('say "Karol ready"', () => {}); }, 2000);
-      } else {
-        console.log('[announce] ' + announcement);
-      }
-    });
   });
 });
 
