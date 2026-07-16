@@ -298,33 +298,53 @@ async function resolveQueuePlaceholderTitles(queueBody) {
   const toResolve = [];
   for (const item of queueBody.queue) {
     if (!item || !item.title) continue;
-    // Matches placeholder format: "YouTube: <videoId>" or bare video ID
-    const placeholder = item.title.startsWith('YouTube: ') ? item.title.slice(9).trim() :
-      (item.title === item.videoId ? item.videoId : null);
-    if (!placeholder) continue;
+    // Matches placeholder formats: "YouTube: <videoId>", "Loading title...", or bare video ID
+    const isPlaceholder = item.title.startsWith('YouTube: ') || item.title.startsWith('Loading title') || item.title === item.videoId;
+    if (!isPlaceholder) continue;
+    // Use videoId from the queue item (may include -karaoke suffix)
+    const lookupId = item.videoId || '';
     // Check cache first
-    if (titleResolutionCache.has(placeholder)) {
-      item.title = titleResolutionCache.get(placeholder);
+    if (titleResolutionCache.has(lookupId)) {
+      item.title = titleResolutionCache.get(lookupId);
       continue;
     }
-    toResolve.push({ item, videoId: placeholder });
+    toResolve.push({ item, videoId: lookupId });
   }
 
   if (toResolve.length === 0) return queueBody;
 
-  console.log(`[youtube-dj proxy] Resolving ${toResolve.length} queue titles via oEmbed...`);
-  // Resolve in parallel — each with its own timeout
+  // Load tags for local title resolution
+  let tags = {};
+  try { tags = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8')); } catch {}
+
+  console.log(`[youtube-dj proxy] Resolving ${toResolve.length} queue titles (local tags + oEmbed fallback)...`);
+  // Resolve in parallel — check local tags first, fall back to oEmbed
   await Promise.all(toResolve.map(({ item, videoId }) =>
     (async () => {
       try {
+        // Check local tags (includes -karaoke suffix)
+        const localMeta = tags[videoId];
+        if (localMeta && localMeta.title) {
+          item.title = localMeta.title;
+          titleResolutionCache.set(videoId, localMeta.title);
+          return;
+        }
+        // Strip -karaoke for oEmbed lookup
+        const cleanId = videoId.replace(/-karaoke$/, '');
+        if (titleResolutionCache.has(cleanId)) {
+          item.title = titleResolutionCache.get(cleanId);
+          titleResolutionCache.set(videoId, titleResolutionCache.get(cleanId));
+          return;
+        }
         const res = await fetch(
-          `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+          `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${cleanId}&format=json`,
           { signal: AbortSignal.timeout(TITLE_RESOLVE_TIMEOUT) }
         );
         if (res.ok) {
           const json = await res.json();
           const realTitle = json.title || item.title;
           titleResolutionCache.set(videoId, realTitle);
+          titleResolutionCache.set(cleanId, realTitle);
           item.title = realTitle;
           console.log(`[youtube-dj proxy] Resolved title for ${videoId}: ${realTitle.slice(0, 50)}`);
         } else {
@@ -445,7 +465,7 @@ function proxyYouTubeToPlayer(ctx) {
 
         // Enrich queue items with real titles (resolve YouTube: <id> placeholders via oEmbed)
         if (ctx.method === 'GET' && ctx.path === '/api/youtube-dj/queue' && parsed && parsed.queue && parsed.queue.length > 0) {
-          const placeholderCount = parsed.queue.filter(item => item.title && (item.title.startsWith('YouTube: ') || item.title === item.videoId)).length;
+          const placeholderCount = parsed.queue.filter(item => item.title && (item.title.startsWith('YouTube: ') || item.title.startsWith('Loading title') || item.title === item.videoId)).length;
           console.log(`[youtube-dj proxy] Queue title resolution: ${placeholderCount} placeholders out of ${parsed.queue.length} items`);
           resolveQueuePlaceholderTitles(parsed).then((enriched) => settle(res.statusCode, enriched));
         } else {
