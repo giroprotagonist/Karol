@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // Karol API server - no TypeScript, no Electron deps
 
-// ── Safety net: never let a child-process crash take down the server ──
+// ── Crash guard: exit so launchd restarts us. Do NOT swallow errors. ──
 process.on('uncaughtException', (err) => {
   console.error('[fatal] Uncaught:', err.message);
+  console.error(err.stack);
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[fatal] Unhandled rejection:', reason);
+  if (reason && reason.stack) console.error(reason.stack);
+  process.exit(1);
 });
 
 // ── Server uptime tracking (for health endpoint) ──
@@ -2779,36 +2783,6 @@ function lockUmcVolume() {
   );
 }
 
-// ── Ableton auto-launch: opens the Karol template if Ableton isn't
-// already running. Fire-and-forget — the audio announcement doesn't wait. ──
-function launchAbletonIfNotRunning() {
-  const { execFile, spawn } = require('child_process');
-
-  const template = path.join(os.homedir(), 'Music', 'Ableton', 'User Library', 'Templates', 'Karol Live Set.als');
-  if (!fs.existsSync(template)) {
-    console.warn('[ableton] Template not found: ' + template);
-    return;
-  }
-
-  // Check if Ableton is running (async, non-blocking)
-  execFile('pgrep', ['-x', 'Live'], { timeout: 2000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' }, (err, stdout) => {
-    if (!err && (stdout || '').trim()) {
-      console.log('[ableton] Already running (pid ' + (stdout || '').trim().split('\n')[0] + ') — skipping launch');
-      return;
-    }
-    // Not running — launch
-    console.log('[ableton] Launching with Karol template...');
-    const ableton = spawn('open', [
-      '-a', 'Ableton Live 11 Suite',
-      template,
-    ], { stdio: 'ignore', detached: true });
-    ableton.unref();
-    ableton.on('error', (err) => {
-      console.warn('[ableton] Failed: ' + err.message);
-    });
-  });
-}
-
 const server = http.createServer(app.callback());
 server.maxConnections = 200;  // Prevent connection starvation from Firefox polling
 server.timeout = 10000;       // Kill idle connections after 10s
@@ -2867,8 +2841,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   // so the first API request doesn't have to wait 20+ seconds for the scan.
   // Now lazy: buildLibraryCache() called on first /api/library/list request.
   // buildLibraryCache().catch(() => {});  // DISABLED — execFile kills server on macOS 26
-  // Fire-and-forget Ableton launch
-  launchAbletonIfNotRunning();
+
 
   // ── Audio cue: announce readiness via macOS 'say' ──
   const parts = [];
@@ -2898,19 +2871,4 @@ server.listen(PORT, '0.0.0.0', async () => {
 process.on('SIGINT', () => { stopMdnsBroadcaster(); server.close(() => process.exit(0)); });
 process.on('SIGTERM', () => { stopMdnsBroadcaster(); server.close(() => process.exit(0)); });
 
-// Crash guards — log and stay alive, don't let a single unhandled error kill the server.
-// launchd/crontab restart on exit, but preventing the crash in the first place avoids
-// unnecessary downtime and produces cleaner logs for diagnosis.
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[crash-guard] Unhandled Promise Rejection:', reason);
-  if (reason && reason.stack) console.error(reason.stack);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[crash-guard] Uncaught Exception (' + err.name + '):', err.message);
-  if (err.stack) console.error(err.stack);
-  // Don't exit — let the event loop keep running. Only exit on truly
-  // unrecoverable errors (e.g., EADDRINUSE handled at listen time).
-});
-process.on('uncaughtExceptionMonitor', (err, origin) => {
-  console.error('[crash-guard] Uncaught Exception (' + origin + '):', err.message);
-});
+
