@@ -67,16 +67,14 @@ for (const dir of scanDirs) {
       ? base.split('.')[0].replace(/\.f\d+$/, '')
       : base.replace(/\.f\d+$/, '');
     let videoIdFromFile = null;
-    if (downloadedVideoIds.has(vid)) videoIdFromFile = vid;
-    // Handle karaoke variants: {videoId}-karaoke.mp4
-    else if (vid.endsWith('-karaoke')) {
-      const baseVid = vid.slice(0, -8);  // strip '-karaoke' suffix (8 chars)
-      if (downloadedVideoIds.has(baseVid)) videoIdFromFile = baseVid;
+    if (vid.endsWith('-karaoke')) {
+      // Strip '-karaoke' suffix (8 chars) — karaoke variant of a base video
+      videoIdFromFile = vid.slice(0, -8);
+    } else {
+      videoIdFromFile = vid;
     }
-    else if (extMatch[1] === 'vtt') {
-      const m = base.match(/[.-]([A-Za-z0-9_-]{10,12})$/);
-      if (m && downloadedVideoIds.has(m[1])) videoIdFromFile = m[1];
-    }
+    // Index ALL files that exist on disk — the archive only tracks download status,
+    // it doesn't gate whether a file is a valid library entry
     if (!videoIdFromFile) continue;
 
     const entry = ensure(videoIdFromFile);
@@ -97,7 +95,7 @@ for (const dir of scanDirs) {
 }
 
 const videos = [];
-for (const videoId of downloadedVideoIds) {
+for (const videoId of Object.keys(fileMap)) {
   const f = fileMap[videoId] || { size: 0, subs: [], meta: null };
   // Sanitize title: strip control chars and escape backslashes that would break JSON
   const rawTitle = (f.meta?.title || videoId).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\\/g, '\\\\');
