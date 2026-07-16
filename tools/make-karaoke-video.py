@@ -158,13 +158,27 @@ def step_stem_separation(video_id: str, mp4_path: str, tmp_dir: str) -> str:
         log("demucs", "Instrumental already exists, skipping separation")
         return instrumental_path
 
-    # Demucs outputs to a subdirectory named after the model
+    # Demucs can't handle MP4 directly — extract audio to WAV first
+    audio_wav = os.path.join(tmp_dir, f"{video_id}.wav")
+    if not os.path.exists(audio_wav) or os.path.getsize(audio_wav) < 100000:
+        log("demucs", "Extracting audio to WAV for demucs...")
+        run([
+            _FFMPEG_BIN, "-y", "-i", mp4_path,
+            "-vn",               # no video
+            "-acodec", "pcm_s16le",  # 16-bit PCM WAV
+            "-ar", "44100",      # 44.1kHz
+            "-ac", "2",          # stereo
+            audio_wav,
+        ], timeout=120)
+        log("demucs", f"Audio extracted: {audio_wav}")
+
+    # Run demucs on the WAV file
     cmd_demucs = [
         sys.executable, "-m", "demucs",
         "--two-stems", "vocals",  # vocals + no_vocals (instrumental)
         "-o", str(demucs_out),
         "--filename", "{stem}.{ext}",
-        mp4_path,
+        audio_wav,
     ]
     run(cmd_demucs, timeout=600)
 
