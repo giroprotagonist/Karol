@@ -532,7 +532,7 @@ class MainActivity : AppCompatActivity() {
 				// Current: "NOW: [Requester] — [Title]"
 				if (ci in q.indices) {
 					val cur = q[ci]
-					val displayTitle = cur.title.take(70)
+					val displayTitle = sanitizeTitle(cur.title).take(70)
 					val reqName = cur.requester?.take(25)
 					sb.append("NOW: ")
 					if (!reqName.isNullOrBlank()) {
@@ -550,7 +550,7 @@ class MainActivity : AppCompatActivity() {
 					sb.append(upcoming.joinToString("     ") { item ->
 						val idx = q.indexOf(item) + 1
 						val name = item.requester?.take(18)
-						val t = item.title.take(40)
+						val t = sanitizeTitle(item.title).take(40)
 						val prefix = "#$idx "
 						if (!name.isNullOrBlank()) "$prefix$name: $t" else "$prefix$t"
 					})
@@ -563,6 +563,17 @@ class MainActivity : AppCompatActivity() {
 				delay(4000L)
 			}
 		}
+	}
+
+	/** Strip raw video IDs and YouTube fallback patterns from display titles */
+	private fun sanitizeTitle(title: String): String {
+		if (title.isBlank()) return "—"
+		// "YouTube: dQw4w9WgXcQ" — proxy didn't pass a real title
+		if (Regex("^YouTube:\\s*[a-zA-Z0-9_-]{11}$").matches(title)) return "Loading title..."
+		// Bare 11-char video ID
+		if (Regex("^[a-zA-Z0-9_-]{11}$").matches(title)) return "Loading title..."
+		// "Loading title..." is already our own placeholder — keep it
+		return title
 	}
 
 	private fun enterImmersiveMode() {

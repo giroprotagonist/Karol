@@ -502,7 +502,9 @@ class QueueEngine(context: Context) {
 
 	fun addFromUrl(url: String, action: String, requester: String? = null, songTitle: String? = null): String? {
 		val videoId = extractVideoId(url) ?: return null
-		val displayTitle = songTitle ?: "YouTube: $videoId"
+		// Never show a raw video ID — use a loading placeholder that gets enriched later
+		val displayTitle = songTitle?.takeIf { it.isNotBlank() && !it.startsWith("YouTube:") }
+			?: "Loading title..."
 		val item =
 			QueueItem(
 				id = "manual-${System.currentTimeMillis()}-$videoId",

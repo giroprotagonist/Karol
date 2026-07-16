@@ -668,6 +668,31 @@ app.use(async (ctx, next) => {
           console.log('[proxy] Pre-emptively downloading video for S8: ' + videoId);
           downloadVideo(videoId).catch((e) => console.warn('[proxy] Pre-download failed: ' + e.message));
         }
+        // Enrich the request body with the real song title from our library metadata
+        // so the S8 marquee never shows a raw video ID
+        if (!ctx.request.body.title) {
+          try {
+            const infoPath = path.join(getDownloadDir(videoId), videoId + '.info.json');
+            if (!fs.existsSync(infoPath)) {
+              // Try karaoke dir
+              const altPath = path.join(LIBRARY_KARAOKE_DIR, videoId + '.info.json');
+              if (fs.existsSync(altPath)) {
+                const info = JSON.parse(fs.readFileSync(altPath, 'utf8'));
+                if (info.title) ctx.request.body.title = info.title;
+              }
+            } else {
+              const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+              if (info.title) ctx.request.body.title = info.title;
+            }
+          } catch {}
+          // Fallback: check tags.json
+          if (!ctx.request.body.title) {
+            try {
+              const tags = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
+              if (tags[videoId]?.title) ctx.request.body.title = tags[videoId].title;
+            } catch {}
+          }
+        }
       }
     }
 
@@ -1088,7 +1113,7 @@ router.post('/api/queue/request', async (ctx) => {
     ctx.body = { ok: false, error: 'name is required' };
     return;
   }
-  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400;
     ctx.body = { ok: false, error: 'invalid videoId' };
     return;
@@ -1806,7 +1831,7 @@ router.get('/api/discover.json', (ctx) => {
 // Metadata: returns info.json data for a video. Triggers background download if not available.
 router.get('/api/library/metadata/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
   }
   const meta = getVideoMetadata(videoId);
@@ -1822,7 +1847,7 @@ router.get('/api/library/metadata/:videoId', async (ctx) => {
 // Prioritize a video for immediate download (foreground priority)
 router.post('/api/library/download-now', async (ctx) => {
   const { videoId } = ctx.request.body || {};
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
   }
   const mp4 = getVideoPath(videoId);
@@ -1953,7 +1978,7 @@ router.post('/api/library/add-video', async (ctx) => {
 // Check download status
 router.get('/api/library/download-status/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
   }
 
@@ -2064,7 +2089,7 @@ router.post('/api/library/make-karaoke', async (ctx) => {
 // Check karaoke job status
 router.get('/api/library/make-karaoke/status/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
   }
 
@@ -2086,7 +2111,7 @@ router.get('/api/library/make-karaoke/status/:videoId', async (ctx) => {
 // ── Karaoke Lyrics (LRC JSON) for real-time overlay ──
 router.get('/api/library/lyrics/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
   }
 
@@ -2116,7 +2141,7 @@ router.get('/api/library/lyrics/:videoId', async (ctx) => {
 // within seconds. No waiting for full download + transfer.
 router.get('/api/library/stream/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
   }
   const mp4 = getVideoPath(videoId);
@@ -2184,7 +2209,7 @@ router.get('/api/library/stream/:videoId', async (ctx) => {
 
 router.get('/api/library/file/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
   }
   const mp4 = getVideoPath(videoId);
@@ -2215,7 +2240,7 @@ router.get('/api/library/file/:videoId', async (ctx) => {
 // Quick status check: is the video downloaded and ready?
 router.get('/api/library/status/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
   }
   const ready = fs.existsSync(getVideoPath(videoId));
@@ -2413,7 +2438,7 @@ router.get('/api/library/scan', async (ctx) => {
 // ── Delete a video from the library ──
 router.delete('/api/library/video/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
   }
 
@@ -2501,13 +2526,88 @@ function loadTags() {
       return normalized;
     }
   } catch (e) { console.error('[library/tags] load error:', e.message); }
-  return {};
+  // Auto-recover: if tags.json is empty or has < 10 entries, rebuild from disk
+  // (delayed to avoid blocking startup; tags will be enriched asynchronously)
+  const tags = {};
+  if (!_rebuildTagsInFlight) {
+    try {
+      // Check archive count for comparison
+      let archiveCount = 0;
+      try {
+        if (fs.existsSync(ARCHIVE_PATH)) {
+          archiveCount = fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n').filter(Boolean).length;
+        }
+      } catch (_) {}
+      if (archiveCount > 10 && _rebuildTagsInFlight === null) {
+        // Trigger rebuild in background (don't await - let loadTags return empty)
+        setTimeout(() => rebuildTagsFromDisk(), 5000);
+      }
+    } catch (_) {}
+  }
+  return tags;
 }
 
 function saveTags(tags) {
   try {
     fs.writeFileSync(TAGS_PATH, JSON.stringify(tags, null, 2), 'utf8');
   } catch (e) { console.error('[library/tags] save error:', e.message); }
+}
+
+// Rebuild tags.json from info.json files on disk.
+// Called automatically when tags.json is empty or has far fewer entries
+// than the download archive (data loss recovery).
+let _rebuildTagsInFlight = null;
+function rebuildTagsFromDisk() {
+  if (_rebuildTagsInFlight) return _rebuildTagsInFlight;
+  _rebuildTagsInFlight = (async () => {
+    const startTime = Date.now();
+    console.log('[library/tags] Rebuilding tags.json from info.json files ...');
+    try {
+      const tags = loadTags();
+      let added = 0;
+      // Scan all library search dirs for info.json files
+      for (const dir of LIBRARY_SEARCH_DIRS) {
+        try {
+          if (!fs.existsSync(dir)) continue;
+          const files = fs.readdirSync(dir);
+          for (const f of files) {
+            if (!f.endsWith('.info.json') || f.startsWith('._')) continue;
+            const videoId = f.replace('.info.json', '');
+            if (tags[videoId]) continue; // already tagged
+            try {
+              const info = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+              const title = (info.title || '').toLowerCase();
+              const isKaraoke = /karaoke|instrumental|lyrics?|cover\b|backing.track|sing.along/i.test(title)
+                || videoId.endsWith('-karaoke')
+                || dir.includes('karaoke');
+              const isSong = dir.includes('songs');
+              const autoTag = isKaraoke ? 'karaoke' : (isSong ? 'music' : 'music');
+              tags[videoId] = {
+                tag: autoTag,
+                year: (info.upload_date || '').slice(0, 4),
+                artist: info.uploader || '',
+                source: 'rebuilt-from-info.json'
+              };
+              added++;
+            } catch (e) { /* skip corrupted info.json */ }
+          }
+        } catch (e) { /* skip unreadable dirs */ }
+      }
+      if (added > 0) {
+        saveTags(tags);
+        console.log(`[library/tags] Rebuilt ${added} entries in ${Date.now() - startTime}ms (total: ${Object.keys(tags).length})`);
+        // Invalidate library cache so next request picks up new tags
+        __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
+      } else {
+        console.log('[library/tags] No new entries to rebuild');
+      }
+    } catch (e) {
+      console.error('[library/tags] Rebuild failed:', e.message);
+    } finally {
+      _rebuildTagsInFlight = null;
+    }
+  })();
+  return _rebuildTagsInFlight;
 }
 
 // Sync tags to MySQL (deferred background task, avoid blocking startup)
@@ -2545,6 +2645,12 @@ function scheduleTagsSyncToMySQL() {
 // On startup, schedule a deferred sync (auto-detects if needed)
 scheduleTagsSyncToMySQL();
 
+// Manual trigger to rebuild tags from info.json files
+router.post('/api/library/tags/rebuild', async (ctx) => {
+  rebuildTagsFromDisk();
+  ctx.body = { ok: true, message: 'Tags rebuild started' };
+});
+
 router.get('/api/library/tags', async (ctx) => {
   ctx.body = { ok: true, tags: loadTags() };
 });
@@ -2553,7 +2659,7 @@ router.post('/api/library/tags', async (ctx) => {
   const body = ctx.request.body || {};
   const videoId = body.videoId;
   const tag = body.tag;
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
   }
   if (!tag || (tag !== 'karaoke' && tag !== 'music' && tag !== 'song')) {
@@ -2941,6 +3047,20 @@ server.listen(PORT, '0.0.0.0', async () => {
   alignBlackHoleSampleRate();
   setDefaultAudioOutput();  // Set Karol as default so VLC → BlackHole → Ableton
   tryLoadCacheFromDisk();  // Load pre-built cache if available, avoids re-scanning
+  // Auto-recover tags.json if it was lost (deferred to avoid blocking startup)
+  try {
+    const tags = loadTags();
+    let archiveCount = 0;
+    try {
+      if (fs.existsSync(ARCHIVE_PATH)) {
+        archiveCount = fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n').filter(Boolean).length;
+      }
+    } catch (_) {}
+    if (archiveCount > 10 && Object.keys(tags).length < archiveCount * 0.1) {
+      console.log('[startup] Tags.json has ' + Object.keys(tags).length + ' entries but archive has ' + archiveCount + ' — rebuilding from info.json files ...');
+      rebuildTagsFromDisk();
+    }
+  } catch (_) {}
   // Seed mDNS player cache from persisted file for instant cold-start connectivity
   try {
     const cached = fs.readFileSync('/tmp/karol-player-mdns.txt', 'utf8').trim();
