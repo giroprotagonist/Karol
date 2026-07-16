@@ -16,6 +16,8 @@
 	<true/>
 	<key>RunAtLoad</key>
 	<true/>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
 	<key>StandardOutPath</key>
 	<string>/tmp/karol-api.out</string>
 	<key>StandardErrorPath</key>
