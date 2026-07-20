@@ -1,0 +1,50 @@
+{
+  "name": "karol-electron",
+  "version": "1.0.0",
+  "private": true,
+  "author": "Karol PDX",
+  "description": "Karol Karaoke DJ \u2014 one Mac to rule them all",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "npm run install-api-deps && npx electron-builder --mac --dir && cp -R ../api-server/node_modules dist/mac-arm64/Karol.app/Contents/Resources/api-server/ && cp ../api-server/package.json dist/mac-arm64/Karol.app/Contents/Resources/api-server/ && /usr/libexec/PlistBuddy -c 'Delete :ElectronAsarIntegrity' dist/mac-arm64/Karol.app/Contents/Info.plist 2>/dev/null; true",
+    "build:mac": "electron-builder --mac",
+    "build:full": "npm run install-api-deps && npx electron-builder --mac --dir && cp -R ../api-server/node_modules dist/mac-arm64/Karol.app/Contents/Resources/api-server/ && cp ../api-server/package.json dist/mac-arm64/Karol.app/Contents/Resources/api-server/ && /usr/libexec/PlistBuddy -c 'Delete :ElectronAsarIntegrity' dist/mac-arm64/Karol.app/Contents/Info.plist 2>/dev/null; true",
+    "install-api-deps": "cd /tmp && rm -rf karol-api-deps && mkdir karol-api-deps && cp /Users/macdonk/Documents/GitHub/Karol/api-server/package.json karol-api-deps/ && cd karol-api-deps && npm install --omit=dev --no-optional && cp -R node_modules /Users/macdonk/Documents/GitHub/Karol/api-server/"
+  },
+  "build": {
+    "appId": "com.karol.dj",
+    "productName": "Karol",
+    "mac": {
+      "category": "public.app-category.music",
+      "target": "dmg",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSQuitAlwaysKeepsWindows": false
+      }
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "library.js",
+      "player-state.js",
+      "downloads.js",
+      "requests.js",
+      "controller.html",
+      "player.html",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../api-server",
+        "to": "api-server"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^26.15.3"
+  }
+}

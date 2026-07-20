@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Extended verify for Deskreen Direct Player: error injection, skip chain, reconnect probe.
+# Extended verify for Karol Direct Player: error injection, skip chain, reconnect probe.
 set -euo pipefail
 
-HOST="${DESKREEN_HOST:-127.0.0.1}"
-PORT="${DESKREEN_PORT:-3131}"
+HOST="${KAROL_HOST:-127.0.0.1}"
+PORT="${KAROL_PORT:-3131}"
 BASE="http://${HOST}:${PORT}"
 PLAYLIST_URL="${PLAYLIST_URL:-https://www.youtube.com/playlist?list=PLRxCSLihrLO4}"
 
-echo "=== Deskreen Direct Player extended verify (${BASE}) ==="
+echo "=== Karol Direct Player extended verify (${BASE}) ==="
 
 check_json() {
 	local path="$1"

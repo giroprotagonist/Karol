@@ -1,16 +1,16 @@
-#!/usr/bin/env node
-// Karol API server - no TypeScript, no Electron deps
+// Karol API server — library metadata HTTP API only.
+// Electron app handles all playback. This server is for future public access.
+// No mDNS, no S8 proxy, no WebSocket, no local player mode.
 
-// ── Crash guard: exit so launchd restarts us. Do NOT swallow errors. ──
+// ── Crash guard: log but NEVER exit ──
 process.on('uncaughtException', (err) => {
   console.error('[fatal] Uncaught:', err.message);
   console.error(err.stack);
-  process.exit(1);
+  // Do NOT process.exit — let the process stay alive
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('[fatal] Unhandled rejection:', reason);
-  if (reason && reason.stack) console.error(reason.stack);
-  process.exit(1);
+  console.error('[fatal] Unhandled rejection:', reason?.message || reason);
+  if (reason?.stack) console.error(reason.stack);
 });
 
 // ── Server uptime tracking (for health endpoint) ──
@@ -19,6 +19,7 @@ let activeConnections = 0;
 let peakConnections = 0;
 
 const http = require('http');
+const https = require('https');
 const Koa = require('koa');
 const cors = require('kcors');
 const Router = require('koa-router');
@@ -29,156 +30,11 @@ const path = require('path');
 const os = require('os');
 const mysql = require('./karol-mysql');
 
-const PORT = 3131;
+const PORT = parseInt(process.env.PORT, 10) || 3131;
 
-// ── mDNS Player Discovery — resolves KarolPlayer._karol-dj._tcp ──
-let _mdnsPlayerBrowser = null;
-let _mdnsPlayerHost = null; // { host, port, at: timestamp }
-const MDNS_PLAYER_TTL = 5 * 60 * 1000; // 5 min cache
-let _mdnsDiscoveryInFlight = null; // dedupe concurrent discovery calls
-
-function discoverPlayerViaMdns() {
-  if (_mdnsDiscoveryInFlight) return _mdnsDiscoveryInFlight;
-
-  _mdnsDiscoveryInFlight = (async () => {
-    // Direct resolve — skip browse, go straight to lookup
-    // This is faster and more reliable than browse-then-resolve
-    const { spawn } = require('child_process');
-    
-    try {
-      const hostInfo = await new Promise((resolve) => {
-        const proc = spawn('dns-sd', [
-          '-L', 'KarolPlayer', '_karol-dj._tcp', 'local'
-        ], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 6000 });
-        
-        let output = '';
-        proc.stdout.on('data', (chunk) => { output += chunk.toString(); });
-        
-        // The dns-sd -L is fire-and-forget (keeps running), so we need a timeout
-        setTimeout(() => {
-          try { proc.kill('SIGTERM'); } catch {}
-          const match = output.match(/reached at\s+(\S+)\.local\.:(\d+)/);
-          if (match) {
-            resolve({ host: match[1] + '.local', port: parseInt(match[2], 10) });
-          } else {
-            // Try without .local suffix — some networks resolve differently
-            const match2 = output.match(/reached at\s+(\S+):(\d+)/);
-            if (match2) resolve({ host: match2[1], port: parseInt(match2[2], 10) });
-            else resolve(null);
-          }
-        }, 3000);
-        
-        proc.on('exit', () => { resolve(null); });
-        proc.on('error', () => { resolve(null); });
-      });
-      
-      if (hostInfo) {
-        _mdnsPlayerHost = { host: hostInfo.host, port: hostInfo.port || 3131, at: Date.now() };
-        // Persist to disk cache for cold-start fallback
-        try { fs.writeFileSync('/tmp/karol-player-mdns.txt', hostInfo.host + '\n'); } catch {}
-        return hostInfo.host;
-      }
-    } catch {}
-    
-    // mDNS failed — try persisted cache from last successful discovery
-    try {
-      const cached = fs.readFileSync('/tmp/karol-player-mdns.txt', 'utf8').trim();
-      if (cached && cached.length > 3) {
-        _mdnsPlayerHost = { host: cached, port: 3131, at: Date.now() }; // fresh TTL, re-verify in background
-        // Kick off background refresh to get the real IP behind .local
-        refreshPlayerHostAsync().catch(() => {});
-        return cached;
-      }
-    } catch {}
-    
-    return null;
-  })().then(result => {
-    _mdnsDiscoveryInFlight = null;
-    return result;
-  }).catch(err => {
-    _mdnsDiscoveryInFlight = null;
-    console.warn('[mdns] Discovery failed: ' + err.message);
-    return null;
-  });
-  
-  return _mdnsDiscoveryInFlight;
-}
-
-function getPlayerHost() {
-  if (process.env.PLAYER_HOST) return process.env.PLAYER_HOST;
-  
-  // Fresh mDNS cache — return immediately
-  if (_mdnsPlayerHost && Date.now() - _mdnsPlayerHost.at < MDNS_PLAYER_TTL)
-    return _mdnsPlayerHost.host;
-  
-  // TTL expired but we still have a cached hostname — return it and refresh in background.
-  // NEVER return null here; that causes all proxy routes to serve empty stubs
-  // and the queue/songs disappear even though the S8 is still reachable.
-  if (_mdnsPlayerHost) {
-    // Prolong TTL so we don't keep re-triggering this for every request
-    _mdnsPlayerHost.at = Date.now();
-    refreshPlayerHostAsync().catch(() => {});
-    return _mdnsPlayerHost.host;
-  }
-  
-  // No in-memory cache at all — try disk cache as last resort
-  try {
-    const cached = fs.readFileSync('/tmp/karol-player-mdns.txt', 'utf8').trim();
-    if (cached && cached.length > 3) {
-      _mdnsPlayerHost = { host: cached, port: 3131, at: Date.now() };
-      refreshPlayerHostAsync().catch(() => {});
-      return cached;
-    }
-  } catch {}
-  
-  // No cached hostname anywhere — trigger discovery but return null
-  // (first ever call or cache file deleted)
-  refreshPlayerHostAsync().catch(() => {});
-  return null;
-}
-
-function getPlayerPort() {
-  if (process.env.PLAYER_PORT) return parseInt(process.env.PLAYER_PORT, 10);
-  if (_mdnsPlayerHost) return _mdnsPlayerHost.port || 3131;
-  return 3131;
-}
-
-// Async refresh the player host via mDNS
-function refreshPlayerHostAsync() {
-  return discoverPlayerViaMdns().then(host => {
-    if (host) console.log('[mdns] Discovered player at ' + host);
-    else console.warn('[mdns] No KarolPlayer found via mDNS');
-    return host;
-  });
-}
-
-// Player down tracking — fast-fail proxy when S8 has been unreachable
-let playerRecentlyDown = false;
-let playerDownSince = 0;
-const PLAYER_DOWN_COOLDOWN_MS = 30_000; // 30s cooldown before retrying proxy
-
-function markPlayerDown() {
-  if (!playerRecentlyDown) {
-    playerRecentlyDown = true;
-    playerDownSince = Date.now();
-    console.log('[proxy] Player marked as DOWN — fast-failing proxy for ' + (PLAYER_DOWN_COOLDOWN_MS / 1000) + 's');
-    // Trigger background rediscovery (tablet IP may have changed)
-    refreshPlayerHostAsync().then((ip) => {
-      if (ip && playerRecentlyDown) {
-        // IP still resolves but player is still down — try again after cooldown
-        console.log('[proxy] Player IP resolves to ' + ip + ' but still unreachable');
-      }
-    });
-  }
-}
-
-function markPlayerUp() {
-  if (playerRecentlyDown) {
-    console.log('[proxy] Player recovered — re-enabling proxy');
-    playerRecentlyDown = false;
-    playerDownSince = 0;
-  }
-}
+// ── Player host stub (no mDNS needed — Electron handles playback) ──
+function getPlayerHost() { return 'localhost'; }
+function getPlayerPort() { return 3131; }
 
 // ── Port conflict: try to listen directly. If the port is occupied
 // by a stale instance, we exit so launchd can restart us cleanly.
@@ -210,6 +66,7 @@ app.use(async (ctx, next) => {
     const uptime = Math.floor((Date.now() - SERVER_START_TIME) / 1000);
     const mem = process.memoryUsage();
     ctx.type = 'application/json';
+    ctx.set('Cache-Control', 'public, max-age=10');
     ctx.body = JSON.stringify({
       ok: true,
       uptime,
@@ -218,8 +75,7 @@ app.use(async (ctx, next) => {
       memoryTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
       connections: activeConnections,
       peakConnections,
-      playerHost: getPlayerHost() || 'not-discovered',
-      playerRecentlyDown,
+      playerHost: getPlayerHost() || 'localhost',
     });
     return;
   }
@@ -292,431 +148,70 @@ function findCoverPath(filePath) {
   return null;
 }
 
-// ── Title resolution cache (YouTube: <id> → real title) ──
-const titleResolutionCache = new Map(); // videoId => title
-const TITLE_RESOLVE_TIMEOUT = 3000;
-
-/** Resolve "YouTube: <id>" placeholder titles in a queue response via YouTube oEmbed. */
-async function resolveQueuePlaceholderTitles(queueBody) {
-  if (!queueBody || !queueBody.queue) return queueBody;
-  const toResolve = [];
-  for (const item of queueBody.queue) {
-    if (!item || !item.title) continue;
-    // Matches placeholder formats: "YouTube: <videoId>", "Loading title...", or bare video ID
-    const isPlaceholder = item.title.startsWith('YouTube: ') || item.title.startsWith('Loading title') || item.title === item.videoId;
-    if (!isPlaceholder) continue;
-    // Use videoId from the queue item (may include -karaoke suffix)
-    const lookupId = item.videoId || '';
-    // Check cache first
-    if (titleResolutionCache.has(lookupId)) {
-      item.title = titleResolutionCache.get(lookupId);
-      continue;
-    }
-    toResolve.push({ item, videoId: lookupId });
-  }
-
-  if (toResolve.length === 0) return queueBody;
-
-  // Load tags for local title resolution
-  let tags = {};
-  try { tags = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8')); } catch {}
-
-  console.log(`[youtube-dj proxy] Resolving ${toResolve.length} queue titles (local tags + oEmbed fallback)...`);
-  // Resolve in parallel — check local tags first, fall back to oEmbed
-  await Promise.all(toResolve.map(({ item, videoId }) =>
-    (async () => {
-      try {
-        // Check local tags (includes -karaoke suffix)
-        const localMeta = tags[videoId];
-        if (localMeta && localMeta.title) {
-          item.title = localMeta.title;
-          titleResolutionCache.set(videoId, localMeta.title);
-          return;
-        }
-        // Strip -karaoke for oEmbed lookup
-        const cleanId = videoId.replace(/-karaoke$/, '');
-        if (titleResolutionCache.has(cleanId)) {
-          item.title = titleResolutionCache.get(cleanId);
-          titleResolutionCache.set(videoId, titleResolutionCache.get(cleanId));
-          return;
-        }
-        const res = await fetch(
-          `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${cleanId}&format=json`,
-          { signal: AbortSignal.timeout(TITLE_RESOLVE_TIMEOUT) }
-        );
-        if (res.ok) {
-          const json = await res.json();
-          const realTitle = json.title || item.title;
-          titleResolutionCache.set(videoId, realTitle);
-          titleResolutionCache.set(cleanId, realTitle);
-          item.title = realTitle;
-          console.log(`[youtube-dj proxy] Resolved title for ${videoId}: ${realTitle.slice(0, 50)}`);
-        } else {
-          console.error(`[youtube-dj proxy] oEmbed ${res.status} for ${videoId}`);
-        }
-      } catch (err) {
-        // Keep placeholder on failure; will retry on next poll
-        console.error(`[youtube-dj proxy] oEmbed failed for ${videoId}: ${err.message || err}`);
-      }
-    })()
-  ));
-
-  return queueBody;
-}
-
-// ── YouTube DJ proxy middleware ───────────────────────────────────────
-
-// ── YouTube response cache (serve stale on S8 unreachable) ──
-const youtubeCache = new Map(); // path -> { body, status, type, timestamp }
-const YOUTUBE_CACHE_TTL = 30000; // 30 seconds stale-data window
-
-const CACHEABLE_PATHS = new Set([
-  '/api/youtube-dj/health',
-  '/api/youtube-dj/now-playing',
-]);
-
-function getCachedYoutube(path) {
-  const entry = youtubeCache.get(path);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > YOUTUBE_CACHE_TTL) {
-    youtubeCache.delete(path);
-    return null;
-  }
-  return entry;
-}
-
-function setCachedYoutube(path, status, body, type) {
-  youtubeCache.set(path, { status, body, type, timestamp: Date.now() });
-}
-
-// Dedicated agent for S8 proxy — no keep-alive, tight limits to avoid leak accumulation
-const playerAgent = new http.Agent({ keepAlive: false, maxSockets: 50, maxFreeSockets: 0, timeout: 5000 });
-
-function proxyYouTubeToPlayer(ctx) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = (status, body, isCached) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(connectTimer);
-      try { socket && socket.removeAllListeners('error'); } catch {}
-      try { resStream && resStream.removeAllListeners('error'); } catch {}
-      try { req && req.destroy(); } catch {}  // Force close to prevent CLOSE_WAIT leaks
-      ctx.status = status;
-      if (typeof body === 'object') ctx.type = 'application/json';
-      ctx.body = body;
-      resolve();
-      // On success, cache the response for cacheable GET endpoints
-      if (!isCached && status >= 200 && status < 300 && ctx.method === 'GET' && CACHEABLE_PATHS.has(ctx.path)) {
-        setCachedYoutube(ctx.path, status, body, ctx.response && ctx.response.type);
-      }
-    };
-
-    const reqBody = ctx.request.body && Object.keys(ctx.request.body).length > 0
-      ? JSON.stringify(ctx.request.body)
-      : null;
-
-    const reqPath = ctx.path + (ctx.querystring ? '?' + ctx.querystring : '');
-
-    const reqOpts = {
-      hostname: getPlayerHost(),
-      port: getPlayerPort(),
-      path: reqPath,
-      method: ctx.method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      timeout: 3000,
-      family: 4,
-      agent: playerAgent,
-    };
-    if (reqBody) reqOpts.headers['Content-Length'] = Buffer.byteLength(reqBody);
-
-    const req = http.request(reqOpts);
-    let socket = null;
-    let resStream = null;
-
-    req.on('socket', (sock) => {
-      socket = sock;
-      socket.on('error', (err) => {
-        console.error(`[youtube-dj proxy] Socket error for ${ctx.method} ${ctx.path}: ${err.message}`);
-        try { req.destroy(); } catch {}
-        settle(502, { ok: false, error: 'Player unreachable', details: err.message });
-      });
-    });
-
-    req.on('response', (res) => {
-      resStream = res;
-      let data = '';
-      res.on('error', (err) => {
-        console.error(`[youtube-dj proxy] Response error for ${ctx.method} ${ctx.path}: ${err.message}`);
-        try { req.destroy(); } catch {}
-        settle(502, { ok: false, error: 'Player response error', details: err.message });
-      });
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        // Gracefully handle tablet errors for GET endpoints that the UI polls frequently.
-        // If the tablet returns 5xx for now-playing, return a stub so the UI doesn't disconnect.
-        if (res.statusCode >= 500 && ctx.path === '/api/youtube-dj/now-playing') {
-          console.log(`[youtube-dj proxy] Tablet returned ${res.statusCode} for now-playing — returning stub`);
-          settle(200, { title: '', videoId: '', currentTime: 0, duration: 0, state: -2, error: 'Player recovering' });
-          return;
-        }
-        if (res.headers['content-type']) ctx.type = res.headers['content-type'];
-        let parsed;
-        try { parsed = JSON.parse(data); } catch { settle(res.statusCode, data); return; }
-
-        // Enrich queue items with real titles (resolve YouTube: <id> placeholders via oEmbed)
-        if (ctx.method === 'GET' && ctx.path === '/api/youtube-dj/queue' && parsed && parsed.queue && parsed.queue.length > 0) {
-          const placeholderCount = parsed.queue.filter(item => item.title && (item.title.startsWith('YouTube: ') || item.title.startsWith('Loading title') || item.title === item.videoId)).length;
-          console.log(`[youtube-dj proxy] Queue title resolution: ${placeholderCount} placeholders out of ${parsed.queue.length} items`);
-          resolveQueuePlaceholderTitles(parsed).then((enriched) => settle(res.statusCode, enriched));
-        } else {
-          settle(res.statusCode, parsed);
-        }
-      });
-    });
-
-    const connectTimer = setTimeout(() => {
-      try { req.destroy(); } catch {}
-      console.error(`[youtube-dj proxy] Connect timeout for ${ctx.method} ${ctx.path}`);
-      // Try serving from cache before returning 502
-      const cached = getCachedYoutube(ctx.path);
-      if (cached) {
-        console.log(`[youtube-dj proxy] Serving stale cache for ${ctx.path}`);
-        settle(cached.status, cached.body, true);
-      } else {
-        settle(502, { ok: false, error: 'Player connection timeout' });
-      }
-    }, 1000);
-
-    req.on('error', (err) => {
-      console.error(`[youtube-dj proxy] Error proxying ${ctx.method} ${ctx.path}: ${err.message}`);
-      // Try serving from cache before returning 502
-      const cached = getCachedYoutube(ctx.path);
-      if (cached) {
-        console.log(`[youtube-dj proxy] Serving stale cache for ${ctx.path}`);
-        settle(cached.status, cached.body, true);
-      } else {
-        settle(502, { ok: false, error: 'Player unreachable', details: err.message });
-      }
-    });
-
-    req.on('timeout', () => {
-      try { req.destroy(); } catch {}
-      console.error(`[youtube-dj proxy] Request timeout for ${ctx.method} ${ctx.path}`);
-      const cached = getCachedYoutube(ctx.path);
-      if (cached) {
-        console.log(`[youtube-dj proxy] Serving stale cache for ${ctx.path}`);
-        settle(cached.status, cached.body, true);
-      } else {
-        settle(502, { ok: false, error: 'Player request timeout' });
-      }
-    });
-
-    if (reqBody) req.write(reqBody);
-    req.end();
-  });
-}
-
-// Track whether consecutive proxy failures indicate the S8 player IP may have changed.
-let consecutiveProxyFails = 0;
-const PLAYER_DOWN_THRESHOLD = 10; // Consecutive 502s before triggering mDNS rediscovery
-
+// ── YouTube DJ real handlers (playback via Electron app) ──
+// These serve as API stubs — all playback is handled by the Karol Electron desktop app
 app.use(async (ctx, next) => {
-  if (ctx.path.startsWith('/api/youtube-dj/') || ctx.path.startsWith('/api/youtube-karaoke/')) {
-    
-    // Detect self-loop: if the proxy target host is this machine, skip proxying.
-    const targetHost = getPlayerHost();
-    const myIps = getMyIps();
-    
-    // If the player has not been discovered yet via mDNS, return stubs
-    // so the UI doesn't hang waiting for a proxy connection that will never come.
-    if (!targetHost) {
-      if (ctx.method === 'GET') {
-        if (ctx.path === '/api/youtube-dj/status' || ctx.path === '/api/youtube-dj/health') {
-          ctx.status = 200;
-          ctx.body = { ok: true, djActive: false, castConnected: false, youtubeSignedIn: false, notDiscovered: true };
-          ctx.type = 'application/json';
-          return;
-        }
-        if (ctx.path === '/api/youtube-dj/now-playing') {
-          ctx.status = 200;
-          ctx.body = { title: '', videoId: '', currentTime: 0, duration: 0, state: -2 };
-          ctx.type = 'application/json';
-          return;
-        }
-        if (ctx.path === '/api/youtube-dj/queue') {
-          ctx.status = 200;
-          ctx.body = { ok: true, queue: [], currentIndex: -1, playerState: -2 };
-          ctx.type = 'application/json';
-          return;
-        }
-        if (ctx.path === '/api/youtube-dj/playlist') {
-          ctx.status = 200;
-          ctx.body = { ok: true, config: { activePlaylistId: '', playlists: [], playlistId: '', playlistUrl: '' } };
-          ctx.type = 'application/json';
-          return;
-        }
-      }
-      ctx.status = 503;
-      ctx.body = { ok: false, error: 'Player not yet discovered — waiting for mDNS' };
-      ctx.type = 'application/json';
-      
-      // Fire-and-forget background discovery
-      refreshPlayerHostAsync().catch(() => {});
-      return;
-    }
-    
-    if (myIps.has(targetHost) || targetHost === '127.0.0.1' || targetHost === '::1' || targetHost === 'localhost') {
-      console.log(`[youtube-dj proxy] Target ${targetHost} is local — skipping proxy loop`);
-      // Return stub responses since no upstream player is available
-      if (ctx.path === '/api/youtube-dj/status' || ctx.path === '/api/youtube-dj/health') {
-        ctx.status = 200;
-        ctx.body = {
-          ok: true,
-          djActive: false,
-          castConnected: false,
-          captureReady: false,
-          showActive: false,
-          queueLength: 0,
-          currentTitle: '',
-          interstitialMessage: 'Deskreen Electron app is not running',
-          lastPlaybackError: null,
-          lastAdvanceReason: null,
-          volumeLevel: 1,
-          port: PORT,
-          hostMode: 'direct',
-          host: getLanIp(),
-          youtubeSignedIn: false,
-        };
-      } else if (ctx.path === '/api/youtube-dj/now-playing') {
-        ctx.status = 200;
-        ctx.body = { title: '', videoId: '', currentTime: 0, duration: 0, state: -2 };
-      } else if (ctx.path === '/api/youtube-dj/queue') {
-        ctx.status = 200;
-        ctx.body = { ok: true, queue: [], currentIndex: -1, playerState: -2 };
-      } else if (ctx.path === '/api/youtube-dj/playlist') {
-        ctx.status = 200;
-        ctx.body = { ok: true, config: { activePlaylistId: '', playlists: [], playlistId: '', playlistUrl: '' } };
-      } else if (ctx.path === '/api/youtube-dj/restart-show') {
-        ctx.status = 200;
-        ctx.body = { ok: true };
-      } else {
-        ctx.status = 200;
-        ctx.body = { ok: false, error: 'Deskreen Electron app is not running' };
-      }
-      ctx.type = 'application/json';
-      return;
-    }
-
-    // ── Fast-fail: if the S8 player has been unreachable recently, ──
-    // skip the proxy entirely and serve stub/cached responses.
-    // This prevents hung TCP connections from piling up when the
-    // tablet is offline.
-    if (playerRecentlyDown) {
-      const downSec = Math.floor((Date.now() - playerDownSince) / 1000);
-      // GET polling endpoints: serve stubs so the UI doesn't disconnect
-      if (ctx.method === 'GET') {
-        if (ctx.path === '/api/youtube-dj/health' || ctx.path === '/api/youtube-dj/status') {
-          ctx.status = 200;
-          ctx.body = { ok: true, djActive: false, castConnected: false, youtubeSignedIn: false, playerDown: true, playerDownSec: downSec };
-          ctx.type = 'application/json';
-          return;
-        }
-        if (ctx.path === '/api/youtube-dj/now-playing') {
-          ctx.status = 200;
-          ctx.body = { title: '', videoId: '', currentTime: 0, duration: 0, state: -2, playerDown: true };
-          ctx.type = 'application/json';
-          return;
-        }
-        if (ctx.path === '/api/youtube-dj/queue') {
-          ctx.status = 200;
-          ctx.body = { ok: true, queue: [], currentIndex: -1, playerState: -2 };
-          ctx.type = 'application/json';
-          return;
-        }
-      }
-      // POST/DELETE mutations: fast-fail with a clear error
-      // (don't queue up connections that will just time out)
-      if (ctx.method === 'POST' || ctx.method === 'DELETE') {
-        ctx.status = 503;
-        ctx.body = { ok: false, error: 'Player unavailable — retry in ' + Math.max(0, Math.ceil((PLAYER_DOWN_COOLDOWN_MS - (Date.now() - playerDownSince)) / 1000)) + 's' };
-        ctx.type = 'application/json';
-        return;
-      }
-    }
-
-    // ── Background: periodically refresh the player via mDNS ──
-    // Only trigger if the cache is really stale (> 5 min), and never
-    // on the request path — fire-and-forget in the background.
-    const now = Date.now();
-    if (!_mdnsPlayerHost || (now - _mdnsPlayerHost.at) > MDNS_PLAYER_TTL) {
-      // Fire-and-forget — don't await, don't block the request
-      refreshPlayerHostAsync().catch(() => {});
-    }
-
-    // Pre-emptively trigger download when the dashboard sends a video to the S8.
-    const isPlayNow = ctx.method === 'POST' && (ctx.path.endsWith('/play-now') || ctx.path === '/api/youtube-dj/play-now');
-    const isQueue = ctx.method === 'POST' && (ctx.path.endsWith('/queue') || ctx.path === '/api/youtube-dj/queue' || ctx.path === '/api/youtube-karaoke/queue');
-    if ((isPlayNow || isQueue) && ctx.request.body && ctx.request.body.url) {
-      const match = ctx.request.body.url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-      if (match) {
-        const videoId = match[1];
-        const mp4 = getVideoPath(videoId);
-        if (!fs.existsSync(mp4)) {
-          console.log('[proxy] Pre-emptively downloading video for S8: ' + videoId);
-          downloadVideo(videoId).catch((e) => console.warn('[proxy] Pre-download failed: ' + e.message));
-        }
-        // Enrich the request body with the real song title from our library metadata
-        // so the S8 marquee never shows a raw video ID
-        if (!ctx.request.body.title) {
-          try {
-            const infoPath = path.join(getDownloadDir(videoId), videoId + '.info.json');
-            if (!fs.existsSync(infoPath)) {
-              // Try karaoke dir
-              const altPath = path.join(LIBRARY_KARAOKE_DIR, videoId + '.info.json');
-              if (fs.existsSync(altPath)) {
-                const info = JSON.parse(fs.readFileSync(altPath, 'utf8'));
-                if (info.title) ctx.request.body.title = info.title;
-              }
-            } else {
-              const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
-              if (info.title) ctx.request.body.title = info.title;
-            }
-          } catch {}
-          // Fallback: check tags.json
-          if (!ctx.request.body.title) {
-            try {
-              const tags = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
-              if (tags[videoId]?.title) ctx.request.body.title = tags[videoId].title;
-            } catch {}
-          }
-        }
-      }
-    }
-
-    await proxyYouTubeToPlayer(ctx);
-    // Track consecutive proxy failures for ADB-based IP rediscovery.
-    if (ctx.status === 502) {
-      consecutiveProxyFails++;
-      if (consecutiveProxyFails >= PLAYER_DOWN_THRESHOLD) {
-        // Trigger async IP rediscovery (tablet IP may have changed)
-        refreshPlayerHostAsync().catch(() => {});
-        consecutiveProxyFails = 0;
-      }
-      // After 3 consecutive 502s, mark the player as down for fast-fail
-      if (consecutiveProxyFails >= 3 && !playerRecentlyDown) {
-        markPlayerDown();
-      }
-    } else if (ctx.status >= 200 && ctx.status < 500) {
-      consecutiveProxyFails = 0;
-      markPlayerUp();
-    }
-    return;
+  if (!ctx.path.startsWith('/api/youtube-dj/') && !ctx.path.startsWith('/api/youtube-karaoke/')) {
+    return next();
   }
-  await next();
+  ctx.type = 'application/json';
+
+  // Local/config routes — pass to router
+  if (ctx.path === '/api/youtube-dj/local-mode') {
+    return next();
+  }
+
+  const method = ctx.method.toUpperCase();
+  const body = (method === 'POST' || method === 'PUT') ? ctx.request.body || {} : {};
+
+  switch (ctx.path) {
+    // ── Status ──
+    case '/api/youtube-dj/status':
+    case '/api/youtube-dj/health':
+      ctx.body = { electronMode: true, status: 'online' };
+      break;
+
+    case '/api/youtube-dj/now-playing':
+      ctx.body = { electronMode: true, nowPlaying: null };
+      break;
+
+    // ── Queue read ──
+    case '/api/youtube-dj/queue':
+      if (method === 'GET') {
+        ctx.body = { electronMode: true, queue: [] };
+      } else if (method === 'POST') {
+        ctx.body = { ok: true, electronMode: true };
+      }
+      break;
+
+    case '/api/youtube-dj/play-now':
+    case '/api/youtube-dj/queue/remove':
+    case '/api/youtube-dj/queue/clear':
+    case '/api/youtube-dj/queue/reorder':
+    case '/api/youtube-dj/queue/skip-to':
+      ctx.body = { ok: true, electronMode: true };
+      break;
+
+    // ── Transport ──
+    case '/api/youtube-dj/transport/play':
+    case '/api/youtube-dj/transport/pause':
+    case '/api/youtube-dj/transport/skip-next':
+    case '/api/youtube-dj/transport/skip-prev':
+    case '/api/youtube-dj/transport/seek-relative':
+    case '/api/youtube-dj/transport/volume':
+      ctx.body = { ok: true, electronMode: true };
+      break;
+
+    // ── Karaoke API compat ──
+    case '/api/youtube-karaoke/queue/add':
+      if (method === 'POST') {
+        ctx.body = { ok: true, electronMode: true };
+      }
+      break;
+
+    default:
+      ctx.body = { ok: false, error: 'Unknown DJ endpoint: ' + ctx.path };
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -728,7 +223,7 @@ const EXTERNAL_DRIVE = '/Volumes/maxone';
 const LIBRARY_DIR = path.join(EXTERNAL_DRIVE, 'Deskreen');
 const LIBRARY_KARAOKE_DIR = path.join(LIBRARY_DIR, 'karaoke');
 const LIBRARY_SONGS_DIR = path.join(LIBRARY_DIR, 'songs');
-const DOWNLOADS_DIR = path.resolve(__dirname, '..', '..', '.deskreen', 'youtube-downloads');
+const DOWNLOADS_DIR = path.resolve(__dirname, '..', '.karol', 'youtube-downloads');
 const ARCHIVE_PATH = path.join(LIBRARY_DIR, 'youtube-download-archive.txt');
 const TAGS_PATH = path.join(LIBRARY_DIR, 'tags.json');
 const YT_DLP_PATH = '/opt/homebrew/bin/yt-dlp';
@@ -892,55 +387,26 @@ function downloadVideo(videoId) {
   });
 }
 
-// ── Song Request Queue ──
-// Persisted via MySQL on Bluehost (karol.rideyrbike.com/db.php).
-// Local cache for fast lookups; refreshed on startup and periodically.
-
-let songRequestCache = {}; // videoId → requester_name (lazy-loaded)
-
-async function getSongRequestMap() {
-  try {
-    const map = await mysql.requestMap();
-    if (map) { songRequestCache = map; return map; }
-  } catch (e) { console.error('[requests] MySQL fetch error:', e.message); }
-  return songRequestCache || {};
-}
-
-// Pre-load on startup
-getSongRequestMap();
-// Refresh every 30 seconds (lightweight: just returns the map)
-setInterval(() => { getSongRequestMap().catch(() => {}); }, 30000);
-
-function proxyRequestToS8(videoId, forcePlayNow, requester, songTitle) {
-  return new Promise((resolve, reject) => {
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const bodyObj = { url };
-    if (forcePlayNow) bodyObj.action = 'play-now';
-    if (requester) bodyObj.requester = requester;
-    if (songTitle) bodyObj.title = songTitle;
-    const body = JSON.stringify(bodyObj);
-    const reqOpts = {
-      hostname: getPlayerHost(),
-      port: getPlayerPort(),
-      path: '/api/youtube-dj/queue',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      timeout: 5000,
-      family: 4,
-      agent: playerAgent,
-    };
-    const req = http.request(reqOpts, (res) => {
-      let data = '';
-      res.on('data', (c) => { data += c; });
+function resolveYoutubeTitle(videoId) {
+  return new Promise((resolve) => {
+    const oembed =
+      'https://www.youtube.com/oembed?format=json&url=' +
+      encodeURIComponent('https://www.youtube.com/watch?v=' + videoId);
+    const req = https.get(oembed, { timeout: 8000 }, (res) => {
+      let raw = '';
+      res.on('data', (c) => { raw += c; });
       res.on('end', () => {
-        try { resolve({ ok: true, body: JSON.parse(data) }); }
-        catch { resolve({ ok: true, body: data }); }
+        try {
+          const data = JSON.parse(raw);
+          const t = (data && data.title) ? String(data.title).trim().substring(0, 120) : '';
+          resolve(t || '');
+        } catch {
+          resolve('');
+        }
       });
     });
-    req.on('error', (e) => reject(e));
-    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    req.write(body);
-    req.end();
+    req.on('error', () => resolve(''));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve(''); });
   });
 }
 
@@ -980,112 +446,73 @@ router.post('/api/queue/request', async (ctx) => {
   }
 
   let cleanTitle = title ? String(title).trim().substring(0, 120) : '';
+  // Don't keep raw YouTube URLs as the display title
+  if (/^https?:\/\//i.test(cleanTitle) || /youtube\.com|youtu\.be/i.test(cleanTitle)) {
+    cleanTitle = '';
+  }
   // Resolve title from local tags if not provided
   if (!cleanTitle) {
     try {
       const tags = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
       const karaokeTag = tags[videoId + '-karaoke'];
       if (karaokeTag && karaokeTag.title) cleanTitle = karaokeTag.title;
+      else if (tags[videoId] && tags[videoId].title) cleanTitle = tags[videoId].title;
     } catch {}
   }
+  // Resolve from YouTube oEmbed when still unknown (custom URL requests)
+  if (!cleanTitle) {
+    try {
+      cleanTitle = await resolveYoutubeTitle(videoId);
+    } catch (e) {
+      console.warn('[request] oEmbed title resolve failed:', e.message);
+    }
+  }
 
-  // ── Karaoke custom URL: start the pipeline, return immediately ──
+  // ── Karaoke custom URL: delegate to Electron main process via IPC ──
   if (karaokeify) {
     const karaokeId = videoId + '-karaoke';
     const karaokeMp4 = path.join(LIBRARY_KARAOKE_DIR, karaokeId + '.mp4');
 
-    // Already made — add directly to S8 queue
+    // Already made — save to MySQL only, queue it in the Electron app
     if (fs.existsSync(karaokeMp4)) {
-      console.log(`[request] Karaoke exists for ${videoId}, adding to S8 queue`);
+      console.log(`[request] Karaoke exists for ${videoId}`);
       mysql.requestAdd(karaokeId, cleanName, cleanTitle).catch(e => {});
-      const playerHost = getPlayerHost();
-      if (playerHost) {
+      if (process.send) {
         try {
-          await proxyRequestToS8(karaokeId, false, cleanName, cleanTitle);
+          const karaokeTag = (() => { try { return JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8')); } catch {} return {}; })()[karaokeId];
+          process.send({
+            type: 'web-queue-request',
+            videoId: karaokeId,
+            title: karaokeTag?.title || cleanTitle || videoId,
+            requester: cleanName,
+          });
         } catch (e) {
-          console.error(`[request] S8 proxy error for ${karaokeId}: ${e.message}`);
+          console.error('[request] IPC send error (karaoke):', e.message);
         }
       }
       ctx.body = { ok: true, videoId: karaokeId, requester: cleanName, karaokeify: true, queued: true };
       return;
     }
 
-    // Already processing — return status
-    if (karaokeJobs.has(videoId)) {
-      const job = karaokeJobs.get(videoId);
-      mysql.requestAdd(videoId, cleanName, cleanTitle).catch(e => {});
-      ctx.body = { ok: true, videoId, requester: cleanName, karaokeify: true, status: job.status, progress: job.progress };
-      return;
+    // Delegate to Electron main process via IPC — it handles serial queueing
+    if (process.send) {
+      try {
+        process.send({
+          type: 'web-karaoke-request',
+          videoId: videoId,
+          url: url || ('https://www.youtube.com/watch?v=' + videoId),
+          requester: cleanName,
+          title: cleanTitle || '',
+        });
+        console.log('[request] Karaoke request sent to Electron pipeline:', videoId, cleanName, cleanTitle);
+      } catch (e) {
+        console.error('[request] IPC send error (karaoke pipeline):', e.message);
+      }
+    } else {
+      console.warn('[request] No IPC to Electron main — karaoke request not sent for:', videoId);
     }
 
-    // Start the karaoke pipeline in the background — uses the same pipeline as POST /api/library/make-karaoke
-    // but returns immediately so the user isn't blocked.
-    karaokeJobs.set(videoId, { status: 'processing', progress: 0, requester: cleanName, cleanTitle });
-    mysql.requestAdd(videoId, cleanName, cleanTitle).catch(e => {});
-
-    const args = [path.join(PROJECT_ROOT, 'tools', 'make-karaoke-video.py'), url];
-    if (body.artist) args.push('--artist', body.artist);
-    if (body.title_karaoke) args.push('--title', body.title_karaoke);
-
-    const proc = require('child_process').spawn('/opt/homebrew/bin/python3', args, {
-      cwd: PROJECT_ROOT,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    proc.stdout.on('data', (chunk) => {
-      const lines = chunk.toString().split('\n').filter(Boolean);
-      for (const line of lines) {
-        console.log('[karaoke/req] ' + line);
-        const m = line.match(/^\[\d+\.?\d*\] (\w+): (.+)$/);
-        if (m) {
-          const step = m[1];
-          let p = 0;
-          if (step === 'download') p = 15;
-          else if (step === 'demucs') p = 35;
-          else if (step === 'lyrics') p = 55;
-          else if (step === 'render') p = 80;
-          else if (step === 'library') p = 95;
-          else if (step === 'complete') p = 100;
-          else if (step === 'error') p = -1;
-          const job = karaokeJobs.get(videoId);
-          if (job) job.progress = p;
-        }
-      }
-    });
-
-    proc.stderr.on('data', (chunk) => {
-      console.error('[karaoke/req:stderr] ' + chunk.toString().trim());
-    });
-
-    proc.on('close', async (code) => {
-      if (code === 0) {
-        karaokeJobs.set(videoId, { status: 'complete', progress: 100, karaokeVideoId: karaokeId });
-        console.log('[karaoke/req] Complete: ' + videoId + ', adding to S8 queue');
-
-        // Add the completed karaoke video to the S8 queue
-        const playerHost = getPlayerHost();
-        if (playerHost) {
-          try {
-            const job = karaokeJobs.get(videoId);
-            await proxyRequestToS8(karaokeId, false, job?.requester || cleanName, job?.cleanTitle || cleanTitle);
-            console.log('[karaoke/req] Added ' + karaokeId + ' to S8 queue');
-          } catch (e) {
-            console.error('[karaoke/req] S8 proxy error after render: ' + e.message);
-          }
-        }
-      } else {
-        karaokeJobs.set(videoId, { status: 'failed', progress: -1, error: 'Process exited with code ' + code });
-        console.error('[karaoke/req] Failed: ' + videoId + ' (exit ' + code + ')');
-      }
-    });
-
-    proc.on('error', (err) => {
-      karaokeJobs.set(videoId, { status: 'failed', progress: -1, error: err.message });
-      console.error('[karaoke/req] Spawn error: ' + err.message);
-    });
-
-    ctx.body = { ok: true, videoId, requester: cleanName, karaokeify: true, status: 'processing', progress: 0 };
+    ctx.body = { ok: true, videoId, requester: cleanName, karaokeify: true, status: 'queued', progress: 0 };
     return;
   }
 
@@ -1095,30 +522,35 @@ router.post('/api/queue/request', async (ctx) => {
     console.error('[requests] MySQL add error:', e.message);
   });
 
-  const playerHost = getPlayerHost();
-  if (!playerHost) {
-    console.log(`[request] Queued request from "${cleanName}" for ${videoId} — player not yet discovered, will proxy when ready`);
-    ctx.status = 202;
-    ctx.body = { ok: true, videoId, requester: cleanName, queued: true, playerReady: false };
-    return;
+  ctx.status = 200;
+  if (process.send) {
+    try {
+      const resolvedTags = (() => { try { return JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8')); } catch { return {}; } })();
+      const karaokeId = videoId + '-karaoke';
+      const karaokeTag = resolvedTags[karaokeId];
+      // Prefer karaoke variant if it exists
+      const queueVideoId = karaokeTag ? karaokeId : videoId;
+      const queueTitle = karaokeTag?.title || cleanTitle;
+      process.send({
+        type: 'web-queue-request',
+        videoId: queueVideoId,
+        title: queueTitle || cleanTitle || videoId,
+        requester: cleanName,
+        url: url || ('https://www.youtube.com/watch?v=' + videoId),
+        karaokeify: false,
+      });
+    } catch (e) {
+      console.error('[request] IPC send error:', e.message);
+    }
   }
-
-  // Proxy to S8 immediately — no blocking status check
-  // S8 decides play-now vs queue-add on its own
-  try {
-    const result = await proxyRequestToS8(videoId, false, cleanName, cleanTitle);
-    console.log(`[request] "${cleanName}" requested ${videoId} — added to S8 queue`);
-    ctx.status = 200;
-    ctx.body = { ok: true, videoId, requester: cleanName, queued: true, playerReady: true, s8Response: result.body };
-  } catch (e) {
-    console.error(`[request] Failed to proxy to S8 for "${cleanName}" / ${videoId}: ${e.message}`);
-    ctx.status = 202;
-    ctx.body = { ok: true, videoId, requester: cleanName, queued: true, playerReady: false, proxyError: e.message };
-  }
+  ctx.body = { ok: true, videoId, requester: cleanName, queued: true };
 });
 
 router.get('/api/queue/request/list', async (ctx) => {
-  const map = await getSongRequestMap();
+  let map = {};
+  try {
+    map = await mysql.requestMap() || {};
+  } catch (e) { console.error('[requests] MySQL fetch error:', e.message); }
   ctx.body = { ok: true, requestMap: map, count: Object.keys(map).length };
 });
 
@@ -1680,9 +1112,18 @@ router.get('/api/discover.json', (ctx) => {
     host: lanIp,
     port: PORT,
     shareUrl: null,
-    djControllerUrl: `http://${lanIp}:${PORT}/dj-controller/`,
-    youtubeDjHealthUrl: `http://${lanIp}:${PORT}/api/youtube-dj/health`,
+    electronMode: true,
   };
+});
+
+// ── Local Player Mode API (stubs — playback handled by Electron app) ──
+
+router.get('/api/youtube-dj/local-mode', (ctx) => {
+  ctx.body = { ok: true, localMode: false, electronMode: true };
+});
+
+router.post('/api/youtube-dj/local-mode', (ctx) => {
+  ctx.body = { ok: true, localMode: false, electronMode: true };
 });
 
 // ── Library API endpoints ──
@@ -1872,13 +1313,6 @@ router.post('/api/library/make-karaoke', async (ctx) => {
   }
   const videoId = videoIdMatch[1];
 
-  // Check if already processing or complete
-  if (karaokeJobs.has(videoId)) {
-    const job = karaokeJobs.get(videoId);
-    ctx.body = { ok: true, videoId, status: job.status, progress: job.progress, error: job.error };
-    return;
-  }
-
   // Check if already made
   const karaokeMp4 = path.join(LIBRARY_KARAOKE_DIR, videoId + '-karaoke.mp4');
   if (fs.existsSync(karaokeMp4)) {
@@ -1886,85 +1320,79 @@ router.post('/api/library/make-karaoke', async (ctx) => {
     return;
   }
 
-  // Start background job
-  karaokeJobs.set(videoId, { status: 'processing', progress: 0 });
-
-  // Build argument list for make-karaoke-video.py
-  const args = [path.join(PROJECT_ROOT, 'tools', 'make-karaoke-video.py'), url];
-  if (artist) args.push('--artist', artist);
-  if (title) args.push('--title', title);
-
-  const proc = require('child_process').spawn('/opt/homebrew/bin/python3', args, {
-    cwd: PROJECT_ROOT,
-    env: { ...process.env, PYTHONUNBUFFERED: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let lastProgress = 0;
-  proc.stdout.on('data', (chunk) => {
-    const lines = chunk.toString().split('\n').filter(Boolean);
-    for (const line of lines) {
-      console.log('[karaoke/make] ' + line);
-      // Parse progress from structured log lines: "[TIMESTAMP] step: message"
-      const match = line.match(/^\[\d+\.?\d*\] (\w+): (.+)$/);
-      if (match) {
-        const step = match[1];
-        if (step === 'download') lastProgress = 15;
-        else if (step === 'demucs') lastProgress = 35;
-        else if (step === 'lyrics') lastProgress = 55;
-        else if (step === 'render') lastProgress = 80;
-        else if (step === 'library') lastProgress = 95;
-        else if (step === 'complete') lastProgress = 100;
-        else if (step === 'error') lastProgress = -1;
-        const job = karaokeJobs.get(videoId);
-        if (job) job.progress = lastProgress;
-      }
+  // Delegate to Electron main process via IPC — it handles serial queueing
+  if (process.send) {
+    try {
+      process.send({
+        type: 'web-karaoke-request',
+        videoId: videoId,
+        url: url,
+        requester: '',
+      });
+      console.log('[karaoke/make] Karaoke request sent to Electron pipeline:', videoId);
+    } catch (e) {
+      console.error('[karaoke/make] IPC send error:', e.message);
     }
-  });
+  } else {
+    console.warn('[karaoke/make] No IPC to Electron main — karaoke request not sent for:', videoId);
+  }
 
-  proc.stderr.on('data', (chunk) => {
-    console.error('[karaoke/make:stderr] ' + chunk.toString().trim());
-  });
-
-  proc.on('close', (code) => {
-    if (code === 0) {
-      karaokeJobs.set(videoId, { status: 'complete', progress: 100, karaokeVideoId: videoId + '-karaoke' });
-      console.log('[karaoke/make] Complete: ' + videoId + ' -> ' + videoId + '-karaoke');
-    } else {
-      karaokeJobs.set(videoId, { status: 'failed', progress: -1, error: 'Process exited with code ' + code });
-      console.error('[karaoke/make] Failed: ' + videoId + ' (exit ' + code + ')');
-    }
-  });
-
-  proc.on('error', (err) => {
-    karaokeJobs.set(videoId, { status: 'failed', progress: -1, error: err.message });
-    console.error('[karaoke/make] Spawn error: ' + err.message);
-  });
-
-  // Return immediately — client polls /status for progress
-  ctx.body = { ok: true, videoId, status: 'processing', progress: 0 };
+  // Return immediately — Electron app handles progress tracking
+  ctx.body = { ok: true, videoId, status: 'queued', progress: 0 };
 });
 
-// Check karaoke job status
+// Check karaoke job status — queries Electron main process for live progress
 router.get('/api/library/make-karaoke/status/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
   if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
   }
 
-  const job = karaokeJobs.get(videoId);
-  if (job) {
-    ctx.body = { ok: true, videoId, status: job.status, progress: job.progress, error: job.error, karaokeVideoId: job.karaokeVideoId };
+  const baseId = videoId.replace(/-karaoke$/, '');
+
+  // Check if completed on disk
+  const karaokeMp4 = path.join(LIBRARY_KARAOKE_DIR, baseId + '-karaoke.mp4');
+  if (fs.existsSync(karaokeMp4)) {
+    ctx.body = { ok: true, videoId: baseId, karaokeVideoId: baseId + '-karaoke', status: 'complete', progress: 100 };
     return;
   }
 
-  // Check if completed on disk
-  const karaokeMp4 = path.join(LIBRARY_KARAOKE_DIR, videoId + '-karaoke.mp4');
-  if (fs.existsSync(karaokeMp4)) {
-    ctx.body = { ok: true, videoId, karaokeVideoId: videoId + '-karaoke', status: 'complete', progress: 100 };
-  } else {
-    ctx.body = { ok: true, videoId, status: 'not_found', progress: 0 };
+  // Query Electron main process for live job status via IPC
+  if (process.send) {
+    return new Promise((resolve) => {
+      const requestId = `status-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const timeout = setTimeout(() => {
+        resolve();
+        ctx.body = { ok: true, videoId: baseId, status: 'not_found', progress: 0 };
+      }, 2000);
+
+      const onMsg = (msg) => {
+        if (msg && msg.type === 'web-karaoke-status-reply' && msg.requestId === requestId) {
+          clearTimeout(timeout);
+          process.removeListener('message', onMsg);
+          resolve();
+          if (msg.job) {
+            ctx.body = {
+              ok: true,
+              videoId: baseId,
+              status: msg.job.status,
+              progress: msg.job.progress,
+              stage: msg.job.stage || '',
+              errorMessage: msg.job.errorMessage || '',
+              karaokify: msg.job.karaokify,
+              queuePosition: msg.job.queuePosition,
+            };
+          } else {
+            ctx.body = { ok: true, videoId: baseId, status: 'not_found', progress: 0 };
+          }
+        }
+      };
+      process.on('message', onMsg);
+      process.send({ type: 'web-karaoke-status', videoId: baseId, requestId });
+    });
   }
+
+  ctx.body = { ok: true, videoId: baseId, status: 'not_found', progress: 0 };
 });
 
 // ── Karaoke Lyrics (LRC JSON) for real-time overlay ──
@@ -2205,20 +1633,24 @@ router.get('/api/library/list', async (ctx) => {
     tryLoadCacheFromDisk();
   }
   if (!__libraryListCache.data) {
-    ctx.status = 500;
-    ctx.body = '{"ok":false,"error":"Cache not available — run library scan separately"}';
+    ctx.status = 503;
+    ctx.body = '{"ok":false,"error":"Library not loaded — run: node api-server/library-scan-worker.js"}';
     return;
   }
 
   // Client-side search params — filter server-side for speed
   const q = (ctx.query.q || '').toLowerCase();
   const year = ctx.query.year || '';
-  const page = parseInt(ctx.query.page, 10) || 0;
+  const page = parseInt(ctx.query.page, 10) || 1;
   const limit = parseInt(ctx.query.limit, 10) || 0;
 
-  if (!q && !year && !page && !limit) {
+  const hasQuery = ctx.query.q || ctx.query.year || ctx.query.page || ctx.query.limit;
+  if (!hasQuery) {
     // Fast path: return full cached JSON (compressed by middleware)
+    // Library data changes infrequently — allow browser/CDN to cache for 5 min
     ctx.type = 'application/json';
+    ctx.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    ctx.set('Vary', 'Accept-Encoding');
     ctx.body = __libraryListCache.rawJson;
     return;
   }
@@ -2243,6 +1675,8 @@ router.get('/api/library/list', async (ctx) => {
   }
 
   ctx.type = 'application/json';
+  ctx.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+  ctx.set('Vary', 'Accept-Encoding');
   ctx.body = JSON.stringify({
     ok: true,
     count: total,
@@ -2597,21 +2031,33 @@ app.use(router.routes());
 
 // ── Static: Library Dashboard ──
 const libraryDashboardDir = path.resolve(__dirname, '..', 'library-dashboard');
-if (fs.existsSync(libraryDashboardDir)) {
+const libraryDashboardFallback = '/Users/macdonk/Documents/GitHub/Karol/library-dashboard';
+const actualLibraryDir = fs.existsSync(libraryDashboardDir) ? libraryDashboardDir : (fs.existsSync(libraryDashboardFallback) ? libraryDashboardFallback : null);
+if (actualLibraryDir) {
+  const serveLibDashboard = actualLibraryDir;
   app.use(async (ctx, next) => {
     if (!ctx.path.startsWith('/library/') && ctx.path !== '/library') { await next(); return; }
     const relPath = ctx.path === '/library' ? 'index.html' : ctx.path.slice('/library/'.length) || 'index.html';
-    const filePath = path.join(libraryDashboardDir, relPath);
+    const filePath = path.join(serveLibDashboard, relPath);
     try {
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath);
         ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : 'application/octet-stream';
+        // HTML: short cache (revalidate after 30s), CSS/JS: long cache (inline HTML has all CSS/JS so these are rarely separate)
+        if (ext === '.html') {
+          ctx.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+        } else {
+          ctx.set('Cache-Control', 'public, max-age=86400, immutable');
+        }
+        ctx.set('Vary', 'Accept-Encoding');
         ctx.body = fs.createReadStream(filePath);
         return;
       }
     } catch (e) { /* fall through */ }
     ctx.type = 'text/html';
-    ctx.body = fs.createReadStream(path.join(libraryDashboardDir, 'index.html'));
+    ctx.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    ctx.set('Vary', 'Accept-Encoding');
+    ctx.body = fs.createReadStream(path.join(serveLibDashboard, 'index.html'));
   });
   console.log('Library Dashboard: http://' + getLanIp() + ':' + PORT + '/library/');
 }
@@ -2635,35 +2081,6 @@ if (fs.existsSync(abletonMixerDir)) {
     ctx.body = fs.createReadStream(path.join(abletonMixerDir, 'index.html'));
   });
   console.log('Ableton Mixer SPA: ' + abletonMixerDir);
-}
-
-// ── Static SPA (only for non-API paths) ──
-const djDistDir = path.resolve(__dirname, '..', 'dj-controller', 'dist');
-if (fs.existsSync(djDistDir)) {
-  app.use(async (ctx, next) => {
-    if (ctx.path.startsWith('/api/')) { await next(); return; }
-    // Strip /dj-controller prefix before resolving to dist filesystem
-    let relative = ctx.path;
-    if (relative.startsWith('/dj-controller/')) relative = relative.slice('/dj-controller/'.length);
-    else if (relative.startsWith('/dj-controller')) relative = relative.slice('/dj-controller'.length);
-    if (!relative || relative === '/') relative = 'index.html';
-    let filePath = path.join(djDistDir, relative);
-    try {
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        const ext = path.extname(filePath);
-        ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : ext === '.svg' ? 'image/svg+xml' : ext === '.png' ? 'image/png' : 'application/octet-stream';
-        // Prevent Android WebView from serving stale SPA builds
-        ctx.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        ctx.set('Pragma', 'no-cache');
-        ctx.set('Expires', '0');
-        ctx.body = fs.createReadStream(filePath);
-        return;
-      }
-    } catch (e) { /* fall through */ }
-    ctx.type = 'text/html';
-    ctx.body = fs.createReadStream(path.join(djDistDir, 'index.html'));
-  });
-  console.log('SPA: ' + djDistDir);
 }
 
 // ── mDNS broadcaster (Bonjour) — advertises _karol-dj._tcp so the
@@ -2784,6 +2201,7 @@ function lockUmcVolume() {
 }
 
 const server = http.createServer(app.callback());
+
 server.maxConnections = 200;  // Prevent connection starvation from Firefox polling
 server.timeout = 10000;       // Kill idle connections after 10s
 server.keepAliveTimeout = 8000;
@@ -2799,10 +2217,8 @@ server.on('connection', (socket) => {
 
 server.listen(PORT, '0.0.0.0', async () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
-  console.log('  YouTube DJ proxy target: mDNS-discovered');
+  console.log('  Electron app in control — all playback handled locally');
   console.log('  Ableton, Hardware mixer routes ready');
-  alignBlackHoleSampleRate();
-  setDefaultAudioOutput();  // Set Karol as default output device
   tryLoadCacheFromDisk();  // Load pre-built cache if available, avoids re-scanning
   // Auto-recover tags.json if it was lost (deferred to avoid blocking startup)
   try {
@@ -2818,54 +2234,16 @@ server.listen(PORT, '0.0.0.0', async () => {
       rebuildTagsFromDisk();
     }
   } catch (_) {}
-  // Seed mDNS player cache from persisted file for instant cold-start connectivity
-  try {
-    const cached = fs.readFileSync('/tmp/karol-player-mdns.txt', 'utf8').trim();
-    if (cached && cached.length > 3 && !_mdnsPlayerHost) {
-      _mdnsPlayerHost = { host: cached, port: 3131, at: Date.now() };
-      console.log('[mdns] Seeded player cache from disk: ' + cached);
-      // Refresh in background so we get the current IP for the .local hostname
-      refreshPlayerHostAsync().catch(() => {});
-    }
-  } catch {}
-  startAbletonPoll();
-  startMdnsBroadcaster(getLanIp());
+  // startAbletonPoll();  // DISABLED for stability
+  // startMdnsBroadcaster(getLanIp());  // DISABLED for stability
 
-  // Async mDNS player discovery — fire-and-forget, never block startup
-  refreshPlayerHostAsync().then((ip) => {
-    if (ip) console.log('[startup] Initial mDNS discovery: ' + ip);
-    else console.warn('[startup] Could not discover player via mDNS — will retry on proxy request');
-  });
   // verifyAudioChain();  // DISABLED — system_profiler hangs and kills server
   // Fire-and-forget: pre-build video library cache in a forked subprocess
   // so the first API request doesn't have to wait 20+ seconds for the scan.
   // Now lazy: buildLibraryCache() called on first /api/library/list request.
   // buildLibraryCache().catch(() => {});  // DISABLED — execFile kills server on macOS 26
 
-
-  // ── Audio cue: announce readiness via macOS 'say' ──
-  const parts = [];
-  // Include library info from the pre-loaded disk cache
-  let videoCount = 0;
-  try {
-    if (fs.existsSync(CACHE_FILE)) {
-      videoCount = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')).count || 0;
-    }
-  } catch {}
-  if (videoCount) {
-    parts.push(videoCount + ' videos in library');
-  }
-
-  const announcement = 'Karol server is running. ' + (parts.length ? parts.join('. ') + '.' : '');
-  const { exec } = require('child_process');
-  exec('say "' + announcement.replace(/"/g, "'") + '"', (err) => {
-    if (err) {
-      console.warn('[announce] say failed: ' + err.message);
-      setTimeout(() => { exec('say "Karol ready"', () => {}); }, 2000);
-    } else {
-      console.log('[announce] ' + announcement);
-    }
-  });
+  console.log('[announce] Karol server is running.');
 });
 
 process.on('SIGINT', () => { stopMdnsBroadcaster(); server.close(() => process.exit(0)); });

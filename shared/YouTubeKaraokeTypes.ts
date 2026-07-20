@@ -134,7 +134,7 @@ export type YouTubeDjStatus = {
 	castConnected: boolean;
 	captureReady: boolean;
 	port: number;
-	/** `direct` = android-player tablet host; `mac` or omitted = Deskreen CE on Mac */
+	/** `direct` = android-player tablet host; `mac` or omitted = Karol on Mac */
 	hostMode?: 'direct' | 'mac';
 	showActive?: boolean;
 	queueLength?: number;

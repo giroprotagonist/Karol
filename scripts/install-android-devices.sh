@@ -56,9 +56,9 @@ fi
 if [[ -n "$S8_SERIAL" ]]; then
 	echo "Installing player on $S8_SERIAL (upgrade only — keeps app data) ..."
 	"$ADB" -s "$S8_SERIAL" install -r "$PLAYER_APK"
-	if [[ -f "$ROOT/.deskreen/youtube-session.json" ]]; then
+	if [[ -f "$ROOT/.karol/youtube-session.json" ]]; then
 		echo "Restoring saved YouTube session..."
-		DESKREEN_HOST="${DESKREEN_HOST:-192.168.68.57}" bash "$ROOT/scripts/player-youtube-session-restore.sh" || true
+		KAROL_HOST="${KAROL_HOST:-192.168.68.57}" bash "$ROOT/scripts/player-youtube-session-restore.sh" || true
 	fi
 	"$ADB" -s "$S8_SERIAL" shell am start -n com.karol.player/.MainActivity 2>/dev/null || true
 	echo "Player installed."
@@ -71,7 +71,7 @@ fi
 if [[ -n "$S24_SERIAL" ]]; then
 	echo "Installing controller on $S24_SERIAL ..."
 	"$ADB" -s "$S24_SERIAL" install -r "$CTRL_APK"
-	TABLET_URL="http://${DESKREEN_HOST:-192.168.68.57}:${DESKREEN_PORT:-3131}/dj-controller/"
+	TABLET_URL="http://${KAROL_HOST:-192.168.68.57}:${KAROL_PORT:-3131}/dj-controller/"
 	echo "Launching controller → $TABLET_URL"
 	"$ADB" -s "$S24_SERIAL" shell am force-stop com.karol.controller 2>/dev/null || true
 	"$ADB" -s "$S24_SERIAL" shell am start -a android.intent.action.VIEW -d "$TABLET_URL" -n com.karol.controller/.MainActivity 2>/dev/null || true

@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TABLET_IP="${1:-192.168.68.50}"
-TABLET_PORT="${DESKREEN_PORT:-3131}"
+TABLET_PORT="${KAROL_PORT:-3131}"
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 # Find the S8 tablet serial
 TABLET_SERIAL="${TABLET_SERIAL:-$("$ADB" devices -l 2>/dev/null | grep -i 'sm-x700\|gts8wifi' | grep -v '(2)' | head -1 | awk '{print $1}')}"
@@ -14,15 +14,15 @@ echo "=== Refreshing YouTube session ==="
 
 # Step 1: Export from Mac Electron
 echo "1/3 Exporting cookies from Mac Electron..."
-bash "$ROOT/scripts/mac-youtube-session-export.sh" "$ROOT/.deskreen/youtube-session.json"
+bash "$ROOT/scripts/mac-youtube-session-export.sh" "$ROOT/.karol/youtube-session.json"
 
 # Step 2: Push to tablet via adb (HTTP API is debug-gated on release builds)
 echo "2/3 Pushing session to tablet..."
 if [[ -n "$TABLET_SERIAL" ]]; then
-	DEVICE_BACKUP="$ROOT/.deskreen/.yt-device-backup"
+	DEVICE_BACKUP="$ROOT/.karol/.yt-device-backup"
 	python3 << PY
 import base64, pathlib
-plain = pathlib.Path("$ROOT/.deskreen/youtube-session.json").read_text()
+plain = pathlib.Path("$ROOT/.karol/youtube-session.json").read_text()
 pathlib.Path("$DEVICE_BACKUP").write_text(
 	base64.b64encode(plain.encode()).decode()
 )
@@ -31,7 +31,7 @@ PY
 	"$ADB" -s "$TABLET_SERIAL" shell run-as com.karol.player cp /data/local/tmp/karol-youtube-session.json /data/data/com.karol.player/files/karol-youtube-session.json
 	echo "  Pushed to device — restart Karol Player to auto-restore."
 else
-	echo "  WARNING: No tablet adb device found. Session exported to $ROOT/.deskreen/youtube-session.json"
+	echo "  WARNING: No tablet adb device found. Session exported to $ROOT/.karol/youtube-session.json"
 	echo "  Push manually or connect a device."
 fi
 

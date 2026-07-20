@@ -4,14 +4,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HOST="${DESKREEN_HOST:-192.168.68.57}"
-PORT="${DESKREEN_PORT:-3131}"
+HOST="${KAROL_HOST:-192.168.68.57}"
+PORT="${KAROL_PORT:-3131}"
 S24_SERIAL="${S24_SERIAL:-}"
 
-export DESKREEN_HOST="$HOST"
-export DESKREEN_PORT="$PORT"
+export KAROL_HOST="$HOST"
+export KAROL_PORT="$PORT"
 
-echo "=== Deskreen S24 + Tab S8 ecosystem audit ==="
+echo "=== Karol S24 + Tab S8 ecosystem audit ==="
 echo "Tablet: http://${HOST}:${PORT}"
 
 python3 "$ROOT/scripts/verify-s24-s8-ecosystem.py"

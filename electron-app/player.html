@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://www.youtube.com https://i.ytimg.com https://*.ytimg.com; media-src 'self' file: blob: karol-file:; connect-src 'self' file: karol-file:; img-src 'self' file: data: https:; font-src 'self' data:;">
+<title>Karol Player</title>
+<style>
+:root{--bg:#000;--accent:#8b5cf6;--gold:#f0c040;--white:#fff;--marquee-bg:rgba(10,10,15,0.92)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;background:var(--bg);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:none}
+body{display:flex;flex-direction:column}
+body.is-monitor{cursor:default}
+body.is-monitor html,body.is-monitor{cursor:default}
+
+#main-area{flex:1;display:flex;flex-direction:row;min-height:0}
+#video-layer{flex:2;position:relative;min-width:0;min-height:0;transition:flex .3s}
+#video-layer video,#video-layer iframe{width:100%;height:100%;border:none;object-fit:contain;background:#000}
+
+/* Full lyrics sidebar — toggleable fail-safe for karaoke tracks */
+#full-lyrics{flex:0;width:0;min-width:0;background:rgba(8,8,16,0.97);border-left:2px solid var(--accent);display:flex;flex-direction:column;overflow:hidden;transition:flex .3s,width .3s,padding .3s}
+#full-lyrics.active{flex:1;width:auto;padding:16px 20px}
+#full-lyrics-title{font-size:16px;font-weight:700;color:var(--accent);text-align:center;margin-bottom:8px;flex-shrink:0;text-transform:uppercase;letter-spacing:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#full-lyrics-body{flex:1;display:flex;flex-direction:column;justify-content:space-between;min-height:0}
+#full-lyrics-body .fl-line{text-align:center;font-weight:700;color:rgba(255,255,255,0.85);text-shadow:0 1px 4px rgba(0,0,0,0.7);line-height:1.2;overflow:hidden;transition:color .3s,text-shadow .3s}
+#full-lyrics-body .fl-line.highlight{color:var(--gold);text-shadow:0 0 12px rgba(240,192,64,0.5)}
+
+#lyric-overlay{position:absolute;bottom:15%;left:0;width:100%;z-index:10;text-align:center;pointer-events:none;display:none}
+#lyric-overlay.active{display:block}
+#lyric-line{font-size:clamp(28px,4vw,52px);font-weight:800;color:var(--white);text-shadow:0 0 12px rgba(0,0,0,0.9),0 2px 8px rgba(0,0,0,0.7);line-height:1.3;padding:0 40px}
+#lyric-line .done{color:var(--gold)}
+#lyric-line .current{color:var(--accent)}
+#countdown{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:120px;font-weight:900;color:var(--accent);text-shadow:0 0 40px rgba(139,92,246,0.5);z-index:20;display:none;pointer-events:none}
+#countdown.active{display:block}
+
+#loading-overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:15;display:none;text-align:center;pointer-events:none}
+#loading-overlay.active{display:block}
+#loading-overlay.error #loading-spinner{border-top-color:#ef4444;border-color:#ef4444;animation:none}
+#loading-overlay.error #loading-text{color:#ef4444;font-size:18px;font-weight:700}
+#loading-spinner{width:60px;height:60px;border:4px solid rgba(139,92,246,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loading-text{color:var(--accent);font-size:18px;font-weight:600}
+
+#queue-marquee{flex-shrink:0;width:100%;z-index:10;background:var(--marquee-bg);border-top:2px solid rgba(139,92,246,0.4);display:flex;align-items:center;padding:14px 0;min-height:104px;pointer-events:none;overflow:hidden}
+#queue-marquee.hidden{display:none}
+#qm-current{display:flex;flex-direction:column;justify-content:center;gap:4px;min-width:280px;max-width:320px;padding:0 24px;border-right:1px solid rgba(139,92,246,0.4);flex-shrink:0;z-index:2;background:linear-gradient(90deg,var(--marquee-bg) 85%,transparent 100%)}
+#qm-current .qm-label{font-size:12px;text-transform:uppercase;letter-spacing:3px;color:var(--accent);font-weight:700}
+#qm-current .qm-singer{font-size:30px;font-weight:800;color:var(--white);line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+#qm-current .qm-song{font-size:18px;font-weight:500;color:rgba(255,255,255,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+#qm-ticker{flex:1;overflow:hidden;position:relative;height:100%;display:flex;align-items:center}
+#qm-ticker-inner{display:flex;align-items:center;gap:48px;white-space:nowrap;animation:marquee-scroll 80s linear infinite;padding-left:100%}
+@keyframes marquee-scroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
+.qm-tick{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.qm-tick .qm-num{font-size:16px;color:rgba(139,92,246,0.6);font-weight:700;min-width:28px}
+.qm-tick .qm-tick-singer{font-size:24px;font-weight:700;color:rgba(255,255,255,0.85)}
+.qm-tick .qm-tick-song{font-size:18px;font-weight:500;color:rgba(255,255,255,0.55)}
+.qm-tick .qm-tick-divider{font-size:22px;color:rgba(139,92,246,0.4);margin:0 6px}
+.qm-tick .qm-tick-venmo{font-size:16px;font-weight:700;color:var(--gold);letter-spacing:1px;margin-left:16px}
+#qm-tip{flex-shrink:0;z-index:2;display:flex;flex-direction:column;gap:3px;padding:0 24px;border-left:1px solid rgba(240,192,64,0.4);background:linear-gradient(270deg,var(--marquee-bg) 85%,transparent 100%);min-width:190px;text-align:center}
+#qm-tip .tip-venmo{font-size:20px;font-weight:800;color:var(--gold);letter-spacing:1px}
+#qm-tip .tip-cashapp{font-size:18px;font-weight:700;color:var(--gold);letter-spacing:1px}
+
+#conn-status{position:absolute;top:12px;right:12px;z-index:30;font-size:11px;padding:4px 10px;border-radius:12px;background:rgba(16,185,129,0.8);color:#fff;display:none;pointer-events:none}
+
+#lyric-slider{position:absolute;bottom:0;left:0;width:100%;z-index:25;background:linear-gradient(180deg,rgba(10,10,18,0),rgba(10,10,18,0.95) 15%,rgba(10,10,18,0.95) 100%);padding:28px 40px 22px;display:none;flex-direction:column;gap:12px;pointer-events:all}
+#lyric-slider.active{display:flex}
+#lyric-slider label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);font-weight:700;text-align:center}
+#lyric-slider .slider-row{display:flex;align-items:center;gap:16px}
+#lyric-slider input[type=range]{flex:1;-webkit-appearance:none;height:8px;border-radius:4px;background:rgba(255,255,255,0.15);outline:none}
+#lyric-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:36px;height:36px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 16px rgba(139,92,246,0.6);border:2px solid #fff}
+#lyric-slider .offset-val{font-size:22px;font-weight:800;color:var(--white);min-width:72px;text-align:center}
+#lyric-slider .btn-row{display:flex;gap:8px;justify-content:center}
+#lyric-slider button{padding:10px 28px;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;transition:all .2s}
+#lyric-slider .btn-save{background:var(--accent);color:#fff}
+#lyric-slider .btn-save:hover{background:#a78bfa;transform:scale(1.03)}
+#lyric-slider .btn-reset{background:rgba(255,255,255,0.12);color:var(--white)}
+#lyric-slider .btn-reset:hover{background:rgba(255,255,255,0.22)}
+#lyric-slider .btn-close{background:rgba(239,68,68,0.2);color:rgba(239,68,68,0.9)}
+#lyric-slider .btn-close:hover{background:rgba(239,68,68,0.4)}
+</style>
+</head>
+<body>
+
+<div id="main-area">
+<div id="video-layer">
+  <iframe id="youtube-frame" style="display:none" allow="autoplay" allowfullscreen></iframe>
+  <div id="lyric-overlay"><span id="lyric-line"></span></div>
+  <div id="countdown"></div>
+  <div id="lyric-slider">
+    <label>Lyric Timing Adjust</label>
+    <div class="slider-row">
+      <button class="btn-reset" style="padding:8px 14px;font-size:13px" onclick="resetLyricOffset()">Reset</button>
+      <input type="range" min="-30" max="30" step="0.1" value="0" id="lyric-slider-input" oninput="onSliderInput()">
+      <span class="offset-val" id="lyric-offset-display">0.0s</span>
+    </div>
+    <div class="btn-row">
+      <button class="btn-save" onclick="saveLyricOffset()">Save Offset</button>
+      <button class="btn-close" onclick="hideLyricSlider()">Close</button>
+    </div>
+  </div>
+  <div id="loading-overlay">
+    <div id="loading-spinner"></div>
+    <div id="loading-text"></div>
+  </div>
+</div>
+
+<div id="full-lyrics">
+  <div id="full-lyrics-title">Full Lyrics</div>
+  <div id="full-lyrics-body"></div>
+</div>
+</div>
+
+<div id="conn-status">Connected</div>
+
+<div id="queue-marquee" class="hidden">
+  <div id="qm-current">
+    <span class="qm-label">Now Playing</span>
+    <span class="qm-singer" id="qm-singer">—</span>
+    <span class="qm-song" id="qm-song">—</span>
+  </div>
+  <div id="qm-ticker"><div id="qm-ticker-inner"></div></div>
+  <div id="qm-tip">
+    <span class="tip-venmo">Venmo @karolpdx</span>
+    <span class="tip-cashapp">CashApp $karolpdx</span>
+  </div>
+</div>
+
+<script>
+// ── Global error catch — prevents unhandled renderer crashes ──
+window.addEventListener('error', function(e) {
+  console.error('[player] GLOBAL ERROR:', e.error?.message || e.message, e);
+});
+window.addEventListener('unhandledrejection', function(e) {
+  console.error('[player] UNHANDLED REJECTION:', e.reason?.message, e.reason);
+});
+
+// ── Karol Player — Battle-tested playback engine ──
+// Uses disposable <video> elements per play to avoid stale state.
+// Audio passes through natively in stereo — a persistent silent
+// AudioContext anchor keeps Core Audio stable between songs.
+
+const api = window.karolAPI;
+const IS_MONITOR = new URLSearchParams(window.location.search).get('role') === 'monitor';
+if (IS_MONITOR) {
+  document.title = 'Karol Monitor (Singer)';
+  document.body.classList.add('is-monitor');
+  document.documentElement.style.cursor = 'default';
+  document.body.style.cursor = 'default';
+}
+let playerState = 'idle';
+let currentVideoId = null;
+let isYouTube = false;
+let progressTimer = null;
+let youtubeFrame = document.getElementById('youtube-frame');
+let queue = [];
+let currentIndex = -1;
+let lyricEngine = null;
+let lyricOffset = 0; // Global lyric timing offset in seconds (for manual adjustment slider)
+
+// ── Disposable video management (avoids createMediaElementSource reuse bug) ──
+let currentVideoEl = null;
+let fullLyricsLines = null; // stored for timed highlighting in sidebar
+let loadTimeoutId = null;
+const videoLayer = document.getElementById('video-layer');
+
+function destroyVideo() {
+  // Clear any pending load timeout
+  if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null; }
+
+  // Remove old video element from DOM
+  if (currentVideoEl) {
+    try {
+      currentVideoEl.pause();
+      currentVideoEl.removeAttribute('src');
+      currentVideoEl.load(); // releases decoder resources
+      if (currentVideoEl.parentNode) currentVideoEl.parentNode.removeChild(currentVideoEl);
+    } catch(e) { console.error('[player] Video cleanup error:', e.message); }
+    currentVideoEl = null;
+  }
+}
+
+function createVideo() {
+  // Create a fresh <video> element — no stale sources, no accumulated listeners
+  var el = document.createElement('video');
+  el.setAttribute('preload', 'auto');
+  el.setAttribute('crossorigin', 'anonymous');
+  el.style.cssText = 'width:100%;height:100%;border:none;object-fit:contain;background:#000;display:block';
+  // Singer monitor mirrors video+lyrics but must stay silent (HDMI owns audio)
+  if (IS_MONITOR) {
+    el.muted = true;
+    el.volume = 0;
+  }
+
+  // Attach event handlers (clean slate, no accumulation)
+  el.addEventListener('play', function() {
+    if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null; }
+    playerState = 'playing';
+    hideLoading();
+    startProgressTimer();
+    console.log('[player] Video started playing');
+  });
+
+  el.addEventListener('pause', function() {
+    if (playerState !== 'ended') {
+      playerState = 'paused';
+      stopProgressTimer();
+      reportState({ state: 'paused' });
+    }
+  });
+
+  el.addEventListener('ended', function() {
+    console.log('[player] Video ended naturally');
+    playerState = 'ended';
+    stopProgressTimer();
+    reportState({ state: 'ended' });
+  });
+
+  el.addEventListener('error', function(e) {
+    var err = el.error;
+    console.error('[player] Video error:', err ? (err.code + ' ' + err.message) : 'unknown');
+    if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null; }
+    hideLoading();
+    reportState({ state: 'error', error: 'Video load error (code ' + (err ? err.code : '?') + ')' });
+  });
+
+  // Insert into the video layer (before overlays)
+  videoLayer.insertBefore(el, videoLayer.firstChild);
+  return el;
+}
+
+console.log('[player] Initializing IPC bridge...' + (IS_MONITOR ? ' (monitor)' : ''));
+updateConnStatus('connected');
+
+api.on('player-event', function(event) {
+  console.log('[player] <-', event.type);
+  switch (event.type) {
+    case 'play': handlePlay(event.videoId, event.isYouTube, event.title, event.requester); handleQueueUpdate(event.queue, event.currentIndex); break;
+    case 'pause': handlePause(); break;
+    case 'stop': handleStop(); break;
+    case 'seek': handleSeek(event.time); break;
+    case 'sync-clock': handleSyncClock(event.time, event.state); break;
+    case 'volume': handleVolume(event.level); break;
+    case 'skip': handleSkip(); break;
+    case 'queue-update': handleQueueUpdate(event.queue, event.currentIndex); break;
+    case 'toggle-lyric-slider': if (event.active) {
+      // Load existing offset from disk before showing
+      api.lyrics.getOffset(currentVideoId).then(function(r) {
+        showLyricSlider(r && r.ok ? r.offset : 0);
+      }).catch(function() { showLyricSlider(0); });
+    } else { hideLyricSlider(); } break;
+    case 'lyric-offset-updated': lyricOffset = event.offset || 0;
+      document.getElementById('lyric-slider-input').value = lyricOffset;
+      document.getElementById('lyric-offset-display').textContent = lyricOffset.toFixed(1) + 's';
+      break;
+    case 'lyrics-reload':
+      // Controller saved edited lyrics — reload LRC for current track
+      if (currentVideoId) {
+        api.library.lyrics(currentVideoId).then(function(ly) {
+          if (ly) {
+            lyricEngine = new LyricEngine(ly);
+            if (document.getElementById('full-lyrics').classList.contains('active') && ly.lines) {
+              renderFullLyrics(ly.lines, ly.title || '');
+            }
+            console.log('[player] Lyrics reloaded after edit:', ly.lines ? ly.lines.length : 0, 'lines');
+          }
+        }).catch(function(e) { console.error('[player] lyrics reload failed:', e); });
+      }
+      break;
+    case 'toggle-full-lyrics': if (event.active && event.lines && event.lines.length) {
+      renderFullLyrics(event.lines, event.title || '');
+    } else { hideFullLyrics(); } break;
+  }
+});
+
+function handlePlay(videoId, isYT, title, requester) {
+  // Guard: don't restart the same video that's already playing
+  if (currentVideoId === videoId && playerState === 'playing') return;
+  currentVideoId = videoId;
+  isYouTube = isYT !== false;
+
+  // Fully destroy previous video pipeline before starting new one
+  hideLyrics();
+  hideFullLyrics();
+  lyricEngine = null;
+  stopProgressTimer();
+  destroyVideo();
+
+  updateMarquee(title || videoId, requester || '');
+  showLoading('Loading...');
+
+  if (isYouTube) {
+    playYouTube(videoId);
+  } else {
+    playLocal(videoId);
+  }
+}
+
+function playYouTube(videoId) {
+  youtubeFrame.style.display = 'block';
+  youtubeFrame.src = 'https://www.youtube.com/embed/' + videoId + '?autoplay=1&controls=0&disablekb=1&fs=0&modestbranding=1&rel=0&iv_load_policy=3';
+
+  playerState = 'playing';
+  hideLoading();
+}
+
+async function playLocal(videoId) {
+  youtubeFrame.style.display = 'none';
+  youtubeFrame.src = '';
+
+  var filePath = await api.library.filePath(videoId);
+  if (!filePath) {
+    showErrorOverlay('Video file not found: ' + videoId);
+    reportState({ state: 'error', error: 'File not found' });
+    return;
+  }
+
+  // Create fresh video element (avoids createMediaElementSource bug)
+  currentVideoEl = createVideo();
+
+  // No Web Audio processing — audio passes through natively in stereo
+  // to whatever output device is selected (BlackHole → Ableton)
+
+  // Set source and start loading
+  currentVideoEl.src = 'karol-file://' + filePath;
+
+  // ── 10-second load timeout: if video doesn't start, auto-skip ──
+  loadTimeoutId = setTimeout(function() {
+    console.error('[player] LOAD TIMEOUT — video failed to start within 10s');
+    showErrorOverlay('Video failed to load (timeout)');
+    reportState({ state: 'error', error: 'Load timeout (10s)' });
+    currentVideoEl.pause();
+  }, 10000);
+
+  var played = false;
+  try {
+    await currentVideoEl.play();
+    if (played) return;
+    played = true;
+    if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null; }
+    playerState = 'playing';
+    hideLoading();
+    startProgressTimer();
+    reportState({ state: 'playing' });
+    console.log('[player] Video started playing successfully');
+  } catch(err) {
+    if (played) return;
+    played = true;
+    console.error('[player] Play error:', err.name, err.message);
+    if (err.name === 'NotAllowedError') {
+      hideLoading();
+      showLoading('Click anywhere to start playback');
+      var resumeOnce = function() {
+        currentVideoEl.play().then(function() {
+          playerState = 'playing'; hideLoading();
+          startProgressTimer(); reportState({ state: 'playing' });
+        }).catch(function(e2) {
+          console.error('[player] Resume play also failed:', e2.message);
+          hideLoading();
+          reportState({ state: 'error', error: 'Play blocked: ' + e2.message });
+        });
+        document.removeEventListener('click', resumeOnce);
+        document.removeEventListener('keydown', resumeOnce);
+      };
+      document.addEventListener('click', resumeOnce, { once: true });
+      document.addEventListener('keydown', resumeOnce, { once: true });
+    } else {
+      hideLoading();
+      reportState({ state: 'error', error: err.message });
+    }
+  }
+
+  // Load lyrics (non-blocking — plays with or without them)
+  try {
+    var ly = await api.library.lyrics(videoId);
+    if (ly) {
+      lyricEngine = new LyricEngine(ly);
+      console.log('[player] Lyrics loaded:', ly.lines ? ly.lines.length : 0, 'lines');
+    } else {
+      lyricEngine = null;
+    }
+  } catch(lyricErr) {
+    console.error('[player] Lyrics load failed:', lyricErr.message);
+    lyricEngine = null;
+  }
+
+}
+
+function handlePause() {
+  if (!isYouTube && currentVideoEl) currentVideoEl.pause();
+}
+
+function handleStop() {
+  destroyVideo();
+  hideFullLyrics();
+  if (isYouTube) { youtubeFrame.src = ''; youtubeFrame.style.display = 'none'; }
+  playerState = 'idle'; currentVideoId = null;
+  stopProgressTimer(); hideLoading();
+}
+
+function handleSkip() {
+  // Main process already advanced the queue — just tear down current playback
+  stopProgressTimer();
+  hideLyrics();
+  hideFullLyrics();
+  destroyVideo();
+}
+
+function handleSeek(time) {
+  if (!isYouTube && currentVideoEl) currentVideoEl.currentTime = time;
+}
+
+// Keep singer monitor locked to HDMI player clock (drift correction)
+function handleSyncClock(time, state) {
+  if (!IS_MONITOR || isYouTube || !currentVideoEl) return;
+  if (typeof time === 'number' && !isNaN(time)) {
+    var drift = Math.abs((currentVideoEl.currentTime || 0) - time);
+    if (drift > 0.15) {
+      try { currentVideoEl.currentTime = time; } catch (e) {}
+    }
+  }
+  if (state === 'paused' && !currentVideoEl.paused) {
+    try { currentVideoEl.pause(); } catch (e) {}
+  } else if (state === 'playing' && currentVideoEl.paused && playerState !== 'ended') {
+    currentVideoEl.play().catch(function() {});
+  }
+}
+
+function handleVolume(level) {
+  if (IS_MONITOR) {
+    if (currentVideoEl) { currentVideoEl.muted = true; currentVideoEl.volume = 0; }
+    return;
+  }
+  if (!isYouTube && currentVideoEl) currentVideoEl.volume = Math.max(0, Math.min(1, level));
+}
+
+// ── Audio stability anchor ──
+// A persistent, silent AudioContext keeps macOS Core Audio from
+// resetting the aggregate device (BlackHole + U-Phoria) between
+// songs. No audio is routed through it — it just holds the session open.
+// Skip on singer monitor (muted mirror; HDMI player owns the audio session).
+(function anchorAudio() {
+  if (IS_MONITOR) return;
+  try {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    // Create a silent oscillator to keep the context "active"
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    gain.gain.value = 0;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    console.log('[player] Audio anchor: AudioContext created at', ctx.sampleRate, 'Hz, state:', ctx.state);
+      ctx.onstatechange = function() {
+        console.log('[player] Audio anchor state change ->', ctx.state);
+        // Attempt to resume if the system suspends it
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(function(e) {
+            console.error('[player] Audio anchor resume failed:', e.message);
+          });
+        }
+      };
+  } catch(e) {
+    console.error('[player] Audio anchor creation failed:', e.message);
+  }
+})();
+
+function handleQueueUpdate(newQueue, newIndex) {
+  queue = newQueue || [];
+  currentIndex = newIndex !== undefined ? newIndex : -1;
+  renderMarquee();
+}
+
+// ── Progress ──
+
+function startProgressTimer() {
+  stopProgressTimer();
+  progressTimer = setInterval(function() {
+    var ct = 0, dur = 0;
+    if (currentVideoEl) { ct = currentVideoEl.currentTime || 0; dur = currentVideoEl.duration || 0; }
+    reportState({ state: playerState, currentTime: ct, duration: dur });
+    if (lyricEngine) lyricEngine.update(ct);
+    highlightFullLyrics(ct);
+  }, 500);
+}
+
+function stopProgressTimer() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+}
+
+function reportState(state) {
+  // Monitor is a silent mirror — HDMI player alone drives queue advance / status UI
+  if (IS_MONITOR) return;
+  try {
+    api.reportState({
+      videoId: currentVideoId, isYouTube: isYouTube,
+      currentTime: state.currentTime || 0, duration: state.duration || 0,
+      state: state.state || playerState, error: state.error || null
+    });
+  } catch(e) {}
+}
+
+// ── Lyrics ──
+
+function LyricEngine(data) {
+  this.lines = data.lines || [];
+  this.currentLineIndex = -1;
+  this.overlay = document.getElementById('lyric-overlay');
+  this.lineEl = document.getElementById('lyric-line');
+  this.countdownEl = document.getElementById('countdown');
+}
+
+LyricEngine.prototype.update = function(currentTime) {
+  if (!this.lines.length) return;
+
+  // Apply the global lyric offset (manual timing adjustment slider)
+  var adjustedTime = currentTime - lyricOffset;
+
+  // ── Find current line (with lookahead for gaps between lines) ──
+  var LOOKAHEAD = 0.5; // seconds to pre-display a line before its first word
+  var line = null;
+  for (var i = 0; i < this.lines.length; i++) {
+    var l = this.lines[i];
+    // Compute when this line should first appear on screen.
+    // If there's a gap from the previous line, show it early so the singer
+    // can see the words before they're supposed to land.
+    var displayStart = l.startTime - LOOKAHEAD;
+    if (i > 0) {
+      var prevEnd = this.lines[i - 1].endTime;
+      var gap = l.startTime - prevEnd;
+      if (gap < LOOKAHEAD) { displayStart = l.startTime; } // back-to-back: no pre-display
+    }
+    if (adjustedTime >= displayStart && adjustedTime <= l.endTime) { line = l; this.currentLineIndex = i; break; }
+  }
+  // Handle gaps between lines: if no exact match, find the nearest upcoming line
+  if (!line && this.lines.length) {
+    for (var j = 0; j < this.lines.length; j++) {
+      if (this.lines[j].startTime > adjustedTime) {
+        this.currentLineIndex = Math.max(0, j - 1);
+        break;
+      }
+    }
+    if (adjustedTime >= this.lines[this.lines.length - 1].endTime) {
+      this.currentLineIndex = this.lines.length - 1;
+    }
+  }
+
+  // ── Countdown during lead-in (use adjusted time) ──
+  // Only show countdown if no line is active (including lookahead-displayed lines)
+  var firstLine = this.lines[0];
+  if (!line && firstLine && adjustedTime < firstLine.startTime) {
+    var remaining = Math.ceil(firstLine.startTime - adjustedTime);
+    if (remaining <= 3 && remaining > 0) {
+      this.countdownEl.classList.add('active'); this.countdownEl.textContent = remaining;
+    }
+    if (remaining > 0) { this.overlay.classList.remove('active'); return; }
+  }
+  this.countdownEl.classList.remove('active');
+
+  // ── Update main lyric overlay (bottom) ──
+  if (!line) { this.overlay.classList.remove('active'); return; }
+
+  var html = '';
+  // Guard: if words array text doesn't match the line text, rebuild words from text.
+  // This catches the case where line.text was corrected but words[] was left stale.
+  var wordsMatch = line.words && line.words.length > 0;
+  if (wordsMatch) {
+    var concat = '';
+    for (var w = 0; w < line.words.length; w++) concat += line.words[w].text;
+    var textNoSpaces = (line.text || '').replace(/[\s,.\-']/g, '');
+    var wordsNoSpaces = concat.replace(/[\s,.\-']/g, '');
+    if (textNoSpaces.toLowerCase() !== wordsNoSpaces.toLowerCase()) wordsMatch = false;
+  }
+  if (wordsMatch) {
+    for (var w = 0; w < line.words.length; w++) {
+      var word = line.words[w];
+      var cls = adjustedTime >= word.endTime ? 'done' : (adjustedTime >= word.startTime ? 'current' : '');
+      html += '<span class="' + cls + '">' + escapeHtml(word.text) + '</span> ';
+    }
+  } else {
+    html = escapeHtml(line.text || '');
+  }
+  this.lineEl.innerHTML = html;
+  this.overlay.classList.add('active');
+};
+
+function hideLyrics() {
+  document.getElementById('lyric-overlay').classList.remove('active');
+  document.getElementById('countdown').classList.remove('active');
+}
+
+// ── Full lyrics sidebar ──
+
+function renderFullLyrics(lines, title) {
+  document.getElementById('full-lyrics-title').textContent = title || 'Full Lyrics';
+  var body = document.getElementById('full-lyrics-body');
+  var sidebar = document.getElementById('full-lyrics');
+
+  // Filter out empty/whitespace-only lines and instrumental markers,
+  // while preserving timing info for highlighting during playback.
+  var timedLines = [];
+  for (var i = 0; i < lines.length; i++) {
+    var t = (lines[i].text || '').trim();
+    if (t && !/^[\u266A\u266B\u2605\u2606\-\(\)\[\]\{\}\s]*$/.test(t)) {
+      timedLines.push({ text: t, startTime: lines[i].startTime || 0, endTime: lines[i].endTime || 0 });
+    }
+  }
+
+  if (timedLines.length === 0) {
+    body.innerHTML = '<div style="color:rgba(255,255,255,0.3);text-align:center;padding:20px;font-size:18px">No lyrics available</div>';
+    sidebar.classList.add('active');
+    fullLyricsLines = null;
+    return;
+  }
+
+  fullLyricsLines = timedLines;  // store for progress-timer highlighting
+
+  // Fit all lines edge-to-edge, top-to-bottom in the sidebar — no scroll
+  var fontSize = 80 / timedLines.length;
+  fontSize = Math.max(0.8, Math.min(6, fontSize));
+
+  var html = '';
+  for (var j = 0; j < timedLines.length; j++) {
+    html += '<div class="fl-line" style="font-size:' + fontSize.toFixed(2) + 'vh;line-height:1.15">' +
+      escapeHtml(timedLines[j].text) + '</div>';
+  }
+
+  body.innerHTML = html;
+  sidebar.classList.add('active');
+
+  // Immediately highlight the current line (don't wait for next progress tick)
+  if (currentVideoEl) {
+    highlightFullLyrics(currentVideoEl.currentTime || 0);
+  }
+}
+
+function hideFullLyrics() {
+  document.getElementById('full-lyrics').classList.remove('active');
+  document.getElementById('full-lyrics-body').innerHTML = '';
+  fullLyricsLines = null;
+}
+
+// ── Full lyrics timed highlighting ──
+function highlightFullLyrics(currentTime) {
+  if (!fullLyricsLines || !fullLyricsLines.length) return;
+  var el = document.getElementById('full-lyrics-body');
+  if (!el) return;
+  var lineEls = el.querySelectorAll('.fl-line');
+  if (!lineEls.length) return;
+
+  var adjustedTime = currentTime - lyricOffset;
+  var activeIdx = -1;
+
+  // Find the line whose time window contains adjustedTime
+  for (var i = 0; i < fullLyricsLines.length; i++) {
+    if (adjustedTime >= fullLyricsLines[i].startTime && adjustedTime <= fullLyricsLines[i].endTime) {
+      activeIdx = i; break;
+    }
+  }
+  // If no exact match, highlight the last line whose startTime has passed
+  if (activeIdx < 0) {
+    for (var j = fullLyricsLines.length - 1; j >= 0; j--) {
+      if (fullLyricsLines[j].startTime <= adjustedTime) { activeIdx = j; break; }
+    }
+  }
+
+  // Apply highlight class to the active line, remove from others
+  for (var k = 0; k < lineEls.length; k++) {
+    if (k === activeIdx) {
+      lineEls[k].classList.add('highlight');
+    } else {
+      lineEls[k].classList.remove('highlight');
+    }
+  }
+}
+
+// ── Lyric timing slider ──
+
+function showLyricSlider(initialOffset) {
+  lyricOffset = initialOffset || 0;
+  document.getElementById('lyric-slider-input').value = lyricOffset;
+  document.getElementById('lyric-offset-display').textContent = lyricOffset.toFixed(1) + 's';
+  document.getElementById('lyric-slider').classList.add('active');
+}
+
+function hideLyricSlider() {
+  document.getElementById('lyric-slider').classList.remove('active');
+}
+
+function onSliderInput() {
+  lyricOffset = parseFloat(document.getElementById('lyric-slider-input').value);
+  document.getElementById('lyric-offset-display').textContent = lyricOffset.toFixed(1) + 's';
+  // Real-time: the LyricEngine already uses lyricOffset in update()
+}
+
+function resetLyricOffset() {
+  lyricOffset = 0;
+  document.getElementById('lyric-slider-input').value = 0;
+  document.getElementById('lyric-offset-display').textContent = '0.0s';
+}
+
+async function saveLyricOffset() {
+  if (!currentVideoId) return;
+  try {
+    var vidForSave = isYouTube ? currentVideoId : currentVideoId + '-karaoke';
+    var result = await api.lyrics.saveOffset(vidForSave, lyricOffset);
+    if (result && result.ok) {
+      document.getElementById('lyric-slider').classList.remove('active');
+    }
+  } catch (e) {
+    console.error('[player] Failed to save lyric offset:', e);
+  }
+}
+
+// ── Loading ──
+
+function showLoading(text) {
+  document.getElementById('loading-text').textContent = text || 'Loading...';
+  document.getElementById('loading-overlay').classList.add('active');
+  document.getElementById('loading-overlay').classList.remove('error');
+}
+function hideLoading() { document.getElementById('loading-overlay').classList.remove('active'); }
+function showErrorOverlay(text) {
+  document.getElementById('loading-text').textContent = text || 'Error';
+  document.getElementById('loading-overlay').classList.add('active', 'error');
+  // Auto-clear after 4s (queue should auto-advance by then)
+  setTimeout(function() {
+    document.getElementById('loading-overlay').classList.remove('active');
+  }, 4000);
+}
+
+// ── Connection ──
+
+function updateConnStatus(status) {
+  var el = document.getElementById('conn-status');
+  el.style.display = 'block';
+  el.style.background = status === 'connected' ? 'rgba(16,185,129,0.8)' : 'rgba(220,38,38,0.8)';
+  el.textContent = status === 'connected' ? 'Connected' : 'Disconnected';
+}
+
+// ── Marquee ──
+
+function updateMarquee(title, requester) {
+  document.getElementById('qm-singer').textContent = requester || 'DJ';
+  document.getElementById('qm-song').textContent = title || '\u2014';
+  document.getElementById('queue-marquee').classList.remove('hidden');
+  renderMarquee();
+}
+
+function renderMarquee() {
+  var inner = document.getElementById('qm-ticker-inner');
+  var marquee = document.getElementById('queue-marquee');
+  if (queue.length === 0 && currentIndex < 0) { marquee.classList.add('hidden'); return; }
+  marquee.classList.remove('hidden');
+  var items = [];
+  for (var i = 0; i < queue.length; i++) { if (i === currentIndex) continue; if (i > currentIndex) items.push(queue[i]); }
+  for (var j = 0; j < queue.length; j++) { if (j >= currentIndex) break; items.push(queue[j]); }
+  var html = '';
+  for (var dup = 0; dup < 2; dup++) {
+    for (var k = 0; k < items.length; k++) {
+      var item = items[k];
+      html += '<div class="qm-tick"><span class="qm-num">'+(k+1)+'</span><span class="qm-tick-singer">'+escapeHtml(item.requester||'\u2014')+'</span><span class="qm-tick-divider">\u2022</span><span class="qm-tick-song">'+escapeHtml(item.title||item.videoId||'\u2014')+'</span></div>';
+    }
+    // Add Venmo/CashApp promo in the scroller after each full loop of queue
+    html += '<div class="qm-tick"><span class="qm-tick-venmo">Venmo @karolpdx</span><span class="qm-tick-divider">\u2022</span><span class="qm-tick-venmo">CashApp $karolpdx</span></div>';
+  }
+  if (!items.length) html = '<div class="qm-tick"><span class="qm-tick-singer" style="font-size:28px;color:var(--accent)">Queue is empty \u2014 add some songs</span></div>';
+  inner.innerHTML = html;
+  inner.style.animation = 'none'; inner.offsetHeight;
+  // Slower scroll: 100s base, +10s per item
+  inner.style.animation = 'marquee-scroll ' + Math.max(20, 100 + (items.length||1)*8) + 's linear infinite';
+}
+
+function escapeHtml(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown', function(e) {
+  if (e.code === 'Space') { e.preventDefault(); api.transport.play(); }
+  if (e.code === 'ArrowRight') { e.preventDefault(); api.transport.skip(); }
+  if (e.code === 'KeyF') { e.preventDefault(); document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+});
+
+console.log('[player] Ready.');
+</script>
+</body>
+</html>

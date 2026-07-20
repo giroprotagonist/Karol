@@ -107,7 +107,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
 <div class="custom-bar">
   <input type="text" id="customUrl" placeholder="YouTube URL...">
-  <label><input type="checkbox" id="customKaraokeify"> Karaoke?</label>
+  <label><input type="checkbox" id="customKaraokeify"> Make karaoke</label>
   <button onclick="requestCustom()">Request</button>
 </div>
 
@@ -297,8 +297,9 @@ function requestCustom(){
   var url=document.getElementById('customUrl').value.trim();
   if(!url){showToast('Paste a YouTube URL first');return}
   var karaoke=document.getElementById('customKaraokeify').checked;
-  pendingVideoId='__custom__';pendingTitle=url+(karaoke?' [karaoke]':'');
-  document.getElementById('modalSongTitle').textContent=pendingTitle;
+  pendingVideoId='__custom__';
+  pendingTitle=''; // server resolves real YouTube title
+  document.getElementById('modalSongTitle').textContent=karaoke?'Custom link → make karaoke':'Custom link → play as-is';
   document.getElementById('requesterName').value='';
   document.getElementById('requestModal').classList.add('show');
 }

@@ -3,7 +3,7 @@
 
 PORT=3131
 NODE_BIN=/opt/homebrew/bin/node
-SERVER_SCRIPT=/Users/macdonk/Documents/GitHub/deskreen/scripts/karol-api-server.js
+SERVER_SCRIPT=/Users/macdonk/Documents/GitHub/Karol/api-server/index.js
 LOG_FILE=/tmp/karol-server.log
 
 # Kill existing process on port 3131

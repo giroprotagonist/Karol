@@ -678,7 +678,7 @@ class MainActivity : AppCompatActivity() {
 	private fun syncWebHostToPageOrigin() {
 		webView.evaluateJavascript(
 			"(function(){var o=location.origin.replace(/\\/+\$/,'');" +
-				"try{localStorage.setItem('deskreen_dj_host',o);}catch(e){}})();",
+				"try{localStorage.setItem('karol_player_host',o);}catch(e){}})();",
 			null,
 		)
 	}

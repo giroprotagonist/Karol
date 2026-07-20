@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const host = process.env.DESKREEN_HOST || 'http://127.0.0.1:3131';
+const host = process.env.KAROL_HOST || 'http://127.0.0.1:3131';
 const baseURL = `${host.replace(/\/+$/, '')}/dj-controller/`;
 
 export default defineConfig({

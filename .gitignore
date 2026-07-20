@@ -2,10 +2,16 @@
 node_modules/
 
 # Electron build output
+electron-app/node_modules/
+electron-app/dist/
 electron/dist/
 electron/out/
 *.dmg
 *.zip
+*.dmg.blockmap
+
+# Local e2e artifacts
+e2e-screenshots/
 
 # DJ Controller build output
 dj-controller/dist/
@@ -26,12 +32,14 @@ android-controller/build/
 android-controller/local.properties
 
 # Video downloads (large, local only)
-.deskreen/youtube-downloads/
-.deskreen/library/
-.deskreen/karaoke-temp/
+.karol/youtube-downloads/
+.karol/library/
+.karol/karaoke-temp/
 
 # Session data (credentials)
-.deskreen/youtube-session.json
+.karol/youtube-session.json
+.karol/yt-cookies.txt
+.karol/song-requests.json
 *.session.json
 
 # Python cache
@@ -56,8 +64,8 @@ __pycache__/
 *.xlsx
 
 # Keep these in git
-!.deskreen/tags.json
-!.deskreen/schema.sql
+!.karol/tags.json
+!.karol/schema.sql
 
 # Cursor IDE
 .cursor/

@@ -737,7 +737,7 @@ class DjHttpServer(
 			call.respondJson(
 				JSONObject()
 					.put("ok", false)
-					.put("error", "Media host unreachable – is Deskreen running on your Mac?"),
+					.put("error", "Media host unreachable – is Karol running on your Mac?"),
 			)
 		}
 	}
@@ -797,7 +797,7 @@ class DjHttpServer(
 			call.respondJson(
 				JSONObject()
 					.put("ok", false)
-					.put("error", "Host unreachable – is Deskreen running on your Mac?")
+					.put("error", "Host unreachable – is Karol running on your Mac?")
 					.put("proxyTarget", targetBase)
 					.put("prefix", prefix),
 			)

@@ -3,9 +3,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HOST="${DESKREEN_HOST:-192.168.68.57}"
-PORT="${DESKREEN_PORT:-3131}"
-SRC="$ROOT/.deskreen/youtube-session.json"
+HOST="${KAROL_HOST:-192.168.68.57}"
+PORT="${KAROL_PORT:-3131}"
+SRC="$ROOT/.karol/youtube-session.json"
 ADB="${ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 S8_SERIAL="${S8_SERIAL:-}"
 
@@ -30,7 +30,7 @@ for i in 1 2 3 4 5 6; do
 done
 
 echo "API restore failed — pushing on-device backup file..."
-DEVICE_BACKUP="$ROOT/.deskreen/.yt-device-backup"
+DEVICE_BACKUP="$ROOT/.karol/.yt-device-backup"
 python3 << PY
 import base64, pathlib
 plain = pathlib.Path("$SRC").read_text()

@@ -3,9 +3,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HOST="${DESKREEN_HOST:-192.168.68.57}"
-PORT="${DESKREEN_PORT:-3131}"
-OUT="$ROOT/.deskreen/youtube-session.json"
+HOST="${KAROL_HOST:-192.168.68.57}"
+PORT="${KAROL_PORT:-3131}"
+OUT="$ROOT/.karol/youtube-session.json"
 mkdir -p "$(dirname "$OUT")"
 
 echo "Saving YouTube session from http://${HOST}:${PORT} → $OUT"

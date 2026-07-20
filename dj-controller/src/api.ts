@@ -14,9 +14,9 @@ type HardwareMixerState = {
 	micMuted: boolean;
 };
 
-const HOST_KEY = 'deskreen_dj_host';
+const HOST_KEY = 'karol_player_host';
 
-/** When loaded from Deskreen's bundled /dj-controller/ page, use the page origin. */
+/** When loaded from Karol's bundled /dj-controller/ page, use the page origin. */
 export function getDefaultHost(): string {
 	if (typeof window !== 'undefined' && window.location.pathname.includes('dj-controller')) {
 		const origin = window.location.origin.replace(/\/+$/, '');
@@ -96,7 +96,7 @@ async function request<T>(
 			throw new Error(data.error || `Request failed (${res.status})`);
 		}
 		// The S8 proxy returns HTTP 200 with { ok: false, error: "..." } when the upstream
-		// (Mac Deskreen) is unreachable. Treat these as errors too so callers don't receive
+		// (Mac Karol) is unreachable. Treat these as errors too so callers don't receive
 		// a mismatched object shape and crash.
 		if (data.ok === false && data.error) {
 			throw new Error(data.error);

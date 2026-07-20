@@ -13,7 +13,7 @@ FetchContent_MakeAvailable(juce)
 
 # Plugin target
 juce_add_plugin(Transverb
-    COMPANY_NAME "Deskreen"
+    COMPANY_NAME "Karol"
     PLUGIN_MANUFACTURER_CODE DfxT
     PLUGIN_CODE Tvrb
     FORMATS AU VST3

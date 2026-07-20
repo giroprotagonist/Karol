@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Migrate .deskreen/tags.json → MySQL library_tags via PHP proxy.
-Also migrate .deskreen/youtube-download-archive.txt → download_archive.
-Run: python3 .deskreen/migrate_to_mysql.py
+Migrate .karol/tags.json to MySQL library_tags via PHP proxy.
+Also migrate .karol/youtube-download-archive.txt to download_archive.
+Run: python3 tools/migrate_to_mysql.py
 """
 import json, requests, sys
 
@@ -28,7 +28,7 @@ def proxy_post(table, action, data):
 
 # ── 1. Migrate tags.json ──
 print("Loading tags.json...")
-with open(".deskreen/tags.json") as f:
+with open(".karol/tags.json") as f:
     tags = json.load(f)
 
 entries = []
@@ -74,7 +74,7 @@ if resp.get("ok"):
 
 # ── 3. Migrate download archive ──
 print("\nLoading youtube-download-archive.txt...")
-with open(".deskreen/youtube-download-archive.txt") as f:
+with open(".karol/youtube-download-archive.txt") as f:
     lines = f.readlines()
 
 video_ids = []

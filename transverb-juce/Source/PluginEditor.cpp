@@ -213,7 +213,7 @@ void TransverbAudioProcessorEditor::paint(juce::Graphics& g)
     g.fillRect(0, getHeight() - 34, getWidth(), 34);
     g.setColour(juce::Colours::grey);
     g.setFont(11.0f);
-    g.drawText("Transverb  ·  JUCE  ·  Deskreen  ·  GPL v2+",
+    g.drawText("Transverb  ·  JUCE  ·  Karol  ·  GPL v2+",
                getLocalBounds().removeFromBottom(30).toFloat(), juce::Justification::centred);
 }
 

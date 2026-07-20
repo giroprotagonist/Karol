@@ -71,8 +71,8 @@ echo "  Now playing: $TITLE2 ($VIDEO2)"
 # 5. Save session
 echo ""
 echo "5. Save YouTube session..."
-curl -sf "$BASE/api/youtube-dj/dev/youtube-session" > .deskreen/youtube-session.json 2>/dev/null
-check "session saved" "$([ -s .deskreen/youtube-session.json ] && echo true || echo false)"
+curl -sf "$BASE/api/youtube-dj/dev/youtube-session" > .karol/youtube-session.json 2>/dev/null
+check "session saved" "$([ -s .karol/youtube-session.json ] && echo true || echo false)"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

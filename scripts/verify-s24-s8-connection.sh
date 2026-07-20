@@ -2,11 +2,11 @@
 # Verify S24 controller can reach Tab S8 player API and dj-controller SPA.
 set -euo pipefail
 
-HOST="${DESKREEN_HOST:-192.168.68.57}"
-PORT="${DESKREEN_PORT:-3131}"
+HOST="${KAROL_HOST:-192.168.68.57}"
+PORT="${KAROL_PORT:-3131}"
 BASE="http://${HOST}:${PORT}"
 
-echo "=== Deskreen S24 ↔ Tab S8 connectivity ==="
+echo "=== Karol S24 ↔ Tab S8 connectivity ==="
 echo "Host: $BASE"
 
 health=$(curl -sf -m 5 "$BASE/api/youtube-dj/health") || {

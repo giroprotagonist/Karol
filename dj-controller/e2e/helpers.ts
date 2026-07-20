@@ -1,13 +1,13 @@
 import type { APIRequestContext, Page } from '@playwright/test';
 
-export const deskreenHost = () =>
-	(process.env.DESKREEN_HOST || 'http://127.0.0.1:3131').replace(/\/+$/, '');
+export const karolHost = () =>
+	(process.env.KAROL_HOST || 'http://127.0.0.1:3131').replace(/\/+$/, '');
 
-export const apiBase = () => `${deskreenHost()}/api/youtube-dj`;
+export const apiBase = () => `${karolHost()}/api/youtube-dj`;
 
 const clientHeaders = {
 	'Content-Type': 'application/json',
-	'X-Deskreen-Client': 'DeskreenPlaywright/1.0',
+	'X-Karol-Client': 'KarolPlaywright/1.0',
 };
 
 export async function apiPost(
