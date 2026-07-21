@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "author": "Karol PDX",
-  "description": "Karol Karaoke DJ \u2014 one Mac to rule them all",
+  "description": "Karol Karaoke DJ — one Mac to rule them all",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -34,6 +34,11 @@
       "requests.js",
       "controller.html",
       "player.html",
+      "lottie.min.js",
+      "dance-moves.js",
+      "request-qr.png",
+      "venmo-qr.png",
+      "cashapp-qr.png",
       "node_modules/**/*"
     ],
     "extraResources": [
@@ -46,5 +51,8 @@
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "lottie-web": "5.13.0"
   }
 }

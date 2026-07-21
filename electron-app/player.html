@@ -41,26 +41,321 @@ body.is-monitor html,body.is-monitor{cursor:default}
 @keyframes spin{to{transform:rotate(360deg)}}
 #loading-text{color:var(--accent);font-size:18px;font-weight:600}
 
-#queue-marquee{flex-shrink:0;width:100%;z-index:10;background:var(--marquee-bg);border-top:2px solid rgba(139,92,246,0.4);display:flex;align-items:center;padding:14px 0;min-height:104px;pointer-events:none;overflow:hidden}
+#queue-marquee{flex-shrink:0;width:100%;z-index:10;background:var(--marquee-bg);border-top:2px solid rgba(139,92,246,0.4);display:flex;align-items:center;padding:8px 0;min-height:96px;pointer-events:none;overflow:hidden}
 #queue-marquee.hidden{display:none}
-#qm-current{display:flex;flex-direction:column;justify-content:center;gap:4px;min-width:280px;max-width:320px;padding:0 24px;border-right:1px solid rgba(139,92,246,0.4);flex-shrink:0;z-index:2;background:linear-gradient(90deg,var(--marquee-bg) 85%,transparent 100%)}
-#qm-current .qm-label{font-size:12px;text-transform:uppercase;letter-spacing:3px;color:var(--accent);font-weight:700}
-#qm-current .qm-singer{font-size:30px;font-weight:800;color:var(--white);line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
-#qm-current .qm-song{font-size:18px;font-weight:500;color:rgba(255,255,255,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+#qm-current{display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:340px;max-width:420px;padding:0 18px;border-right:1px solid rgba(139,92,246,0.4);flex-shrink:0;z-index:2;background:linear-gradient(90deg,var(--marquee-bg) 85%,transparent 100%)}
+#qm-current .qm-label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);font-weight:700;line-height:1.1}
+#qm-current .qm-singer{font-size:42px;font-weight:800;color:var(--white);line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:380px}
+#qm-current .qm-song{font-size:26px;font-weight:500;color:rgba(255,255,255,0.55);line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:380px}
 #qm-ticker{flex:1;overflow:hidden;position:relative;height:100%;display:flex;align-items:center}
-#qm-ticker-inner{display:flex;align-items:center;gap:48px;white-space:nowrap;animation:marquee-scroll 80s linear infinite;padding-left:100%}
+#qm-ticker-inner{display:flex;align-items:center;gap:22px;white-space:nowrap;animation:marquee-scroll 80s linear infinite;padding-left:100%}
 @keyframes marquee-scroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
-.qm-tick{display:flex;align-items:center;gap:12px;flex-shrink:0}
-.qm-tick .qm-num{font-size:16px;color:rgba(139,92,246,0.6);font-weight:700;min-width:28px}
-.qm-tick .qm-tick-singer{font-size:24px;font-weight:700;color:rgba(255,255,255,0.85)}
-.qm-tick .qm-tick-song{font-size:18px;font-weight:500;color:rgba(255,255,255,0.55)}
-.qm-tick .qm-tick-divider{font-size:22px;color:rgba(139,92,246,0.4);margin:0 6px}
-.qm-tick .qm-tick-venmo{font-size:16px;font-weight:700;color:var(--gold);letter-spacing:1px;margin-left:16px}
-#qm-tip{flex-shrink:0;z-index:2;display:flex;flex-direction:column;gap:3px;padding:0 24px;border-left:1px solid rgba(240,192,64,0.4);background:linear-gradient(270deg,var(--marquee-bg) 85%,transparent 100%);min-width:190px;text-align:center}
-#qm-tip .tip-venmo{font-size:20px;font-weight:800;color:var(--gold);letter-spacing:1px}
-#qm-tip .tip-cashapp{font-size:18px;font-weight:700;color:var(--gold);letter-spacing:1px}
+.qm-tick{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.qm-tick .qm-num{font-size:28px;color:rgba(139,92,246,0.7);font-weight:700;min-width:36px}
+.qm-tick .qm-tick-singer{font-size:40px;font-weight:700;color:rgba(255,255,255,0.9);line-height:1.1}
+.qm-tick .qm-tick-song{font-size:32px;font-weight:500;color:rgba(255,255,255,0.55);line-height:1.1}
+.qm-tick .qm-tick-divider{font-size:32px;color:rgba(139,92,246,0.45);margin:0 2px}
+.qm-tick .qm-tick-venmo{font-size:32px;font-weight:700;color:var(--gold);letter-spacing:0.5px;margin-left:4px}
+#qm-tip{flex-shrink:0;z-index:2;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 16px;border-left:1px solid rgba(240,192,64,0.4);background:linear-gradient(270deg,var(--marquee-bg) 85%,transparent 100%);min-width:220px;text-align:center}
+#qm-tip .tip-venmo{font-size:28px;font-weight:800;color:var(--gold);letter-spacing:0.5px;line-height:1.1}
+#qm-tip .tip-cashapp{font-size:26px;font-weight:700;color:var(--gold);letter-spacing:0.5px;line-height:1.1}
 
-#conn-status{position:absolute;top:12px;right:12px;z-index:30;font-size:11px;padding:4px 10px;border-radius:12px;background:rgba(16,185,129,0.8);color:#fff;display:none;pointer-events:none}
+/* Conn status sits below the mic footprint so they don't collide */
+#conn-status{position:absolute;top:262px;left:18px;z-index:30;font-size:11px;padding:4px 10px;border-radius:12px;background:rgba(16,185,129,0.8);color:#fff;display:none;pointer-events:none}
+body.is-monitor #conn-status{top:12px;left:12px}
+
+/* Karaoke mic buddy — top-left mirror of QR corner (~236px), HDMI only */
+#donkey-buddy{position:absolute;top:18px;left:18px;z-index:54;width:236px;height:236px;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .35s ease,visibility .35s;--beat:0;--glow:0.35;--hop:0px;--squash:1;--tilt:0deg;--shake-x:0px;--shake-y:0px;--spin:0deg;--flash:0;--tempo:1;--hue:0deg;--burst:0;--bpm:120;--slowmo:1;--master-speed:1;--period:calc(60s / var(--bpm) * var(--slowmo) / var(--master-speed));--ease-body:cubic-bezier(0.34,1.56,0.64,1);--ease-snap:cubic-bezier(0.2,1.8,0.35,1)}
+#donkey-buddy.visible{opacity:1;visibility:visible}
+#donkey-buddy .dk-fx{position:absolute;inset:0;pointer-events:none;overflow:visible}
+#donkey-buddy .dk-speedlines{position:absolute;inset:-12%;opacity:calc(var(--beat) * 0.85);background:repeating-conic-gradient(from 0deg,transparent 0deg 8deg,rgba(255,255,255,0.14) 8deg 9deg);mask-image:radial-gradient(circle at 50% 55%,transparent 28%,#000 52%,transparent 78%);-webkit-mask-image:radial-gradient(circle at 50% 55%,transparent 28%,#000 52%,transparent 78%);animation:dkSpeedSpin calc(var(--period) * 2) linear infinite;mix-blend-mode:screen}
+#donkey-buddy .dk-sparks{position:absolute;inset:0;opacity:calc(var(--burst) * 0.95);background:
+  radial-gradient(circle at 18% 32%,#ffe600 0 2px,transparent 3px),
+  radial-gradient(circle at 82% 28%,#ff006e 0 2.5px,transparent 4px),
+  radial-gradient(circle at 70% 72%,#00e5ff 0 2px,transparent 3.5px),
+  radial-gradient(circle at 28% 78%,#06d6a0 0 2px,transparent 3px),
+  radial-gradient(circle at 50% 18%,#fff 0 1.5px,transparent 3px),
+  radial-gradient(circle at 12% 58%,#8338ec 0 2px,transparent 3.5px),
+  radial-gradient(circle at 88% 62%,#fb5607 0 2px,transparent 3.5px);animation:dkSparkPop calc(var(--period) / 2) ease-out infinite;mix-blend-mode:screen}
+#donkey-buddy .dk-chroma{position:absolute;inset:6%;border-radius:50%;opacity:calc(var(--flash) * 0.7);background:linear-gradient(90deg,#ff006e,transparent 40%,#00e5ff);mix-blend-mode:screen;filter:blur(6px);animation:dkChromaKick calc(var(--period) / 2) steps(2,end) infinite;pointer-events:none}
+#donkey-buddy .dk-stage{position:relative;z-index:2;width:100%;height:100%;display:flex;align-items:center;justify-content:center;transform:translate(var(--shake-x),calc(var(--hop) + var(--shake-y))) rotate(calc(var(--tilt) + var(--spin))) scaleY(var(--squash)) scaleX(calc(2 - var(--squash)));transform-origin:50% 85%;will-change:transform,filter;filter:drop-shadow(0 0 calc(8px + var(--glow) * 32px) rgba(255,0,170,calc(0.25 + var(--glow) * 0.6))) drop-shadow(0 0 calc(4px + var(--glow) * 20px) rgba(0,229,255,calc(0.2 + var(--glow) * 0.45))) hue-rotate(var(--hue)) saturate(calc(1 + var(--glow) * 0.85))}
+#donkey-buddy svg{width:94%;height:94%;overflow:visible}
+/* Lottie dance rig — replaces the hand-rolled SVG donkey when assets load */
+#donkey-buddy .dk-lottie{display:none;width:100%;height:100%;position:relative;z-index:2}
+#donkey-buddy.lottie-on .dk-lottie{display:block}
+#donkey-buddy.lottie-on .dk-stage>svg{display:none}
+#donkey-buddy .dk-aura{position:absolute;inset:4%;border-radius:50%;background:conic-gradient(from 0deg,#ff006e,#8338ec,#3a86ff,#06d6a0,#ffbe0b,#fb5607,#ff006e);filter:blur(18px);opacity:calc(0.18 + var(--glow) * 0.7);animation:dkAuraSpin calc(var(--period) * 4) linear infinite;mix-blend-mode:screen;pointer-events:none;transform:scale(calc(0.85 + var(--glow) * 0.45))}
+#donkey-buddy .dk-aura-2{position:absolute;inset:-6%;border-radius:50%;background:conic-gradient(from 180deg,#00e5ff,#ffe600,#ff006e,#8338ec,#00e5ff);filter:blur(28px);opacity:calc(var(--burst) * 0.55);animation:dkAuraSpin calc(var(--period) * 2) linear infinite reverse;mix-blend-mode:screen;pointer-events:none}
+/* Polyrhythm: body=1×, head=½×, ears=¾×, legs=2×, tail=⅓×, mouth=4× — joints use view-box origins */
+#donkey-buddy .dk-body{animation:dkChillBounce var(--period) var(--ease-body) infinite;transform-origin:100px 170px;transform-box:view-box}
+#donkey-buddy .dk-joint{transform-box:view-box;transform-origin:0 0}
+#donkey-buddy .dk-head{transform-origin:100px 102px;transform-box:view-box;animation:dkChillHead calc(var(--period) * 2) var(--ease-body) infinite}
+#donkey-buddy .dk-mouth{transform-origin:100px 96px;transform-box:view-box;animation:dkHeeHaw calc(var(--period) / 4) ease-in-out infinite}
+#donkey-buddy .dk-ear-l{transform-origin:78px 54px;transform-box:view-box;animation:dkEarL calc(var(--period) * 0.75) var(--ease-snap) infinite}
+#donkey-buddy .dk-ear-r{transform-origin:122px 54px;transform-box:view-box;animation:dkEarR calc(var(--period) * 0.75) var(--ease-snap) infinite;animation-delay:calc(var(--period) / -6)}
+#donkey-buddy .dk-leg-fl{transform-origin:74px 118px;transform-box:view-box;animation:dkLegFL calc(var(--period) / 2) var(--ease-snap) infinite}
+#donkey-buddy .dk-leg-fr{transform-origin:126px 118px;transform-box:view-box;animation:dkLegFR calc(var(--period) / 2) var(--ease-snap) infinite;animation-delay:calc(var(--period) / -8)}
+#donkey-buddy .dk-leg-bl{transform-origin:80px 150px;transform-box:view-box;animation:dkLegBL calc(var(--period) / 2) var(--ease-body) infinite;animation-delay:calc(var(--period) / -4)}
+#donkey-buddy .dk-leg-br{transform-origin:120px 150px;transform-box:view-box;animation:dkLegBR calc(var(--period) / 2) var(--ease-body) infinite;animation-delay:calc(var(--period) * -0.375)}
+#donkey-buddy .dk-tail{transform-origin:62px 128px;transform-box:view-box;animation:dkTailWave calc(var(--period) / 3) var(--ease-snap) infinite}
+#donkey-buddy .dk-note{animation:dkNoteFloat calc(var(--period) * 1.5) ease-out infinite;opacity:0.95}
+#donkey-buddy .dk-note-2{animation-delay:calc(var(--period) * -0.5)}
+#donkey-buddy .dk-note-3{animation-delay:calc(var(--period) * -1)}
+#donkey-buddy .dk-starburst{opacity:0;transform-origin:50% 45%}
+#donkey-buddy .dk-mane{animation:dkManeFlick calc(var(--period) * 1.5) ease-in-out infinite;transform-origin:100px 48px;transform-box:view-box}
+
+/* mode: chill */
+#donkey-buddy.mode-chill .dk-body{animation-name:dkChillBounce}
+#donkey-buddy.mode-chill .dk-head{animation-name:dkChillHead}
+
+/* mode: groove */
+#donkey-buddy.mode-groove .dk-body{animation-name:dkGrooveBounce}
+#donkey-buddy.mode-groove .dk-head{animation-name:dkGrooveHead}
+#donkey-buddy.mode-groove .dk-leg-fl,#donkey-buddy.mode-groove .dk-leg-fr{animation-name:dkGrooveLegF}
+#donkey-buddy.mode-groove .dk-leg-bl{animation-name:dkGrooveLegBL}
+#donkey-buddy.mode-groove .dk-leg-br{animation-name:dkGrooveLegBR}
+#donkey-buddy.mode-groove .dk-mouth{animation-duration:calc(var(--period) / 5)}
+#donkey-buddy.mode-groove .dk-ear-l,#donkey-buddy.mode-groove .dk-ear-r{animation-duration:calc(var(--period) * 0.55)}
+
+/* mode: frenzy */
+#donkey-buddy.mode-frenzy .dk-body{animation-name:dkFrenzyBody}
+#donkey-buddy.mode-frenzy .dk-head{animation-name:dkFrenzyHead}
+#donkey-buddy.mode-frenzy .dk-leg-fl,#donkey-buddy.mode-frenzy .dk-leg-fr{animation-name:dkFrenzyLegF;animation-duration:calc(var(--period) / 3)}
+#donkey-buddy.mode-frenzy .dk-leg-bl,#donkey-buddy.mode-frenzy .dk-leg-br{animation-name:dkFrenzyLegB;animation-duration:calc(var(--period) / 3)}
+#donkey-buddy.mode-frenzy .dk-mouth{animation-duration:calc(var(--period) / 6)}
+#donkey-buddy.mode-frenzy .dk-note{animation-duration:calc(var(--period) * 0.8)}
+#donkey-buddy.mode-frenzy .dk-starburst{opacity:calc(0.35 + var(--beat) * 0.65);animation:dkStarSpin calc(var(--period) / 2) linear infinite}
+#donkey-buddy.mode-frenzy .dk-tail{animation-duration:calc(var(--period) / 4)}
+#donkey-buddy.mode-frenzy .dk-ear-l,#donkey-buddy.mode-frenzy .dk-ear-r{animation-duration:calc(var(--period) / 3)}
+
+/* mode: peak */
+#donkey-buddy.mode-peak .dk-body{animation-name:dkPeakBody}
+#donkey-buddy.mode-peak .dk-head{animation-name:dkPeakHead}
+#donkey-buddy.mode-peak .dk-leg-fl,#donkey-buddy.mode-peak .dk-leg-fr{animation-name:dkPeakLegF;animation-duration:calc(var(--period) / 4)}
+#donkey-buddy.mode-peak .dk-leg-bl,#donkey-buddy.mode-peak .dk-leg-br{animation-name:dkPeakLegB;animation-duration:calc(var(--period) / 4)}
+#donkey-buddy.mode-peak .dk-mouth{animation-duration:calc(var(--period) / 8);animation-name:dkHeeHawPeak}
+#donkey-buddy.mode-peak .dk-note{animation-duration:calc(var(--period) * 0.55)}
+#donkey-buddy.mode-peak .dk-starburst{opacity:calc(0.55 + var(--beat) * 0.45);animation:dkStarSpin calc(var(--period) / 3) linear infinite}
+#donkey-buddy.mode-peak .dk-stage{filter:drop-shadow(0 0 calc(12px + var(--glow) * 40px) rgba(255,230,0,calc(0.4 + var(--glow) * 0.5))) drop-shadow(0 0 calc(6px + var(--glow) * 24px) rgba(255,0,110,calc(0.35 + var(--glow) * 0.5))) hue-rotate(var(--hue)) saturate(calc(1.4 + var(--glow)))}
+#donkey-buddy.mode-peak .dk-tail{animation-duration:calc(var(--period) / 5);filter:saturate(1.4) brightness(1.15)}
+
+@keyframes dkAuraSpin{to{transform:rotate(360deg)}}
+@keyframes dkSpeedSpin{to{transform:rotate(-360deg)}}
+@keyframes dkSparkPop{
+  0%{transform:scale(0.6);opacity:0}
+  30%{opacity:1;transform:scale(1.15)}
+  100%{transform:scale(1.55);opacity:0}
+}
+@keyframes dkChromaKick{
+  0%{transform:translate(-6px,0) scaleX(1.05)}
+  50%{transform:translate(7px,-2px) scaleX(0.95)}
+  100%{transform:translate(-4px,3px) scaleX(1.08)}
+}
+@keyframes dkStarSpin{to{transform:rotate(360deg) scale(1.15)}}
+@keyframes dkChillBounce{
+  0%,100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
+  35%{transform:translateY(-12px) scaleY(1.1) scaleX(0.92) rotate(-4deg)}
+  55%{transform:translateY(5px) scaleY(0.88) scaleX(1.12) rotate(3deg)}
+}
+@keyframes dkChillHead{
+  0%,100%{transform:rotate(-8deg)}
+  50%{transform:rotate(10deg)}
+}
+@keyframes dkGrooveBounce{
+  0%,100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
+  20%{transform:translateY(-20px) scaleY(1.2) scaleX(0.84) rotate(-10deg)}
+  38%{transform:translateY(9px) scaleY(0.74) scaleX(1.26) rotate(7deg)}
+  58%{transform:translateY(-14px) scaleY(1.12) scaleX(0.9) rotate(12deg)}
+  78%{transform:translateY(7px) scaleY(0.82) scaleX(1.18) rotate(-5deg)}
+}
+@keyframes dkGrooveHead{
+  0%,100%{transform:rotate(-12deg) scale(1)}
+  25%{transform:rotate(16deg) scale(1.04)}
+  50%{transform:rotate(-14deg) scale(0.98)}
+  75%{transform:rotate(18deg) scale(1.03)}
+}
+@keyframes dkGrooveLegF{
+  0%,100%{transform:rotate(-22deg)}
+  40%{transform:rotate(34deg)}
+  70%{transform:rotate(-10deg)}
+}
+@keyframes dkGrooveLegBL{
+  0%,100%{transform:rotate(14deg)}
+  35%{transform:rotate(-30deg)}
+  65%{transform:rotate(20deg)}
+}
+@keyframes dkGrooveLegBR{
+  0%,100%{transform:rotate(-14deg)}
+  35%{transform:rotate(30deg)}
+  65%{transform:rotate(-20deg)}
+}
+@keyframes dkFrenzyBody{
+  0%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
+  12%{transform:translateY(-26px) scaleY(1.32) scaleX(0.72) rotate(-16deg)}
+  24%{transform:translateY(12px) scaleY(0.64) scaleX(1.38) rotate(20deg)}
+  38%{transform:translateY(-18px) scaleY(1.18) scaleX(0.8) rotate(160deg)}
+  52%{transform:translateY(9px) scaleY(0.72) scaleX(1.3) rotate(190deg)}
+  68%{transform:translateY(-22px) scaleY(1.26) scaleX(0.76) rotate(360deg)}
+  82%{transform:translateY(11px) scaleY(0.7) scaleX(1.34) rotate(370deg)}
+  100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(360deg)}
+}
+@keyframes dkFrenzyHead{
+  0%,100%{transform:rotate(-18deg) scale(1)}
+  20%{transform:rotate(22deg) scale(1.06)}
+  40%{transform:rotate(-24deg) scale(0.96)}
+  60%{transform:rotate(26deg) scale(1.08)}
+  80%{transform:rotate(-20deg) scale(0.98)}
+}
+@keyframes dkFrenzyLegF{
+  0%{transform:rotate(-40deg)}
+  25%{transform:rotate(48deg)}
+  50%{transform:rotate(-44deg)}
+  75%{transform:rotate(52deg)}
+  100%{transform:rotate(-40deg)}
+}
+@keyframes dkFrenzyLegB{
+  0%{transform:rotate(32deg)}
+  25%{transform:rotate(-40deg)}
+  50%{transform:rotate(44deg)}
+  75%{transform:rotate(-48deg)}
+  100%{transform:rotate(32deg)}
+}
+@keyframes dkPeakBody{
+  0%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
+  8%{transform:translateY(-34px) scaleY(1.42) scaleX(0.64) rotate(-26deg)}
+  16%{transform:translateY(16px) scaleY(0.54) scaleX(1.52) rotate(30deg)}
+  28%{transform:translateY(-28px) scaleY(1.36) scaleX(0.7) rotate(160deg)}
+  40%{transform:translateY(14px) scaleY(0.6) scaleX(1.46) rotate(200deg)}
+  55%{transform:translateY(-38px) scaleY(1.48) scaleX(0.6) rotate(360deg)}
+  70%{transform:translateY(18px) scaleY(0.5) scaleX(1.58) rotate(400deg)}
+  85%{transform:translateY(-20px) scaleY(1.28) scaleX(0.74) rotate(720deg)}
+  100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(720deg)}
+}
+@keyframes dkPeakHead{
+  0%,100%{transform:rotate(0deg) scale(1)}
+  15%{transform:rotate(22deg) scale(1.08)}
+  30%{transform:rotate(-24deg) scale(0.95)}
+  50%{transform:rotate(28deg) scale(1.1)}
+  70%{transform:rotate(-22deg) scale(0.96)}
+  85%{transform:rotate(18deg) scale(1.05)}
+}
+@keyframes dkPeakLegF{
+  0%,100%{transform:rotate(-48deg) scale(1)}
+  33%{transform:rotate(56deg) scale(1.04)}
+  66%{transform:rotate(-52deg) scale(0.96)}
+}
+@keyframes dkPeakLegB{
+  0%,100%{transform:rotate(42deg) scale(1)}
+  33%{transform:rotate(-50deg) scale(1.04)}
+  66%{transform:rotate(46deg) scale(0.96)}
+}
+@keyframes dkHeeHaw{
+  0%,100%{transform:scaleY(0.75) scaleX(1.08)}
+  50%{transform:scaleY(1.3) scaleX(0.9)}
+}
+@keyframes dkHeeHawPeak{
+  0%,100%{transform:scaleY(0.55) scaleX(1.22)}
+  50%{transform:scaleY(1.55) scaleX(0.78)}
+}
+@keyframes dkEarL{
+  0%,100%{transform:rotate(-12deg)}
+  50%{transform:rotate(16deg)}
+}
+@keyframes dkEarR{
+  0%,100%{transform:rotate(12deg)}
+  50%{transform:rotate(-16deg)}
+}
+@keyframes dkLegFL{
+  0%,100%{transform:rotate(-18deg)}
+  50%{transform:rotate(28deg)}
+}
+@keyframes dkLegFR{
+  0%,100%{transform:rotate(18deg)}
+  50%{transform:rotate(-28deg)}
+}
+@keyframes dkLegBL{
+  0%,100%{transform:rotate(12deg)}
+  50%{transform:rotate(-24deg)}
+}
+@keyframes dkLegBR{
+  0%,100%{transform:rotate(-12deg)}
+  50%{transform:rotate(24deg)}
+}
+@keyframes dkTailWave{
+  0%,100%{transform:rotate(-22deg)}
+  30%{transform:rotate(28deg)}
+  55%{transform:rotate(-30deg)}
+  80%{transform:rotate(18deg)}
+}
+@keyframes dkManeFlick{
+  0%,100%{transform:rotate(-4deg) scaleY(1)}
+  50%{transform:rotate(8deg) scaleY(1.08)}
+}
+@keyframes dkNoteFloat{
+  0%{transform:translate(0,10px) scale(0.55) rotate(-10deg);opacity:0}
+  20%{opacity:1}
+  100%{transform:translate(28px,-48px) scale(1.35) rotate(25deg);opacity:0}
+}
+body.is-monitor #donkey-buddy{display:none}
+
+/* Flying QR — corner during play, hero during between-songs, trips with prism FX */
+#qr-fly{position:absolute;z-index:55;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;transform-origin:center center;will-change:transform,filter;top:18px;right:18px;width:236px}
+#qr-fly.mode-hero{top:6vh;left:3.5vw;right:auto;width:min(46vw,calc(88vh - 118px),900px)}
+#qr-fly .qr-aura,#qr-fly .qr-aura-2{position:absolute;inset:-18%;border-radius:28%;opacity:0;pointer-events:none;z-index:0;background:conic-gradient(from 0deg,#ff006e,#8338ec,#3a86ff,#06d6a0,#ffbe0b,#fb5607,#ff006e);filter:blur(22px);mix-blend-mode:screen}
+#qr-fly .qr-card{position:relative;z-index:2;width:100%;aspect-ratio:1;background:#fff;padding:5.5%;border-radius:6%;box-shadow:0 4px 24px rgba(0,0,0,0.55);box-sizing:border-box;overflow:hidden}
+#qr-fly .qr-card img{display:block;width:100%;height:100%;object-fit:contain}
+#qr-fly .qr-ghost{position:absolute;top:0;left:0;width:100%;aspect-ratio:1;z-index:1;opacity:0;pointer-events:none;border-radius:6%;mix-blend-mode:screen}
+#qr-fly .qr-ghost img{width:100%;height:100%;object-fit:contain;padding:5.5%;box-sizing:border-box;background:#fff;border-radius:6%}
+#qr-fly .qr-caption{position:relative;z-index:2;font-size:14px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,0.9);background:rgba(0,0,0,0.45);padding:4px 10px;border-radius:6px;transition:opacity .3s,transform .3s}
+#qr-fly.mode-hero .qr-caption{opacity:0;transform:translateY(8px);height:0;padding:0;overflow:hidden}
+#qr-fly .qr-hero-label{position:relative;z-index:2;font-weight:900;text-transform:uppercase;color:var(--gold);letter-spacing:clamp(2px,0.5vw,7px);font-size:clamp(26px,3.2vw,54px);line-height:1.1;text-align:center;white-space:nowrap;text-shadow:0 0 16px rgba(240,192,64,0.75),0 0 48px rgba(240,192,64,0.35),0 2px 10px rgba(0,0,0,0.85);opacity:0;height:0;overflow:hidden;transform:translateY(-8px);transition:opacity .3s,transform .3s}
+#qr-fly.mode-hero .qr-hero-label{opacity:1;height:auto;transform:translateY(0)}
+#qr-fly.tripping{z-index:60}
+#qr-fly.tripping .qr-aura{opacity:0.85;animation:qrAuraSpin 1.1s linear infinite}
+#qr-fly.tripping .qr-aura-2{opacity:0.55;animation:qrAuraSpin 1.6s linear infinite reverse;inset:-28%;filter:blur(34px)}
+#qr-fly.tripping .qr-card{animation:qrPrismPulse 0.35s linear infinite;box-shadow:0 0 30px #ff00aa,0 0 60px #00e5ff,0 0 100px #ffe600,0 12px 40px rgba(0,0,0,0.5)}
+#qr-fly.tripping .qr-ghost-r{opacity:0.55;transform:translate(10px,-6px);filter:url(#none) brightness(1.2);mix-blend-mode:screen;background:transparent}
+#qr-fly.tripping .qr-ghost-r img{background:transparent;filter:url(#none);box-shadow:none;opacity:1;filter:contrast(1.2) sepia(1) saturate(8) hue-rotate(-30deg)}
+#qr-fly.tripping .qr-ghost-b{opacity:0.5;transform:translate(-12px,8px)}
+#qr-fly.tripping .qr-ghost-b img{background:transparent;filter:contrast(1.2) sepia(1) saturate(8) hue-rotate(160deg)}
+@keyframes qrAuraSpin{to{transform:rotate(360deg)}}
+@keyframes qrPrismPulse{
+  0%{filter:hue-rotate(0deg) saturate(1.6) brightness(1.15)}
+  50%{filter:hue-rotate(180deg) saturate(2.4) brightness(1.35)}
+  100%{filter:hue-rotate(360deg) saturate(1.6) brightness(1.15)}
+}
+body.is-monitor #qr-fly{display:none}
+
+/* Between-songs interstitial (HDMI): spacer left (QR flies over it), details right */
+#between-songs{position:absolute;inset:0;z-index:40;display:flex;flex-direction:row;align-items:center;justify-content:center;gap:clamp(28px,4vw,64px);background:radial-gradient(ellipse at center,#1a1028 0%,#050508 70%);pointer-events:none;padding:clamp(24px,4vh,56px) clamp(28px,4vw,64px);opacity:0;visibility:hidden;transition:opacity 0.55s ease,visibility 0.55s}
+#between-songs.active{opacity:1;visibility:visible}
+#between-songs .bs-qr-wrap{flex:0 0 min(46vw,calc(88vh - 48px),900px);width:min(46vw,calc(88vh - 48px),900px);height:min(88vh,900px);visibility:hidden}
+#between-songs .bs-details{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:clamp(12px,2vh,28px);text-align:left;padding-right:clamp(8px,2vw,32px);opacity:0;transform:translateX(40px);transition:opacity 0.7s ease 0.35s,transform 0.7s cubic-bezier(0.22,1,0.36,1) 0.35s}
+#between-songs.active .bs-details{opacity:1;transform:translateX(0)}
+#between-songs .bs-label{font-size:clamp(18px,2.4vw,32px);font-weight:800;letter-spacing:6px;text-transform:uppercase;color:var(--accent)}
+#between-songs .bs-singer{font-size:clamp(42px,7vw,120px);font-weight:900;color:var(--white);line-height:1.05;text-shadow:0 0 40px rgba(139,92,246,0.45);max-width:100%;word-wrap:break-word}
+#between-songs .bs-song{font-size:clamp(18px,2.6vw,36px);font-weight:600;color:rgba(255,255,255,0.55);max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;white-space:normal}
+#between-songs .bs-caption{font-size:clamp(14px,1.8vw,24px);font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-top:clamp(4px,1vh,12px)}
+#between-songs .bs-tips{display:flex;flex-direction:column;gap:clamp(2px,0.6vh,8px);margin-top:clamp(8px,1.6vh,20px)}
+#between-songs .bs-tips-cta{font-size:clamp(16px,2vw,28px);font-weight:800;letter-spacing:5px;text-transform:uppercase;color:var(--gold);text-shadow:0 0 18px rgba(240,192,64,0.55);margin-bottom:clamp(2px,0.5vh,6px)}
+#between-songs .bs-tip{font-weight:900;font-size:clamp(30px,4.2vw,64px);line-height:1.15;letter-spacing:0.5px;white-space:nowrap;transform-origin:left center}
+#between-songs .bs-tip .bs-tip-app{font-weight:800;opacity:0.92}
+#between-songs .bs-tip-venmo{color:#2e9fff;text-shadow:0 0 14px rgba(0,140,255,0.8),0 0 44px rgba(0,140,255,0.4);animation:bsTipPulse 2.6s ease-in-out infinite}
+#between-songs .bs-tip-cashapp{color:#2ee56b;text-shadow:0 0 14px rgba(0,214,50,0.8),0 0 44px rgba(0,214,50,0.4);animation:bsTipPulse 2.6s ease-in-out 1.3s infinite}
+@keyframes bsTipPulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.035);filter:brightness(1.3)}}
+body.is-monitor #between-songs .bs-tip{transform-origin:center center}
+#between-songs .bs-tip-qrs{display:flex;flex-direction:row;justify-content:space-between;align-self:stretch;gap:clamp(16px,2.2vw,36px);margin-top:clamp(10px,1.8vh,22px)}
+#between-songs .bs-tip-qr{display:flex;flex-direction:column;align-items:center;gap:clamp(4px,0.8vh,10px)}
+#between-songs .bs-tip-qr-card{width:clamp(110px,16vh,190px);aspect-ratio:1;background:#fff;padding:5%;border-radius:10px;box-sizing:border-box}
+#between-songs .bs-tip-qr-card img{display:block;width:100%;height:100%;object-fit:contain}
+#between-songs .bs-tip-qr-label{font-size:clamp(21px,2.25vw,33px);font-weight:800;letter-spacing:1.5px;text-transform:uppercase;line-height:1.1}
+#between-songs .bs-tip-qr-venmo .bs-tip-qr-card{box-shadow:0 0 16px rgba(0,140,255,0.55),0 4px 18px rgba(0,0,0,0.5)}
+#between-songs .bs-tip-qr-venmo .bs-tip-qr-label{color:#2e9fff;text-shadow:0 0 12px rgba(0,140,255,0.6)}
+#between-songs .bs-tip-qr-cashapp .bs-tip-qr-card{box-shadow:0 0 16px rgba(0,214,50,0.55),0 4px 18px rgba(0,0,0,0.5)}
+#between-songs .bs-tip-qr-cashapp .bs-tip-qr-label{color:#2ee56b;text-shadow:0 0 12px rgba(0,214,50,0.6)}
+body.is-monitor #between-songs{justify-content:center}
+body.is-monitor #between-songs .bs-qr-wrap{display:none}
+body.is-monitor #between-songs .bs-details{align-items:center;text-align:center;flex:0 1 auto;transition-delay:0s}
 
 #lyric-slider{position:absolute;bottom:0;left:0;width:100%;z-index:25;background:linear-gradient(180deg,rgba(10,10,18,0),rgba(10,10,18,0.95) 15%,rgba(10,10,18,0.95) 100%);padding:28px 40px 22px;display:none;flex-direction:column;gap:12px;pointer-events:all}
 #lyric-slider.active{display:flex}
@@ -102,6 +397,188 @@ body.is-monitor html,body.is-monitor{cursor:default}
     <div id="loading-spinner"></div>
     <div id="loading-text"></div>
   </div>
+  <div id="donkey-buddy" class="mode-chill" aria-hidden="true">
+    <div class="dk-aura" aria-hidden="true"></div>
+    <div class="dk-aura-2" aria-hidden="true"></div>
+    <div class="dk-fx" aria-hidden="true">
+      <div class="dk-speedlines"></div>
+      <div class="dk-sparks"></div>
+      <div class="dk-chroma"></div>
+    </div>
+    <div class="dk-stage">
+      <div class="dk-lottie" id="dk-lottie" aria-hidden="true"></div>
+      <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <filter id="dk-bold" x="-20%" y="-20%" width="140%" height="140%">
+            <feMorphology in="SourceAlpha" operator="dilate" radius="1.15" result="dilated"/>
+            <feFlood flood-color="#1a0a2e" result="outlineColor"/>
+            <feComposite in="outlineColor" in2="dilated" operator="in" result="outline"/>
+            <feMerge>
+              <feMergeNode in="outline"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <linearGradient id="dk-body-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#c4a882"/>
+            <stop offset="45%" stop-color="#a88868"/>
+            <stop offset="100%" stop-color="#7a5c44"/>
+          </linearGradient>
+          <linearGradient id="dk-belly-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#f5e6c8"/>
+            <stop offset="100%" stop-color="#e8d4a8"/>
+          </linearGradient>
+        </defs>
+        <g class="dk-starburst" fill="none" stroke-linecap="round">
+          <path d="M100 14 L100 38" stroke="#ffe600" stroke-width="4"/>
+          <path d="M100 162 L100 186" stroke="#ff006e" stroke-width="4"/>
+          <path d="M14 100 L38 100" stroke="#00e5ff" stroke-width="4"/>
+          <path d="M162 100 L186 100" stroke="#06d6a0" stroke-width="4"/>
+          <path d="M34 34 L50 50" stroke="#ffbe0b" stroke-width="3.5"/>
+          <path d="M150 34 L134 50" stroke="#8338ec" stroke-width="3.5"/>
+          <path d="M34 166 L50 150" stroke="#fb5607" stroke-width="3.5"/>
+          <path d="M166 166 L150 150" stroke="#3a86ff" stroke-width="3.5"/>
+        </g>
+        <g class="dk-note dk-note-1" fill="#ffbe0b" stroke="#1a0a2e" stroke-width="3.5" stroke-linejoin="round">
+          <ellipse cx="26" cy="44" rx="9" ry="7"/>
+          <rect x="33" y="14" width="4" height="32" rx="1"/>
+          <path d="M37 14 Q50 8 50 24" fill="none" stroke="#ffbe0b" stroke-width="4"/>
+        </g>
+        <g class="dk-note dk-note-2" fill="#06d6a0" stroke="#1a0a2e" stroke-width="3.5" stroke-linejoin="round">
+          <ellipse cx="170" cy="38" rx="8" ry="6"/>
+          <rect x="176" y="12" width="3.5" height="28" rx="1"/>
+        </g>
+        <g class="dk-note dk-note-3" fill="#ff006e" stroke="#1a0a2e" stroke-width="3.5" stroke-linejoin="round">
+          <ellipse cx="154" cy="74" rx="7" ry="5.5"/>
+          <rect x="159" y="50" width="3.5" height="26" rx="1"/>
+        </g>
+        <!-- Character: limbs nested under body; CSS pivots at shoulders/hips/ear bases (view-box) -->
+        <g class="dk-body" filter="url(#dk-bold)">
+          <ellipse cx="100" cy="188" rx="46" ry="8" fill="#1a0a2e" opacity="0.3"/>
+
+          <!-- Tail from rump joint (62,128) -->
+          <g class="dk-tail">
+            <path d="M62 128 C48 122 34 128 24 146" fill="none" stroke="#1a0a2e" stroke-width="11" stroke-linecap="round"/>
+            <path d="M62 128 C48 122 34 128 24 146" fill="none" stroke="#8338ec" stroke-width="6" stroke-linecap="round"/>
+            <circle cx="62" cy="128" r="6" fill="#a88868" stroke="#1a0a2e" stroke-width="3"/>
+            <circle cx="22" cy="150" r="9" fill="#ff006e" stroke="#1a0a2e" stroke-width="3"/>
+            <circle cx="19" cy="146" r="2.4" fill="#fff" opacity="0.5"/>
+          </g>
+
+          <!-- Hind legs from hips -->
+          <g class="dk-leg-bl">
+            <path d="M80 150 L72 178" fill="none" stroke="#1a0a2e" stroke-width="15" stroke-linecap="round"/>
+            <path d="M80 150 L72 178" fill="none" stroke="#a88868" stroke-width="9" stroke-linecap="round"/>
+            <circle cx="80" cy="150" r="8" fill="#c4a882" stroke="#1a0a2e" stroke-width="3.5"/>
+            <ellipse cx="70" cy="182" rx="12" ry="7" fill="#3a2a1a" stroke="#1a0a2e" stroke-width="3"/>
+          </g>
+          <g class="dk-leg-br">
+            <path d="M120 150 L130 178" fill="none" stroke="#1a0a2e" stroke-width="15" stroke-linecap="round"/>
+            <path d="M120 150 L130 178" fill="none" stroke="#8a6a4a" stroke-width="9" stroke-linecap="round"/>
+            <circle cx="120" cy="150" r="8" fill="#b89870" stroke="#1a0a2e" stroke-width="3.5"/>
+            <ellipse cx="132" cy="182" rx="12" ry="7" fill="#3a2a1a" stroke="#1a0a2e" stroke-width="3"/>
+          </g>
+
+          <!-- Torso covers hip joints -->
+          <ellipse cx="100" cy="132" rx="40" ry="34" fill="url(#dk-body-grad)" stroke="#1a0a2e" stroke-width="4.5"/>
+          <ellipse cx="100" cy="140" rx="24" ry="20" fill="url(#dk-belly-grad)" stroke="#1a0a2e" stroke-width="3"/>
+          <ellipse cx="88" cy="120" rx="9" ry="5" fill="#fff" opacity="0.28"/>
+          <!-- Neck stump (head pivots from top of this) -->
+          <path d="M86 108 Q100 96 114 108" fill="url(#dk-body-grad)" stroke="#1a0a2e" stroke-width="3.5" stroke-linejoin="round"/>
+          <ellipse cx="100" cy="108" rx="16" ry="10" fill="url(#dk-body-grad)" stroke="#1a0a2e" stroke-width="3.5"/>
+
+          <!-- Front legs from shoulders (drawn under torso edge, joint pads on top after) -->
+          <g class="dk-leg-fl">
+            <path d="M74 118 L52 96" fill="none" stroke="#1a0a2e" stroke-width="14" stroke-linecap="round"/>
+            <path d="M74 118 L52 96" fill="none" stroke="#c4a882" stroke-width="8.5" stroke-linecap="round"/>
+            <circle cx="74" cy="118" r="8" fill="#c4a882" stroke="#1a0a2e" stroke-width="3.5"/>
+            <ellipse cx="46" cy="90" rx="11" ry="8" fill="#3a2a1a" stroke="#1a0a2e" stroke-width="3" transform="rotate(-28 46 90)"/>
+          </g>
+          <g class="dk-leg-fr">
+            <path d="M126 118 L150 96" fill="none" stroke="#1a0a2e" stroke-width="14" stroke-linecap="round"/>
+            <path d="M126 118 L150 96" fill="none" stroke="#b89870" stroke-width="8.5" stroke-linecap="round"/>
+            <circle cx="126" cy="118" r="8" fill="#b89870" stroke="#1a0a2e" stroke-width="3.5"/>
+            <ellipse cx="156" cy="90" rx="11" ry="8" fill="#3a2a1a" stroke="#1a0a2e" stroke-width="3" transform="rotate(28 156 90)"/>
+          </g>
+
+          <!-- Shoulder pads overlapping torso so arms read as attached -->
+          <circle cx="74" cy="118" r="7" fill="#a88868" stroke="#1a0a2e" stroke-width="3"/>
+          <circle cx="126" cy="118" r="7" fill="#a88868" stroke="#1a0a2e" stroke-width="3"/>
+          <circle cx="71" cy="115" r="2" fill="#fff" opacity="0.35"/>
+          <circle cx="123" cy="115" r="2" fill="#fff" opacity="0.35"/>
+
+          <!-- Head pivots at neck (100,102) -->
+          <g class="dk-head">
+            <g class="dk-mane">
+              <path d="M90 50 Q100 30 110 50" fill="#3a86ff" stroke="#1a0a2e" stroke-width="3.5" stroke-linejoin="round"/>
+              <path d="M94 52 Q100 38 106 52" fill="#00e5ff" stroke="#1a0a2e" stroke-width="2.5"/>
+            </g>
+            <!-- Ears from bases on skull -->
+            <g class="dk-ear-l">
+              <ellipse cx="74" cy="36" rx="12" ry="26" fill="#a88868" stroke="#1a0a2e" stroke-width="4" transform="rotate(-22 78 54)"/>
+              <ellipse cx="74" cy="38" rx="6" ry="15" fill="#ff6b9d" stroke="#1a0a2e" stroke-width="2.5" transform="rotate(-22 78 54)"/>
+              <circle cx="78" cy="54" r="5" fill="#a88868" stroke="#1a0a2e" stroke-width="2.5"/>
+            </g>
+            <g class="dk-ear-r">
+              <ellipse cx="126" cy="36" rx="12" ry="26" fill="#a88868" stroke="#1a0a2e" stroke-width="4" transform="rotate(22 122 54)"/>
+              <ellipse cx="126" cy="38" rx="6" ry="15" fill="#ff6b9d" stroke="#1a0a2e" stroke-width="2.5" transform="rotate(22 122 54)"/>
+              <circle cx="122" cy="54" r="5" fill="#a88868" stroke="#1a0a2e" stroke-width="2.5"/>
+            </g>
+            <!-- Skull overlaps ear bases -->
+            <ellipse cx="100" cy="70" rx="34" ry="30" fill="url(#dk-body-grad)" stroke="#1a0a2e" stroke-width="4.5"/>
+            <!-- neck collar overlap -->
+            <ellipse cx="100" cy="96" rx="14" ry="8" fill="url(#dk-body-grad)" stroke="#1a0a2e" stroke-width="3"/>
+            <ellipse cx="100" cy="86" rx="20" ry="14" fill="#e8d4a8" stroke="#1a0a2e" stroke-width="3.5"/>
+            <ellipse cx="93" cy="82" rx="4.5" ry="3.5" fill="#1a0a2e"/>
+            <ellipse cx="107" cy="82" rx="4.5" ry="3.5" fill="#1a0a2e"/>
+            <ellipse cx="88" cy="64" rx="7.5" ry="9.5" fill="#1a0a2e"/>
+            <ellipse cx="112" cy="64" rx="7.5" ry="9.5" fill="#1a0a2e"/>
+            <circle cx="90" cy="61" r="2.8" fill="#fff"/>
+            <circle cx="114" cy="61" r="2.8" fill="#fff"/>
+            <circle cx="91.5" cy="65" r="1.3" fill="#00e5ff"/>
+            <circle cx="115.5" cy="65" r="1.3" fill="#ff006e"/>
+            <ellipse cx="76" cy="76" rx="7" ry="4" fill="#ff006e" opacity="0.55"/>
+            <ellipse cx="124" cy="76" rx="7" ry="4" fill="#ff006e" opacity="0.55"/>
+            <ellipse class="dk-mouth" cx="100" cy="96" rx="10" ry="8" fill="#1a0a2e"/>
+            <ellipse class="dk-mouth" cx="100" cy="97" rx="5.5" ry="4" fill="#ff006e"/>
+            <ellipse cx="86" cy="54" rx="9" ry="5" fill="#fff" opacity="0.35" transform="rotate(-18 86 54)"/>
+          </g>
+        </g>
+      </svg>
+    </div>
+  </div>
+  <div id="qr-fly" class="mode-corner" title="https://karol.rideyrbike.com/">
+    <div class="qr-aura" aria-hidden="true"></div>
+    <div class="qr-aura-2" aria-hidden="true"></div>
+    <div class="qr-ghost qr-ghost-r" aria-hidden="true"><img src="request-qr.png" alt=""></div>
+    <div class="qr-ghost qr-ghost-b" aria-hidden="true"><img src="request-qr.png" alt=""></div>
+    <div class="qr-card"><img src="request-qr.png" alt="Request songs"></div>
+    <span class="qr-hero-label" aria-hidden="true">Song Requests</span>
+    <span class="qr-caption">Request songs</span>
+  </div>
+  <div id="between-songs" aria-hidden="true">
+    <div class="bs-qr-wrap" id="bs-qr-slot"></div>
+    <div class="bs-details">
+      <div class="bs-label" id="bs-label">Up next</div>
+      <div class="bs-singer" id="bs-singer">—</div>
+      <div class="bs-song" id="bs-song"></div>
+      <div class="bs-tips">
+        <div class="bs-tips-cta">Tip your DJ</div>
+        <div class="bs-tip bs-tip-venmo"><span class="bs-tip-app">Venmo</span> @karolpdx</div>
+        <div class="bs-tip bs-tip-cashapp"><span class="bs-tip-app">CashApp</span> $karolpdx</div>
+      </div>
+      <div class="bs-caption">Scan QR to request a song · karol.rideyrbike.com</div>
+      <div class="bs-tip-qrs">
+        <div class="bs-tip-qr bs-tip-qr-venmo">
+          <div class="bs-tip-qr-card"><img src="venmo-qr.png" alt="Venmo @karolpdx"></div>
+          <div class="bs-tip-qr-label">Venmo</div>
+        </div>
+        <div class="bs-tip-qr bs-tip-qr-cashapp">
+          <div class="bs-tip-qr-card"><img src="cashapp-qr.png" alt="CashApp $karolpdx"></div>
+          <div class="bs-tip-qr-label">CashApp</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="full-lyrics">
@@ -125,6 +602,8 @@ body.is-monitor html,body.is-monitor{cursor:default}
   </div>
 </div>
 
+<script src="lottie.min.js"></script>
+<script src="dance-moves.js"></script>
 <script>
 // ── Global error catch — prevents unhandled renderer crashes ──
 window.addEventListener('error', function(e) {
@@ -167,6 +646,8 @@ function destroyVideo() {
   // Clear any pending load timeout
   if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null; }
 
+  stopMicBuddyAudio();
+
   // Remove old video element from DOM
   if (currentVideoEl) {
     try {
@@ -177,13 +658,15 @@ function destroyVideo() {
     } catch(e) { console.error('[player] Video cleanup error:', e.message); }
     currentVideoEl = null;
   }
+  updateMicBuddyVisibility();
 }
 
 function createVideo() {
   // Create a fresh <video> element — no stale sources, no accumulated listeners
   var el = document.createElement('video');
   el.setAttribute('preload', 'auto');
-  el.setAttribute('crossorigin', 'anonymous');
+  // Do NOT set crossorigin — karol-file:// has no CORS headers; anonymous mode
+  // can stall local karaoke decode. Beat tap uses a parallel <audio> analyser.
   el.style.cssText = 'width:100%;height:100%;border:none;object-fit:contain;background:#000;display:block';
   // Singer monitor mirrors video+lyrics but must stay silent (HDMI owns audio)
   if (IS_MONITOR) {
@@ -236,11 +719,14 @@ api.on('player-event', function(event) {
   switch (event.type) {
     case 'play': handlePlay(event.videoId, event.isYouTube, event.title, event.requester); handleQueueUpdate(event.queue, event.currentIndex); break;
     case 'pause': handlePause(); break;
-    case 'stop': handleStop(); break;
+    case 'pause-interstitial': handlePauseInterstitial(event); break;
+    case 'resume': handleResume(); break;
+    case 'stop': setQrMode('corner'); pauseInterstitialActive = false; hideBetweenSongs(true); handleStop(); break;
     case 'seek': handleSeek(event.time); break;
     case 'sync-clock': handleSyncClock(event.time, event.state); break;
     case 'volume': handleVolume(event.level); break;
     case 'skip': handleSkip(); break;
+    case 'between-songs': handleBetweenSongs(event); break;
     case 'queue-update': handleQueueUpdate(event.queue, event.currentIndex); break;
     case 'toggle-lyric-slider': if (event.active) {
       // Load existing offset from disk before showing
@@ -272,27 +758,273 @@ api.on('player-event', function(event) {
   }
 });
 
+var QR_TRIP_MS = 2200;
+var qrTripAnim = null;
+var qrMode = 'corner'; // corner | hero
+var pauseInterstitialActive = false;
+
+function getQrFly() { return document.getElementById('qr-fly'); }
+
+function clearQrInlinePos(fly) {
+  fly.style.top = '';
+  fly.style.left = '';
+  fly.style.right = '';
+  fly.style.width = '';
+}
+
+function setQrMode(mode) {
+  var fly = getQrFly();
+  if (!fly) return;
+  if (mode === 'hero') {
+    var slot = document.getElementById('bs-qr-slot');
+    var layer = videoLayer.getBoundingClientRect();
+    if (slot) {
+      var slotR = slot.getBoundingClientRect();
+      // If slot is laid out (between-songs visible), snap to it
+      if (slotR.width > 40) {
+        fly.style.top = (slotR.top - layer.top) + 'px';
+        fly.style.left = (slotR.left - layer.left) + 'px';
+        fly.style.right = 'auto';
+        fly.style.width = slotR.width + 'px';
+      }
+    }
+    fly.classList.add('mode-hero');
+    fly.classList.remove('mode-corner');
+  } else {
+    clearQrInlinePos(fly);
+    fly.classList.add('mode-corner');
+    fly.classList.remove('mode-hero');
+  }
+  qrMode = mode;
+  updateMicBuddyVisibility();
+}
+
+/** Prismatic FLIP trip between corner ↔ hero. */
+function tripQr(toHero) {
+  return new Promise(function(resolve) {
+    if (IS_MONITOR) {
+      setQrMode(toHero ? 'hero' : 'corner');
+      resolve();
+      return;
+    }
+    var fly = getQrFly();
+    if (!fly) { resolve(); return; }
+
+    var want = toHero ? 'hero' : 'corner';
+    if (qrMode === want && !fly.classList.contains('tripping')) {
+      resolve();
+      return;
+    }
+
+    if (qrTripAnim) {
+      try { qrTripAnim.cancel(); } catch (e) {}
+      qrTripAnim = null;
+    }
+
+    var from = fly.getBoundingClientRect();
+    setQrMode(want);
+    void fly.offsetWidth;
+    var to = fly.getBoundingClientRect();
+    var dx = from.left - to.left;
+    var dy = from.top - to.top;
+    var sx = to.width ? from.width / to.width : 1;
+    var sy = to.height ? from.height / to.height : 1;
+
+    fly.classList.add('tripping');
+    fly.style.zIndex = '70';
+
+    qrTripAnim = fly.animate([
+      {
+        transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ',' + sy + ') rotate(-12deg)',
+        filter: 'hue-rotate(0deg) saturate(1.2) brightness(1.05)',
+        offset: 0
+      },
+      {
+        transform: 'translate(' + (dx * 0.62) + 'px,' + (dy * 0.18 - 48) + 'px) scale(' + ((sx + 1) / 2 * 1.5) + ') rotate(26deg)',
+        filter: 'hue-rotate(110deg) saturate(2.8) brightness(1.4)',
+        offset: 0.28
+      },
+      {
+        transform: 'translate(' + (dx * 0.28) + 'px,' + (dy * 0.55 + 36) + 'px) scale(' + ((sx + 1) / 2 * 1.28) + ') rotate(-20deg)',
+        filter: 'hue-rotate(230deg) saturate(2.3) brightness(1.45)',
+        offset: 0.58
+      },
+      {
+        transform: 'translate(' + (dx * 0.08) + 'px,' + (dy * 0.12) + 'px) scale(' + ((sx + 1) / 2 * 1.08) + ') rotate(6deg)',
+        filter: 'hue-rotate(300deg) saturate(1.8) brightness(1.2)',
+        offset: 0.82
+      },
+      {
+        transform: 'none',
+        filter: 'none',
+        offset: 1
+      }
+    ], {
+      duration: QR_TRIP_MS,
+      easing: 'cubic-bezier(0.22, 1.15, 0.28, 1)',
+      fill: 'forwards'
+    });
+
+    function finish() {
+      fly.classList.remove('tripping');
+      fly.style.transform = '';
+      fly.style.filter = '';
+      fly.style.zIndex = '';
+      qrTripAnim = null;
+      resolve();
+    }
+    qrTripAnim.onfinish = finish;
+    qrTripAnim.oncancel = finish;
+  });
+}
+
 function handlePlay(videoId, isYT, title, requester) {
   // Guard: don't restart the same video that's already playing
   if (currentVideoId === videoId && playerState === 'playing') return;
-  currentVideoId = videoId;
-  isYouTube = isYT !== false;
 
-  // Fully destroy previous video pipeline before starting new one
+  // Bare play (no videoId) while paused → resume current track
+  if (!videoId && (pauseInterstitialActive || playerState === 'paused')) {
+    handleResume();
+    return;
+  }
+
+  var start = function() {
+    pauseInterstitialActive = false;
+    currentVideoId = videoId;
+    isYouTube = isYT !== false;
+
+    hideBetweenSongs(true);
+    hideLyrics();
+    hideFullLyrics();
+    lyricEngine = null;
+    stopProgressTimer();
+    destroyVideo();
+
+    updateMarquee(title || videoId, requester || '');
+    showLoading('Loading...');
+
+    if (isYouTube) {
+      playYouTube(videoId);
+    } else {
+      playLocal(videoId);
+    }
+  };
+
+  // Trip QR back to corner as the next track starts
+  var betweenActive = document.getElementById('between-songs').classList.contains('active') || qrMode === 'hero';
+  if (betweenActive && !IS_MONITOR) {
+    // Fade interstitial while QR flies home, then start playback
+    var el = document.getElementById('between-songs');
+    if (el) el.classList.remove('active');
+    tripQr(false).then(start);
+  } else {
+    setQrMode('corner');
+    start();
+  }
+}
+
+function handleBetweenSongs(event) {
+  pauseInterstitialActive = false;
+  hideLoading();
   hideLyrics();
   hideFullLyrics();
-  lyricEngine = null;
   stopProgressTimer();
   destroyVideo();
+  youtubeFrame.style.display = 'none';
+  youtubeFrame.src = '';
+  playerState = 'idle';
+  currentVideoId = null;
 
-  updateMarquee(title || videoId, requester || '');
-  showLoading('Loading...');
+  var singer = (event && event.singer) ? String(event.singer).trim() : '';
+  var title = (event && event.title) ? String(event.title).trim() : '';
+  var labelEl = document.getElementById('bs-label');
+  if (labelEl) labelEl.textContent = 'Up next';
+  document.getElementById('bs-singer').textContent = singer || 'Next up';
+  document.getElementById('bs-song').textContent = title || '';
+  document.getElementById('between-songs').classList.add('active');
+  document.getElementById('between-songs').setAttribute('aria-hidden', 'false');
+  videoLayer.classList.add('between-active');
+  if (event && event.queue) handleQueueUpdate(event.queue, event.currentIndex);
+  updateMarquee(title || '', singer || '');
+  console.log('[player] Between songs:', singer, title);
+  updateMicBuddyVisibility();
 
-  if (isYouTube) {
-    playYouTube(videoId);
-  } else {
-    playLocal(videoId);
+  // Let layout settle, then prismatic flight corner → hero
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() { tripQr(true); });
+  });
+}
+
+/** Pause current video and show between-songs-style interstitial (does NOT advance queue). */
+function handlePauseInterstitial(event) {
+  if (!isYouTube && currentVideoEl) {
+    try { currentVideoEl.pause(); } catch (e) {}
   }
+  stopMicBuddyAudio();
+  pauseInterstitialActive = true;
+  hideLoading();
+  hideLyrics();
+  // Keep video loaded under the overlay so resume can continue mid-track
+
+  var singer = (event && event.singer) ? String(event.singer).trim() : '';
+  var title = (event && event.title) ? String(event.title).trim() : '';
+  var label = (event && event.label) ? String(event.label).trim() : 'Up next';
+  var labelEl = document.getElementById('bs-label');
+  if (labelEl) labelEl.textContent = label || 'Up next';
+  document.getElementById('bs-singer').textContent = singer || 'Paused';
+  document.getElementById('bs-song').textContent = title || '';
+  document.getElementById('between-songs').classList.add('active');
+  document.getElementById('between-songs').setAttribute('aria-hidden', 'false');
+  videoLayer.classList.add('between-active');
+  if (event && event.queue) handleQueueUpdate(event.queue, event.currentIndex);
+  console.log('[player] Pause interstitial:', label, singer, title);
+  updateMicBuddyVisibility();
+
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() { tripQr(true); });
+  });
+}
+
+/** Hide pause interstitial, trip QR home, resume the same paused video. */
+function handleResume() {
+  var wasPause = pauseInterstitialActive;
+  pauseInterstitialActive = false;
+
+  var finish = function() {
+    var labelEl = document.getElementById('bs-label');
+    if (labelEl) labelEl.textContent = 'Up next';
+    hideBetweenSongs(true);
+    if (!isYouTube && currentVideoEl) {
+      currentVideoEl.play().catch(function(e) {
+        console.error('[player] Resume play failed:', e && e.message);
+      });
+      startMicBuddyAudio(currentVideoEl);
+    }
+    playerState = 'playing';
+    startProgressTimer();
+    reportState({ state: 'playing', currentTime: currentVideoEl ? currentVideoEl.currentTime : 0 });
+    updateMicBuddyVisibility();
+  };
+
+  var el = document.getElementById('between-songs');
+  var showing = (el && el.classList.contains('active')) || qrMode === 'hero' || wasPause;
+  if (showing && !IS_MONITOR) {
+    if (el) el.classList.remove('active');
+    tripQr(false).then(finish);
+  } else {
+    setQrMode('corner');
+    finish();
+  }
+}
+
+function hideBetweenSongs(instant) {
+  var el = document.getElementById('between-songs');
+  if (el) {
+    el.classList.remove('active');
+    el.setAttribute('aria-hidden', 'true');
+  }
+  videoLayer.classList.remove('between-active');
+  updateMicBuddyVisibility();
 }
 
 function playYouTube(videoId) {
@@ -301,6 +1033,10 @@ function playYouTube(videoId) {
 
   playerState = 'playing';
   hideLoading();
+  // YouTube iframe: no safe captureStream tap — idle dance only
+  stopMicBuddyAudio();
+  startMicBuddyIdle();
+  updateMicBuddyVisibility();
 }
 
 async function playLocal(videoId) {
@@ -313,6 +1049,10 @@ async function playLocal(videoId) {
     reportState({ state: 'error', error: 'File not found' });
     return;
   }
+
+  // Always dispose prior <video> before creating a new one (avoids stacked
+  // elements if playLocal is invoked outside handlePlay).
+  destroyVideo();
 
   // Create fresh video element (avoids createMediaElementSource bug)
   currentVideoEl = createVideo();
@@ -341,6 +1081,8 @@ async function playLocal(videoId) {
     hideLoading();
     startProgressTimer();
     reportState({ state: 'playing' });
+    startMicBuddyAudio(currentVideoEl);
+    updateMicBuddyVisibility();
     console.log('[player] Video started playing successfully');
   } catch(err) {
     if (played) return;
@@ -353,6 +1095,8 @@ async function playLocal(videoId) {
         currentVideoEl.play().then(function() {
           playerState = 'playing'; hideLoading();
           startProgressTimer(); reportState({ state: 'playing' });
+          startMicBuddyAudio(currentVideoEl);
+          updateMicBuddyVisibility();
         }).catch(function(e2) {
           console.error('[player] Resume play also failed:', e2.message);
           hideLoading();
@@ -386,7 +1130,9 @@ async function playLocal(videoId) {
 }
 
 function handlePause() {
+  // Prefer interstitial when main sends pause-interstitial; this is a plain pause fallback
   if (!isYouTube && currentVideoEl) currentVideoEl.pause();
+  updateMicBuddyVisibility();
 }
 
 function handleStop() {
@@ -395,6 +1141,7 @@ function handleStop() {
   if (isYouTube) { youtubeFrame.src = ''; youtubeFrame.style.display = 'none'; }
   playerState = 'idle'; currentVideoId = null;
   stopProgressTimer(); hideLoading();
+  updateMicBuddyVisibility();
 }
 
 function handleSkip() {
@@ -463,6 +1210,525 @@ function handleVolume(level) {
     console.error('[player] Audio anchor creation failed:', e.message);
   }
 })();
+
+// ── Karaoke dancing donkey (HDMI only) ──
+// Beat tap uses a parallel muted <audio> with the same karol-file src →
+// MediaElementSource → Analyser. Never captureStream / createMediaElementSource
+// on the playing <video> (those were observed to stall or kill HDMI decode).
+// YouTube / missing src → idle dance + clock pulse.
+var micBuddyEl = document.getElementById('donkey-buddy');
+var micBuddyRaf = null;
+var micBuddyCtx = null;
+var micBuddyAnalyser = null;
+var micBuddyFreq = null;
+var micBuddyMode = 'idle'; // idle | analyse
+var micBuddyEnergy = 0;
+var micBuddyBass = 0;
+var micBuddyTempo = 1; // animation speed multiplier (BPM / 120-ish)
+var micBuddyBpm = 120;
+var micBuddyPrevSpec = null;
+var micBuddyOnsetTimes = [];
+var micBuddyLastMode = 'chill';
+var micBuddyHitFlash = 0;
+var micBuddySpinKick = 0;
+var micBuddySlowmo = 1;
+var micBuddyArmTimer = null;
+var micBuddySyncTimer = null;
+var micBuddyWatchTimer = null;
+var micBuddyTapEl = null;
+var micBuddyLogged = false;
+var MIC_MODES = ['chill', 'groove', 'frenzy', 'peak'];
+
+// ── Lottie dance rig (bundled offline in dance-moves.js) ──
+// One rigged dancer per energy tier, rotated every ~8 bars within the tier
+// so long steady sections don't loop the same move forever. If the runtime
+// or animation data is missing/broken, the hand-rolled SVG donkey below
+// stays as the fallback and the widget never disappears.
+var dkLottie = null;
+var dkLottieOk = false;
+var dkLottieMove = null;
+var dkLottieContainer = document.getElementById('dk-lottie');
+var dkMoveSwitchAt = 0;
+var dkLastSpeed = 0;
+var dkBeatAccum = 0;
+var dkLastTickTime = 0;
+var dkRotFlip = false;
+var dkSilentSince = 0;
+var dkSilent = false;
+var DK_MOVE_POOLS = {
+  chill:  ['bear', 'chicken'],
+  groove: ['raccoon', 'bear'],
+  frenzy: ['floss', 'raccoon'],
+  peak:   ['party', 'floss']
+};
+
+function dkLottieLoad(move) {
+  if (!dkLottieOk || move === dkLottieMove) return;
+  try {
+    var data = window.KAROL_DANCES[move];
+    if (!data) return;
+    if (dkLottie) { try { dkLottie.destroy(); } catch (e) {} dkLottie = null; }
+    // Deep-copy: lottie mutates animationData, which breaks re-loading a move
+    dkLottie = lottie.loadAnimation({
+      container: dkLottieContainer,
+      renderer: 'svg',
+      loop: true,
+      autoplay: true,
+      animationData: JSON.parse(JSON.stringify(data)),
+      rendererSettings: { preserveAspectRatio: 'xMidYMid meet' }
+    });
+    dkLottie.setSpeed(dkLastSpeed || 1);
+    dkLottieMove = move;
+    dkMoveSwitchAt = performance.now();
+  } catch (e) {
+    dkLottieOk = false;
+    if (micBuddyEl) micBuddyEl.classList.remove('lottie-on');
+    console.log('[donkey-buddy] lottie move load failed, SVG donkey fallback:', e && e.message);
+  }
+}
+
+function dkLottieInit() {
+  if (IS_MONITOR || !micBuddyEl || !dkLottieContainer) return;
+  if (!window.lottie || !window.KAROL_DANCES) {
+    console.log('[donkey-buddy] lottie runtime/assets missing, SVG donkey fallback');
+    return;
+  }
+  dkLottieOk = true;
+  micBuddyEl.classList.add('lottie-on');
+  dkLottieLoad('bear');
+  if (dkLottieOk) {
+    console.log('[donkey-buddy] lottie dance rig active: ' + Object.keys(window.KAROL_DANCES).join(', '));
+  }
+}
+dkLottieInit();
+
+function micBuddySetMode(mode) {
+  if (!micBuddyEl || mode === micBuddyLastMode) return;
+  for (var i = 0; i < MIC_MODES.length; i++) {
+    micBuddyEl.classList.toggle('mode-' + MIC_MODES[i], MIC_MODES[i] === mode);
+  }
+  micBuddyLastMode = mode;
+}
+
+function updateMicBuddyVisibility() {
+  if (!micBuddyEl || IS_MONITOR) return;
+  var between = document.getElementById('between-songs');
+  var hide = pauseInterstitialActive
+    || qrMode === 'hero'
+    || (between && between.classList.contains('active'))
+    || playerState !== 'playing';
+  micBuddyEl.classList.toggle('visible', !hide);
+  micBuddyEl.setAttribute('aria-hidden', hide ? 'true' : 'false');
+  if (hide) {
+    micBuddyEl.classList.remove('hot');
+    micBuddySetMode('chill');
+    micBuddyEl.style.setProperty('--beat', '0');
+    micBuddyEl.style.setProperty('--glow', '0.25');
+    micBuddyEl.style.setProperty('--hop', '0px');
+    micBuddyEl.style.setProperty('--squash', '1');
+    micBuddyEl.style.setProperty('--tilt', '0deg');
+    micBuddyEl.style.setProperty('--shake-x', '0px');
+    micBuddyEl.style.setProperty('--shake-y', '0px');
+    micBuddyEl.style.setProperty('--spin', '0deg');
+    micBuddyEl.style.setProperty('--flash', '0');
+    micBuddyEl.style.setProperty('--tempo', '1');
+    micBuddyEl.style.setProperty('--hue', '0deg');
+    micBuddyEl.style.setProperty('--burst', '0');
+    micBuddyEl.style.setProperty('--bpm', '120');
+    micBuddyEl.style.setProperty('--slowmo', '1');
+    micBuddySlowmo = 1;
+  }
+}
+
+function micBuddyClearTimers() {
+  if (micBuddyArmTimer) { clearTimeout(micBuddyArmTimer); micBuddyArmTimer = null; }
+  if (micBuddySyncTimer) { clearInterval(micBuddySyncTimer); micBuddySyncTimer = null; }
+  if (micBuddyWatchTimer) { clearInterval(micBuddyWatchTimer); micBuddyWatchTimer = null; }
+}
+
+function micBuddyDestroyTap() {
+  if (micBuddyTapEl) {
+    try {
+      micBuddyTapEl.pause();
+      micBuddyTapEl.removeAttribute('src');
+      micBuddyTapEl.load();
+      if (micBuddyTapEl.parentNode) micBuddyTapEl.parentNode.removeChild(micBuddyTapEl);
+    } catch (e) {}
+    micBuddyTapEl = null;
+  }
+}
+
+function stopMicBuddyAudio() {
+  micBuddyClearTimers();
+  if (micBuddyRaf) {
+    cancelAnimationFrame(micBuddyRaf);
+    micBuddyRaf = null;
+  }
+  micBuddyDestroyTap();
+  micBuddyAnalyser = null;
+  micBuddyFreq = null;
+  micBuddyPrevSpec = null;
+  micBuddyOnsetTimes = [];
+  micBuddyMode = 'idle';
+  if (micBuddyCtx) {
+    try { micBuddyCtx.close(); } catch (e) {}
+    micBuddyCtx = null;
+  }
+}
+
+function startMicBuddyIdle() {
+  if (IS_MONITOR) return;
+  micBuddyMode = 'idle';
+  if (micBuddyRaf) return;
+  micBuddyTick();
+}
+
+function micBuddyDetachAnalyser(reason) {
+  micBuddyDestroyTap();
+  micBuddyAnalyser = null;
+  micBuddyFreq = null;
+  micBuddyPrevSpec = null;
+  micBuddyOnsetTimes = [];
+  micBuddyMode = 'idle';
+  if (micBuddyCtx) {
+    try { micBuddyCtx.close(); } catch (e) {}
+    micBuddyCtx = null;
+  }
+  if (micBuddySyncTimer) { clearInterval(micBuddySyncTimer); micBuddySyncTimer = null; }
+  if (!micBuddyLogged) {
+    micBuddyLogged = true;
+    console.log('[donkey-buddy] analyser detached → idle:', reason || 'unknown');
+  }
+}
+
+function micBuddyArmAnalyser(videoEl) {
+  if (!videoEl || IS_MONITOR) return false;
+  var srcUrl = videoEl.currentSrc || videoEl.src;
+  if (!srcUrl) {
+    if (!micBuddyLogged) {
+      micBuddyLogged = true;
+      console.log('[donkey-buddy] analysis unavailable, idle dance: no media src');
+    }
+    return false;
+  }
+  try {
+    var tap = document.createElement('audio');
+    tap.preload = 'auto';
+    tap.setAttribute('playsinline', '');
+    // Keep out of layout / a11y; MediaElementSource still receives samples
+    tap.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
+    tap.src = srcUrl;
+    document.body.appendChild(tap);
+    micBuddyTapEl = tap;
+
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    var ctx = new Ctx();
+    var src = ctx.createMediaElementSource(tap);
+    var analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.55;
+    // Analyse only — never connect to destination (would hear a second mix)
+    src.connect(analyser);
+
+    micBuddyCtx = ctx;
+    micBuddyAnalyser = analyser;
+    micBuddyFreq = new Uint8Array(analyser.frequencyBinCount);
+    micBuddyMode = 'analyse';
+    micBuddyPrevSpec = null;
+    micBuddyOnsetTimes = [];
+    if (ctx.state === 'suspended') ctx.resume().catch(function() {});
+
+    // Sync tap clock to the HDMI video; pause with it
+    var syncOnce = function() {
+      if (!micBuddyTapEl || !currentVideoEl || currentVideoEl !== videoEl) return;
+      try {
+        var vt = videoEl.currentTime || 0;
+        var drift = Math.abs((micBuddyTapEl.currentTime || 0) - vt);
+        if (drift > 0.35) micBuddyTapEl.currentTime = vt;
+        if (videoEl.paused || playerState !== 'playing') {
+          if (!micBuddyTapEl.paused) micBuddyTapEl.pause();
+        } else if (micBuddyTapEl.paused) {
+          micBuddyTapEl.play().catch(function() {});
+        }
+      } catch (e) {}
+    };
+    try { tap.currentTime = videoEl.currentTime || 0; } catch (e) {}
+    tap.play().catch(function(e) {
+      micBuddyDetachAnalyser('tap play failed: ' + (e && e.message));
+      startMicBuddyIdle();
+    });
+    micBuddySyncTimer = setInterval(syncOnce, 400);
+
+    // If the main video freezes, drop analysis (don't fight decode)
+    var lastT = videoEl.currentTime || 0;
+    var stuck = 0;
+    micBuddyWatchTimer = setInterval(function() {
+      if (!currentVideoEl || currentVideoEl !== videoEl) {
+        micBuddyDetachAnalyser('video replaced');
+        return;
+      }
+      if (videoEl.paused || playerState !== 'playing') {
+        stuck = 0;
+        lastT = videoEl.currentTime || 0;
+        return;
+      }
+      var t = videoEl.currentTime || 0;
+      if (t <= lastT + 0.01) {
+        stuck++;
+        if (stuck >= 6) { // ~2.4s frozen
+          micBuddyDetachAnalyser('playback stalled with analysis tap');
+          startMicBuddyIdle();
+        }
+      } else {
+        stuck = 0;
+        lastT = t;
+      }
+    }, 400);
+
+    if (!micBuddyLogged) {
+      micBuddyLogged = true;
+      console.log('[donkey-buddy] parallel audio analyser armed');
+    }
+    return true;
+  } catch (e) {
+    micBuddyDestroyTap();
+    if (!micBuddyLogged) {
+      micBuddyLogged = true;
+      console.log('[donkey-buddy] analysis unavailable, idle dance:', e && e.message);
+    }
+    micBuddyMode = 'idle';
+    return false;
+  }
+}
+
+function startMicBuddyAudio(videoEl) {
+  stopMicBuddyAudio();
+  micBuddyLogged = false;
+  if (IS_MONITOR || !videoEl) {
+    startMicBuddyIdle();
+    return;
+  }
+  // Idle immediately so the donkey is visible; arm analyser once A/V is healthy
+  startMicBuddyIdle();
+  var attempts = 0;
+  function tryArm() {
+    micBuddyArmTimer = null;
+    if (!currentVideoEl || currentVideoEl !== videoEl) return;
+    if (videoEl.paused || playerState !== 'playing') {
+      if (attempts++ < 20) {
+        micBuddyArmTimer = setTimeout(tryArm, 200);
+      } else if (!micBuddyLogged) {
+        micBuddyLogged = true;
+        console.log('[donkey-buddy] analysis unavailable, idle dance: video never playing');
+      }
+      return;
+    }
+    var t = videoEl.currentTime || 0;
+    if (t < 0.15 && attempts < 25) {
+      attempts++;
+      micBuddyArmTimer = setTimeout(tryArm, 120);
+      return;
+    }
+    micBuddyArmAnalyser(videoEl);
+  }
+  micBuddyArmTimer = setTimeout(tryArm, 180);
+}
+
+function micBuddyEstimateTempo(flux, now) {
+  // Spectral-flux onset → rolling BPM estimate
+  if (flux > 0.18) {
+    var last = micBuddyOnsetTimes[micBuddyOnsetTimes.length - 1];
+    if (!last || now - last > 180) {
+      micBuddyOnsetTimes.push(now);
+      if (micBuddyOnsetTimes.length > 12) micBuddyOnsetTimes.shift();
+      micBuddyHitFlash = 1;
+      if (flux > 0.32) micBuddySpinKick = 1;
+    }
+  }
+  if (micBuddyOnsetTimes.length >= 4) {
+    var intervals = [];
+    for (var i = 1; i < micBuddyOnsetTimes.length; i++) {
+      var dt = micBuddyOnsetTimes[i] - micBuddyOnsetTimes[i - 1];
+      if (dt > 220 && dt < 1400) intervals.push(dt);
+    }
+    if (intervals.length) {
+      intervals.sort(function(a, b) { return a - b; });
+      var mid = intervals[Math.floor(intervals.length / 2)];
+      var bpm = 60000 / mid;
+      // Fold into musical range
+      while (bpm < 70) bpm *= 2;
+      while (bpm > 190) bpm /= 2;
+      micBuddyBpm += (bpm - micBuddyBpm) * 0.12;
+    }
+  }
+  // Map BPM → animation tempo: slow songs weighty (~0.7), fast snappy (~1.8)
+  var t = micBuddyBpm / 120;
+  micBuddyTempo += (Math.max(0.65, Math.min(1.95, t)) - micBuddyTempo) * 0.08;
+}
+
+function micBuddyPickMode(beat, tempo) {
+  // Energy gates + tempo bias so quiet/fast ≠ same as loud/slow
+  var score = beat * 0.72 + (tempo - 0.7) * 0.35;
+  if (score > 0.82 || (beat > 0.78 && tempo > 1.25)) return 'peak';
+  if (score > 0.52 || beat > 0.58) return 'frenzy';
+  if (score > 0.28 || beat > 0.32) return 'groove';
+  return 'chill';
+}
+
+function micBuddyTick() {
+  if (!micBuddyEl || IS_MONITOR) return;
+  var now = performance.now();
+  var energy = 0;
+  var bass = 0;
+  var flux = 0;
+
+  if (micBuddyMode === 'analyse' && micBuddyAnalyser && micBuddyFreq) {
+    micBuddyAnalyser.getByteFrequencyData(micBuddyFreq);
+    var len = micBuddyFreq.length;
+    var bassN = Math.min(16, len);
+    var midN = Math.min(48, len);
+    var bassSum = 0, midSum = 0, fluxSum = 0;
+    for (var i = 0; i < len; i++) {
+      var v = micBuddyFreq[i] / 255;
+      if (i < bassN) bassSum += v * (1.4 - i / bassN * 0.5);
+      if (i < midN) midSum += v;
+      if (micBuddyPrevSpec) {
+        var d = v - micBuddyPrevSpec[i];
+        if (d > 0) fluxSum += d;
+        micBuddyPrevSpec[i] = v;
+      }
+    }
+    if (!micBuddyPrevSpec) {
+      micBuddyPrevSpec = new Float32Array(len);
+      for (var j = 0; j < len; j++) micBuddyPrevSpec[j] = micBuddyFreq[j] / 255;
+    }
+    bass = bassSum / (bassN * 1.1);
+    energy = midSum / (midN * 0.95);
+    flux = fluxSum / (len * 0.35);
+    micBuddyEstimateTempo(flux, now);
+  } else if (currentVideoEl && !currentVideoEl.paused) {
+    // Wild idle loop keyed to playback clock (tempo-ish pulse)
+    var t = currentVideoEl.currentTime || 0;
+    var pulse = Math.abs(Math.sin(t * Math.PI * 2.4));
+    var kick = Math.abs(Math.sin(t * Math.PI * 1.15));
+    energy = 0.35 + 0.4 * pulse + 0.2 * kick;
+    bass = 0.3 + 0.45 * kick;
+    flux = pulse > 0.92 ? 0.4 : 0.05;
+    micBuddyBpm = 118 + 22 * Math.sin(t * 0.07);
+    micBuddyTempo = 0.9 + 0.35 * pulse + 0.2 * kick;
+    if (flux > 0.3) { micBuddyHitFlash = 1; micBuddySpinKick = 0.7; }
+  } else {
+    var idleT = now / 1000;
+    energy = 0.32 + 0.28 * Math.abs(Math.sin(idleT * 2.6));
+    bass = 0.28 + 0.22 * Math.abs(Math.sin(idleT * 1.4));
+    micBuddyTempo = 0.95 + 0.25 * Math.abs(Math.sin(idleT * 0.8));
+    if (Math.sin(idleT * 3.2) > 0.94) { micBuddyHitFlash = 0.85; micBuddySpinKick = 0.5; }
+  }
+
+  micBuddyEnergy += (energy - micBuddyEnergy) * 0.32;
+  micBuddyBass += (bass - micBuddyBass) * 0.38;
+  micBuddyHitFlash *= 0.86;
+  micBuddySpinKick *= 0.9;
+
+  var beat = Math.max(0, Math.min(1, micBuddyEnergy * 0.55 + micBuddyBass * 0.55));
+  var hit = micBuddyHitFlash;
+  var mode = micBuddyPickMode(beat, micBuddyTempo);
+  micBuddySetMode(mode);
+
+  // ── Silence gate: real analyser + low energy for >1.2s → near-still ──
+  if (micBuddyMode === 'analyse') {
+    if (beat < 0.13) {
+      if (!dkSilentSince) dkSilentSince = now;
+      if (now - dkSilentSince > 1200) dkSilent = true;
+    } else if (beat > 0.18) {
+      dkSilentSince = 0;
+      dkSilent = false;
+    }
+  } else {
+    dkSilentSince = 0;
+    dkSilent = false;
+  }
+
+  // ── Lottie dance rig drive ──
+  if (dkLottieOk && dkLottie) {
+    // Count beats to rotate moves every ~8 bars (32 beats) within a tier
+    var dt = dkLastTickTime ? Math.min(0.1, (now - dkLastTickTime) / 1000) : 0;
+    dkBeatAccum += dt * (micBuddyBpm / 60);
+    if (dkBeatAccum >= 32) {
+      dkBeatAccum = 0;
+      dkRotFlip = !dkRotFlip;
+    }
+    var pool = DK_MOVE_POOLS[mode] || DK_MOVE_POOLS.chill;
+    var desired = dkSilent ? 'chicken' : pool[dkRotFlip && pool.length > 1 ? 1 : 0];
+    if (desired !== dkLottieMove && now - dkMoveSwitchAt > 2500) {
+      dkLottieLoad(desired);
+    }
+    // Playback speed tracks tempo, lifted by energy, snapped by onsets
+    var speed;
+    if (dkSilent) {
+      speed = 0.1; // barely breathing while the room is quiet
+    } else {
+      speed = micBuddyTempo * (0.7 + beat * 0.65) + hit * 0.35;
+      speed = Math.max(0.15, Math.min(2.6, speed));
+    }
+    if (Math.abs(speed - dkLastSpeed) > 0.04) {
+      dkLastSpeed = speed;
+      try { dkLottie.setSpeed(speed); } catch (e) {}
+    }
+  }
+  dkLastTickTime = now;
+
+  // Near-still when silent: damp all container motion, keep a whisper of sway
+  var live = dkSilent ? 0.1 : 1;
+  beat = beat * live;
+  hit = hit * live;
+
+  // Slow-mo on quiet / low energy; gentle snap on onsets
+  var targetSlow;
+  if (hit > 0.4) targetSlow = 0.72;
+  else if (beat < 0.22) targetSlow = 1.55;
+  else if (beat < 0.4) targetSlow = 1.25;
+  else if (beat < 0.6) targetSlow = 1.05;
+  else targetSlow = 0.92;
+  var slowBlend = hit > 0.4 ? 0.35 : 0.06;
+  micBuddySlowmo += (targetSlow - micBuddySlowmo) * slowBlend;
+
+  // Weightier hops on slow tempo, snappier on fast — amp boosted so analyser
+  // energy is obvious even before CSS keyframe period catches tempo
+  var weight = 1.15 / Math.max(0.7, Math.min(1.6, micBuddyTempo));
+  // Lottie characters fill the box (no internal padding) — softer hop/squash
+  // so they bounce in place instead of leaving the top of the screen
+  var amp = dkLottieOk ? 0.5 : 1;
+  var hop = -Math.round((beat * 36 + hit * 28) * weight * (0.7 + 0.3 / Math.max(0.5, micBuddySlowmo)) * amp);
+  var squash = (1 + (beat * 0.32 + hit * 0.28) * amp).toFixed(3);
+  var tilt = (((beat - 0.3) * 26 + (hit - 0.3) * 18 * Math.sin(now / 90)) * amp).toFixed(2) + 'deg';
+  var glow = (0.22 + beat * 1.15 + hit * 0.5).toFixed(3);
+  var shakeX = ((hit * 14 + beat * 5) * Math.sin(now / 28) * amp).toFixed(1) + 'px';
+  var shakeY = ((hit * 12 + beat * 4) * Math.cos(now / 22) * amp).toFixed(1) + 'px';
+  var spin = (micBuddySpinKick * 36 * Math.sin(now / 55) * amp).toFixed(1) + 'deg';
+  var flash = Math.max(0, Math.min(1, hit * 1.1 + (mode === 'peak' ? beat * 0.4 : 0))).toFixed(3);
+  var burst = Math.max(0, Math.min(1, hit * 0.9 + (mode === 'peak' || mode === 'frenzy' ? beat * 0.55 : beat * 0.15))).toFixed(3);
+  var hue = Math.round(beat * 40 + hit * 80 + (mode === 'peak' ? now / 8 % 360 * 0.15 : 0));
+  // Lottie characters have real palettes — big hue-rotate turns them green.
+  if (dkLottieOk) hue = Math.min(hue, 10);
+
+  micBuddyEl.style.setProperty('--beat', beat.toFixed(3));
+  micBuddyEl.style.setProperty('--glow', glow);
+  micBuddyEl.style.setProperty('--hop', hop + 'px');
+  micBuddyEl.style.setProperty('--squash', squash);
+  micBuddyEl.style.setProperty('--tilt', tilt);
+  micBuddyEl.style.setProperty('--shake-x', shakeX);
+  micBuddyEl.style.setProperty('--shake-y', shakeY);
+  micBuddyEl.style.setProperty('--spin', spin);
+  micBuddyEl.style.setProperty('--flash', flash);
+  micBuddyEl.style.setProperty('--tempo', micBuddyTempo.toFixed(3));
+  micBuddyEl.style.setProperty('--bpm', Math.round(micBuddyBpm).toString());
+  micBuddyEl.style.setProperty('--slowmo', micBuddySlowmo.toFixed(3));
+  micBuddyEl.style.setProperty('--hue', hue + 'deg');
+  micBuddyEl.style.setProperty('--burst', burst);
+  micBuddyEl.classList.toggle('hot', beat > 0.5 || hit > 0.4);
+  micBuddyRaf = requestAnimationFrame(micBuddyTick);
+}
 
 function handleQueueUpdate(newQueue, newIndex) {
   queue = newQueue || [];
@@ -763,7 +2029,7 @@ function renderMarquee() {
     // Add Venmo/CashApp promo in the scroller after each full loop of queue
     html += '<div class="qm-tick"><span class="qm-tick-venmo">Venmo @karolpdx</span><span class="qm-tick-divider">\u2022</span><span class="qm-tick-venmo">CashApp $karolpdx</span></div>';
   }
-  if (!items.length) html = '<div class="qm-tick"><span class="qm-tick-singer" style="font-size:28px;color:var(--accent)">Queue is empty \u2014 add some songs</span></div>';
+  if (!items.length) html = '<div class="qm-tick"><span class="qm-tick-singer" style="color:var(--accent)">Queue is empty \u2014 add some songs</span></div>';
   inner.innerHTML = html;
   inner.style.animation = 'none'; inner.offsetHeight;
   // Slower scroll: 100s base, +10s per item

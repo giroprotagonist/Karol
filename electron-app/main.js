@@ -5,7 +5,24 @@ const { app, BrowserWindow, ipcMain, screen, protocol, session } = require('elec
 const path = require('path');
 const fs = require('fs');
 const { spawn, fork } = require('child_process');
+const os = require('os');
 let apiServerProcess = null;
+
+// Custom media scheme must be privileged BEFORE ready so <video> can stream
+// (HTTP range). Without stream:true, large local MP4s often stall at t=0.
+// Do NOT set standard:true — that changes URL host/path parsing for karol-file:///...
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'karol-file',
+    privileges: {
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 // ── Single-instance lock — prevent macOS reopen-dialog hangs ──
 const gotLock = app.requestSingleInstanceLock();
@@ -635,7 +652,240 @@ function createPlayer() {
   playWin.loadFile(PLAY_HTML);
 }
 
+function getLanIp() {
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets || {})) {
+      if (/^(en|wl|eth|wlan)/i.test(name)) {
+        for (const addr of nets[name]) {
+          if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+        }
+      }
+    }
+  } catch (e) {}
+  return '127.0.0.1';
+}
+
+function buildPhoneQueueItem(item, index) {
+  const videoId = item.videoId || '';
+  const baseId = String(videoId).replace(/-karaoke$/, '');
+  return {
+    id: index + ':' + videoId,
+    url: 'https://www.youtube.com/watch?v=' + baseId,
+    videoId,
+    title: item.title || videoId,
+    thumbnail: baseId ? ('https://i.ytimg.com/vi/' + baseId + '/hqdefault.jpg') : '',
+    status: index === queueIndex
+      ? (playback.state === 'playing' ? 'playing' : (playback.state === 'paused' ? 'queued' : 'playing'))
+      : 'queued',
+    requester: item.singer || item.requester || '',
+    channelTitle: item.singer || item.requester || '',
+  };
+}
+
+function buildPhoneQueueState() {
+  const items = queue.map((item, i) => buildPhoneQueueItem(item, i));
+  const current = queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null;
+  const baseId = current ? String(current.videoId || '').replace(/-karaoke$/, '') : '';
+  return {
+    ok: true,
+    electronMode: true,
+    queue: items,
+    currentIndex: queueIndex,
+    mode: 'queue',
+    isPlaying: playback.state === 'playing',
+    currentTitle: current ? (current.title || current.videoId) : '',
+    currentThumbnail: baseId ? ('https://i.ytimg.com/vi/' + baseId + '/hqdefault.jpg') : '',
+    currentTime: playback.currentTime || 0,
+    duration: playback.duration || 0,
+  };
+}
+
+function buildPhoneNowPlaying() {
+  if (queueIndex < 0 || queueIndex >= queue.length) {
+    return { title: '', videoId: '', thumbnail: '', currentTime: 0, duration: 0, state: -2 };
+  }
+  const item = queue[queueIndex];
+  const baseId = String(item.videoId || '').replace(/-karaoke$/, '');
+  const state = playback.state === 'playing' ? 1 : (playback.state === 'paused' ? 2 : (playback.state === 'ended' ? 0 : 2));
+  return {
+    ok: true,
+    title: item.title || item.videoId,
+    videoId: item.videoId,
+    thumbnail: baseId ? ('https://i.ytimg.com/vi/' + baseId + '/hqdefault.jpg') : '',
+    currentTime: playback.currentTime || 0,
+    duration: playback.duration || 0,
+    state,
+    volumeLevel: 1,
+    requester: item.singer || item.requester || '',
+  };
+}
+
+function findQueueIndexById(id) {
+  if (id == null || id === '') return -1;
+  const asNum = Number(id);
+  if (Number.isInteger(asNum) && asNum >= 0 && asNum < queue.length && String(asNum) === String(id)) {
+    return asNum;
+  }
+  const s = String(id);
+  // "index:videoId" form
+  const m = s.match(/^(\d+):/);
+  if (m) {
+    const idx = parseInt(m[1], 10);
+    if (idx >= 0 && idx < queue.length) return idx;
+  }
+  return queue.findIndex((item) => item.videoId === s || (item.id && item.id === s));
+}
+
+function handleDjApi(action, payload) {
+  switch (action) {
+    case 'status':
+      return {
+        ok: true,
+        electronMode: true,
+        status: 'online',
+        queueLength: queue.length,
+        currentTitle: queue[queueIndex]?.title || '',
+        volumeLevel: 1,
+      };
+    case 'now-playing':
+      return buildPhoneNowPlaying();
+    case 'queue-get':
+      return buildPhoneQueueState();
+    case 'queue-add': {
+      const videoId = payload.videoId || '';
+      const title = payload.title || videoId;
+      const requester = payload.requester || payload.singer || '';
+      if (!videoId && payload.url) {
+        const m = String(payload.url).match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+        if (m) payload.videoId = m[1];
+      }
+      const vid = resolveVid(payload.videoId || videoId);
+      if (!vid) return { ok: false, error: 'No videoId' };
+      queue.push({ videoId: vid, title: title || vid, singer: requester, requester });
+      if (queueIndex < 0) {
+        queueIndex = queue.length - 1;
+        sendPlay(vid, title || vid, requester);
+      }
+      saveState();
+      notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+      notifyPlayerQueue();
+      return { ok: true, videoId: vid, state: buildPhoneQueueState() };
+    }
+    case 'play-now': {
+      const vid = resolveVid(payload.videoId);
+      if (!vid) return { ok: false, error: 'No videoId' };
+      const title = payload.title || vid;
+      const requester = payload.requester || '';
+      const existingIdx = queue.findIndex((item) => item.videoId === vid);
+      if (existingIdx >= 0) queue.splice(existingIdx, 1);
+      queue.push({ videoId: vid, title, singer: requester, requester });
+      skipRequested = true;
+      clearBetweenSongsTimer();
+      queueIndex = queue.length - 1;
+      saveState();
+      sendPlay(vid, title, requester);
+      notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+      notifyPlayerQueue();
+      return { ok: true, state: buildPhoneQueueState() };
+    }
+    case 'queue-remove': {
+      let idx = payload.index;
+      if (idx == null && payload.id != null) idx = findQueueIndexById(payload.id);
+      if (idx == null || idx < 0 || idx >= queue.length) return { ok: false, error: 'Invalid index' };
+      if (idx === queueIndex) {
+        queue.splice(idx, 1);
+        if (queue.length === 0) {
+          queueIndex = -1;
+          notifyPlayer({ type: 'stop' });
+        } else {
+          queueIndex = queueIndex >= queue.length ? 0 : queueIndex;
+          clearBetweenSongsTimer();
+          sendPlay(queue[queueIndex].videoId, queue[queueIndex].title, queue[queueIndex].singer);
+        }
+      } else {
+        queue.splice(idx, 1);
+        if (idx < queueIndex) queueIndex--;
+      }
+      saveState();
+      notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+      notifyPlayerQueue();
+      return { ok: true, state: buildPhoneQueueState() };
+    }
+    case 'queue-clear':
+      queue = [];
+      queueIndex = -1;
+      playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
+      clearBetweenSongsTimer();
+      saveState();
+      notifyPlayer({ type: 'stop' });
+      notifyCtrl('queue-update', { queue: [], currentIndex: -1 });
+      notifyPlayerQueue();
+      return { ok: true, state: buildPhoneQueueState() };
+    case 'queue-reorder': {
+      const from = payload.fromIndex ?? payload.from;
+      const to = payload.toIndex ?? payload.to;
+      if (from < 0 || from >= queue.length || to < 0 || to >= queue.length) {
+        return { ok: false, error: 'Invalid indices', state: buildPhoneQueueState() };
+      }
+      const [item] = queue.splice(from, 1);
+      queue.splice(to, 0, item);
+      if (from === queueIndex) queueIndex = to;
+      else if (from < queueIndex && to >= queueIndex) queueIndex--;
+      else if (from > queueIndex && to <= queueIndex) queueIndex++;
+      saveState();
+      notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+      notifyPlayerQueue();
+      return { ok: true, state: buildPhoneQueueState() };
+    }
+    case 'queue-skip-to': {
+      let idx = payload.index ?? payload.idx;
+      if (idx == null && payload.id != null) idx = findQueueIndexById(payload.id);
+      if (idx == null || idx < 0 || idx >= queue.length) return { ok: false, error: 'Invalid index' };
+      skipRequested = true;
+      clearBetweenSongsTimer();
+      queueIndex = idx;
+      saveState();
+      sendPlay(queue[idx].videoId, queue[idx].title, queue[idx].singer || queue[idx].requester);
+      notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+      notifyPlayerQueue();
+      return { ok: true, state: buildPhoneQueueState(), nowPlaying: buildPhoneNowPlaying() };
+    }
+    case 'transport-play':
+      return doTransportPlay();
+    case 'transport-pause':
+      return doTransportPause();
+    case 'transport-skip':
+      advanceQueue(1);
+      return { ok: true, nowPlaying: buildPhoneNowPlaying(), state: buildPhoneQueueState() };
+    case 'transport-prev':
+      advanceQueue(-1);
+      return { ok: true, nowPlaying: buildPhoneNowPlaying(), state: buildPhoneQueueState() };
+    case 'transport-seek': {
+      const seconds = Number(payload.seconds ?? payload.time ?? 0);
+      notifyPlayer({ type: 'seek', time: seconds });
+      playback.currentTime = seconds;
+      return { ok: true, nowPlaying: buildPhoneNowPlaying() };
+    }
+    case 'transport-seek-relative': {
+      const delta = Number(payload.delta ?? 0);
+      const next = Math.max(0, (playback.currentTime || 0) + delta);
+      notifyPlayer({ type: 'seek', time: next });
+      playback.currentTime = next;
+      return { ok: true, nowPlaying: buildPhoneNowPlaying() };
+    }
+    case 'transport-volume': {
+      const level = Number(payload.level ?? payload.volume ?? 1);
+      notifyPlayer({ type: 'volume', level });
+      return { ok: true, volumeLevel: level, nowPlaying: buildPhoneNowPlaying() };
+    }
+    default:
+      return { ok: false, error: 'Unknown action: ' + action };
+  }
+}
+
 function sendPlay(videoId, title, requester) {
+  clearBetweenSongsTimer();
   if (!playWin || playWin.isDestroyed()) {
     pendingPlay = { videoId, title, requester };
     createPlayer();
@@ -656,6 +906,109 @@ function sendPlay(videoId, title, requester) {
     type: 'play', videoId: resolved, isYouTube: false, title: title || videoId, requester: requester || '',
     queue: queue, currentIndex: queueIndex,
   });
+}
+
+let betweenSongsTimer = null;
+const BETWEEN_SONGS_MS = 10000;
+
+function clearBetweenSongsTimer() {
+  if (betweenSongsTimer) {
+    clearTimeout(betweenSongsTimer);
+    betweenSongsTimer = null;
+  }
+}
+
+/** Payload for pause interstitial — prefer next singer, else current / paused tip. */
+function buildPauseInterstitialPayload() {
+  let singer = '';
+  let title = '';
+  let label = 'Up next';
+  if (queue.length > 1 && queueIndex >= 0) {
+    const next = queue[(queueIndex + 1) % queue.length];
+    singer = String(next.singer || next.requester || '').trim();
+    title = String(next.title || next.videoId || '').trim();
+    label = 'Up next';
+  } else if (queueIndex >= 0 && queueIndex < queue.length) {
+    const cur = queue[queueIndex];
+    singer = String(cur.singer || cur.requester || '').trim() || 'Paused';
+    title = String(cur.title || cur.videoId || '').trim();
+    label = 'Paused';
+  } else {
+    singer = 'Paused';
+    title = 'Scan QR to request a song';
+    label = 'Paused';
+  }
+  return {
+    type: 'pause-interstitial',
+    singer: singer || 'Next up',
+    title,
+    label,
+    queue,
+    currentIndex: queueIndex,
+  };
+}
+
+function doTransportPause() {
+  // Don't interrupt natural between-songs auto-advance with a pause interstitial
+  if (betweenSongsTimer) {
+    notifyPlayer({ type: 'pause' });
+    playback.state = 'paused';
+    return { ok: true, nowPlaying: buildPhoneNowPlaying() };
+  }
+  // Show interstitial over a live (or already paused) track — never advance queue
+  if (playback.state === 'playing' || playback.state === 'paused' || playback.videoId) {
+    clearBetweenSongsTimer();
+    sendToPlayers('player-event', buildPauseInterstitialPayload());
+    playback.state = 'paused';
+    notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+    return { ok: true, nowPlaying: buildPhoneNowPlaying() };
+  }
+  notifyPlayer({ type: 'pause' });
+  playback.state = 'paused';
+  return { ok: true, nowPlaying: buildPhoneNowPlaying() };
+}
+
+function doTransportPlay() {
+  // Resume same paused track (reverse QR trip) — do not call sendPlay / advance
+  if (playback.state === 'paused') {
+    sendToPlayers('player-event', { type: 'resume' });
+    playback.state = 'playing';
+    return { ok: true, nowPlaying: buildPhoneNowPlaying() };
+  }
+  notifyPlayer({ type: 'play' });
+  playback.state = 'playing';
+  return { ok: true, nowPlaying: buildPhoneNowPlaying() };
+}
+
+/** Show next-singer + big QR for 10s, then start playback. */
+function playAfterBetweenSongs(item) {
+  if (!item) return;
+  clearBetweenSongsTimer();
+  const singer = String(item.singer || item.requester || '').trim();
+  const title = String(item.title || item.videoId || '').trim();
+  sendToPlayers('player-event', {
+    type: 'between-songs',
+    singer: singer || 'Next up',
+    title,
+    queue,
+    currentIndex: queueIndex,
+  });
+  notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+  notifyPlayerQueue();
+  betweenSongsTimer = setTimeout(() => {
+    betweenSongsTimer = null;
+    sendPlay(item.videoId, item.title, item.singer || item.requester);
+    notifyPlayerQueue();
+  }, BETWEEN_SONGS_MS);
+}
+
+function advanceQueue(direction) {
+  if (queue.length === 0) return;
+  skipRequested = true;
+  queueIndex = (queueIndex + direction + queue.length) % queue.length;
+  const item = queue[queueIndex];
+  saveState();
+  playAfterBetweenSongs(item);
 }
 
 // Send queue state to player window whenever it changes
@@ -767,6 +1120,20 @@ function startApiServer() {
         requestId,
         job: job ? JSON.parse(JSON.stringify(job)) : null,
       });
+    }
+    if (msg && msg.type === 'dj-api') {
+      const { requestId, action, payload } = msg;
+      let result = { ok: false };
+      try {
+        result = handleDjApi(action, payload || {});
+      } catch (e) {
+        result = { ok: false, error: e.message };
+      }
+      try {
+        apiServerProcess.send({ type: 'dj-api-reply', requestId, result });
+      } catch (e) {
+        console.error('[karol] dj-api reply failed:', e.message);
+      }
     }
     if (msg && msg.type === 'web-karaoke-request') {
       const { videoId, url, requester, title } = msg;
@@ -907,10 +1274,20 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     callback(true);
   });
 
-  // Register media protocol
+  // Serve local media. stream:true privilege (registered above) is required so
+  // Chromium can range-request large MP4s; without it playback stalls at t=0.
+  // Prefer registerFileProtocol over protocol.handle(net.fetch) — the latter
+  // has been observed to hard-crash this Electron build on external-drive files.
   protocol.registerFileProtocol('karol-file', (request, callback) => {
-    const filePath = decodeURIComponent(request.url.replace('karol-file://', ''));
-    callback({ path: filePath });
+    try {
+      let filePath = decodeURIComponent(String(request.url || '').replace(/^karol-file:\/\//i, ''));
+      if (!filePath.startsWith('/')) filePath = '/' + filePath;
+      filePath = filePath.replace(/^\/+/, '/');
+      callback({ path: filePath });
+    } catch (e) {
+      console.error('[karol-file] Error:', request.url, e && e.message);
+      callback({ error: -6 }); // FILE_NOT_FOUND
+    }
   });
 
   // ── IPC ──
@@ -948,9 +1325,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
           const item = queue[queueIndex];
           if (item) {
             saveState();
-            sendPlay(item.videoId, item.title, item.singer || item.requester);
-            notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-            notifyPlayerQueue();
+            playAfterBetweenSongs(item);
           }
         }
       }
@@ -1097,8 +1472,8 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     return { title: '', state: -2 };
   });
 
-  ipcMain.on('transport-play', () => notifyPlayer({ type: 'play' }));
-  ipcMain.on('transport-pause', () => notifyPlayer({ type: 'pause' }));
+  ipcMain.on('transport-play', () => { doTransportPlay(); });
+  ipcMain.on('transport-pause', () => { doTransportPause(); });
   ipcMain.on('transport-skip', () => advanceQueue(1));
   ipcMain.on('transport-prev', () => advanceQueue(-1));
   ipcMain.on('transport-seek', (_e, t) => notifyPlayer({ type: 'seek', time: t }));
@@ -1129,17 +1504,6 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     }
   });
 
-  function advanceQueue(direction) {
-    if (queue.length === 0) return;
-    skipRequested = true;
-    queueIndex = (queueIndex + direction + queue.length) % queue.length;
-    const item = queue[queueIndex];
-    saveState();
-    sendPlay(item.videoId, item.title, item.singer || item.requester);
-    notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-    notifyPlayerQueue();
-  }
-
   ipcMain.on('launch-player', () => createPlayer());
   ipcMain.on('close-player', () => { if (playWin && !playWin.isDestroyed()) playWin.close(); });
   ipcMain.handle('monitor-mode-get', () => ({ enabled: !!(monitorModeEnabled && monitorWin && !monitorWin.isDestroyed()) }));
@@ -1149,6 +1513,21 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('app-version', () => '3.1.0');
   ipcMain.handle('display-info', () => screen.getAllDisplays().map(d => ({ id: d.id, label: d.label, bounds: d.bounds, isPrimary: d.id === screen.getPrimaryDisplay().id })));
+  ipcMain.handle('connection-info', () => {
+    const lanIp = getLanIp();
+    const port = 3131;
+    const url = 'http://' + lanIp + ':' + port + '/dj-controller/';
+    let qrDataUrl = '';
+    try {
+      const { execFileSync } = require('child_process');
+      const out = path.join('/tmp', 'karol-phone-connect-qr.png');
+      execFileSync('/opt/homebrew/bin/qrencode', ['-s', '8', '-m', '2', '-o', out, url], { timeout: 5000 });
+      qrDataUrl = 'data:image/png;base64,' + fs.readFileSync(out).toString('base64');
+    } catch (e) {
+      console.warn('[karol] QR generate failed:', e.message);
+    }
+    return { ok: true, url, lanIp, port, qrDataUrl };
+  });
 
   // ── Download / Request handlers ──
   ipcMain.handle('download-start', (_e, { videoId, karaoke, url }) => {

@@ -10,7 +10,11 @@
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 header{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 20px;position:sticky;top:0;z-index:10}
 header h1{font-size:1.1rem;font-weight:700;margin-bottom:4px}
-.stats{font-size:.78rem;color:var(--t2);display:flex;gap:14px;flex-wrap:wrap}
+.stats{font-size:.78rem;color:var(--t2);display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.tip-links{margin-left:auto;display:inline-flex;gap:10px;align-items:center}
+.tip-link{font-weight:600;text-decoration:none;font-size:.78rem}
+.tip-link:hover{text-decoration:underline;opacity:.9}
+.tip-venmo{color:var(--accent)}.tip-cashapp{color:var(--green)}
 .stats b{color:var(--accent)}
 .controls{padding:12px 20px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:68px;z-index:9}
 .controls input,.controls select{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--radius);font-size:.82rem}
@@ -57,6 +61,10 @@ a{color:var(--accent);text-decoration:none}
 <span>Library: <b id="statTotal">4662</b></span>
 <span>Karaoke: <b id="statKar" style="color:var(--accent)">4048</b></span>
 <span>Songs: <b id="statSng" style="color:var(--green)">614</b></span>
+<span class="tip-links">
+<a class="tip-link tip-venmo" href="https://venmo.com/karolpdx" target="_blank" rel="noopener">Venmo @karolpdx</a>
+<a class="tip-link tip-cashapp" href="https://cash.app/$karolpdx" target="_blank" rel="noopener">CashApp $karolpdx</a>
+</span>
 </div>
 </header>
 <div class="controls" id="controls">

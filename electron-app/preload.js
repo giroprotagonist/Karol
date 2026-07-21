@@ -101,6 +101,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
   app: {
     getVersion: () => ipcRenderer.invoke('app-version'),
     getDisplayInfo: () => ipcRenderer.invoke('display-info'),
+    connectionInfo: () => ipcRenderer.invoke('connection-info'),
   },
 
   // ── Health ──

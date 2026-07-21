@@ -148,8 +148,36 @@ function findCoverPath(filePath) {
   return null;
 }
 
-// ── YouTube DJ real handlers (playback via Electron app) ──
-// These serve as API stubs — all playback is handled by the Karol Electron desktop app
+// ── YouTube DJ real handlers (playback via Electron app IPC) ──
+function askElectron(action, payload = {}, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    if (!process.send) {
+      resolve({ ok: false, error: 'Electron IPC unavailable' });
+      return;
+    }
+    const requestId = `dj-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const timer = setTimeout(() => {
+      process.removeListener('message', onMsg);
+      resolve({ ok: false, error: 'Electron IPC timeout' });
+    }, timeoutMs);
+    function onMsg(msg) {
+      if (msg && msg.type === 'dj-api-reply' && msg.requestId === requestId) {
+        clearTimeout(timer);
+        process.removeListener('message', onMsg);
+        resolve(msg.result != null ? msg.result : { ok: false });
+      }
+    }
+    process.on('message', onMsg);
+    try {
+      process.send({ type: 'dj-api', requestId, action, payload });
+    } catch (e) {
+      clearTimeout(timer);
+      process.removeListener('message', onMsg);
+      resolve({ ok: false, error: e.message });
+    }
+  });
+}
+
 app.use(async (ctx, next) => {
   if (!ctx.path.startsWith('/api/youtube-dj/') && !ctx.path.startsWith('/api/youtube-karaoke/')) {
     return next();
@@ -162,55 +190,124 @@ app.use(async (ctx, next) => {
   }
 
   const method = ctx.method.toUpperCase();
-  const body = (method === 'POST' || method === 'PUT') ? ctx.request.body || {} : {};
+  const body = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? (ctx.request.body || {}) : {};
+  const p = ctx.path;
 
-  switch (ctx.path) {
+  try {
     // ── Status ──
-    case '/api/youtube-dj/status':
-    case '/api/youtube-dj/health':
-      ctx.body = { electronMode: true, status: 'online' };
-      break;
+    if (p === '/api/youtube-dj/status' || p === '/api/youtube-dj/health') {
+      const result = await askElectron('status');
+      ctx.body = { electronMode: true, status: 'online', ok: true, ...(result || {}) };
+      return;
+    }
 
-    case '/api/youtube-dj/now-playing':
-      ctx.body = { electronMode: true, nowPlaying: null };
-      break;
+    if (p === '/api/youtube-dj/now-playing') {
+      const result = await askElectron('now-playing');
+      ctx.body = result && result.ok !== false ? result : { title: '', videoId: '', currentTime: 0, duration: 0, state: -2 };
+      return;
+    }
 
-    // ── Queue read ──
-    case '/api/youtube-dj/queue':
+    // ── Queue read / add ──
+    if (p === '/api/youtube-dj/queue') {
       if (method === 'GET') {
-        ctx.body = { electronMode: true, queue: [] };
-      } else if (method === 'POST') {
-        ctx.body = { ok: true, electronMode: true };
+        ctx.body = await askElectron('queue-get');
+        return;
       }
-      break;
+      if (method === 'POST') {
+        ctx.body = await askElectron('queue-add', body);
+        return;
+      }
+    }
 
-    case '/api/youtube-dj/play-now':
-    case '/api/youtube-dj/queue/remove':
-    case '/api/youtube-dj/queue/clear':
-    case '/api/youtube-dj/queue/reorder':
-    case '/api/youtube-dj/queue/skip-to':
-      ctx.body = { ok: true, electronMode: true };
-      break;
+    if (p === '/api/youtube-dj/play-now') {
+      ctx.body = await askElectron('play-now', body);
+      return;
+    }
+    if (p === '/api/youtube-dj/queue/remove') {
+      ctx.body = await askElectron('queue-remove', body);
+      return;
+    }
+    if (p === '/api/youtube-dj/queue/clear') {
+      ctx.body = await askElectron('queue-clear');
+      return;
+    }
+    if (p === '/api/youtube-dj/queue/reorder') {
+      ctx.body = await askElectron('queue-reorder', {
+        fromIndex: body.fromIndex ?? body.from,
+        toIndex: body.toIndex ?? body.to,
+      });
+      return;
+    }
+    if (p === '/api/youtube-dj/queue/skip-to') {
+      ctx.body = await askElectron('queue-skip-to', body);
+      return;
+    }
+    if (p === '/api/youtube-dj/queue/sort' || p === '/api/youtube-dj/queue/shuffle-upcoming') {
+      // Not implemented in Electron queue yet — return current state
+      ctx.body = await askElectron('queue-get');
+      return;
+    }
+
+    // DELETE /api/youtube-dj/queue/:id
+    let m = p.match(/^\/api\/youtube-dj\/queue\/([^/]+)$/);
+    if (m && method === 'DELETE') {
+      ctx.body = await askElectron('queue-remove', { id: decodeURIComponent(m[1]) });
+      return;
+    }
+    // POST /api/youtube-dj/queue/:id/play
+    m = p.match(/^\/api\/youtube-dj\/queue\/([^/]+)\/play$/);
+    if (m && method === 'POST') {
+      ctx.body = await askElectron('queue-skip-to', { id: decodeURIComponent(m[1]) });
+      return;
+    }
 
     // ── Transport ──
-    case '/api/youtube-dj/transport/play':
-    case '/api/youtube-dj/transport/pause':
-    case '/api/youtube-dj/transport/skip-next':
-    case '/api/youtube-dj/transport/skip-prev':
-    case '/api/youtube-dj/transport/seek-relative':
-    case '/api/youtube-dj/transport/volume':
-      ctx.body = { ok: true, electronMode: true };
-      break;
+    if (p === '/api/youtube-dj/transport/play') {
+      ctx.body = await askElectron('transport-play');
+      return;
+    }
+    if (p === '/api/youtube-dj/transport/pause') {
+      ctx.body = await askElectron('transport-pause');
+      return;
+    }
+    if (p === '/api/youtube-dj/transport/skip-next') {
+      ctx.body = await askElectron('transport-skip');
+      return;
+    }
+    if (p === '/api/youtube-dj/transport/skip-prev') {
+      ctx.body = await askElectron('transport-prev');
+      return;
+    }
+    if (p === '/api/youtube-dj/transport/seek') {
+      ctx.body = await askElectron('transport-seek', { seconds: body.seconds ?? body.time ?? 0 });
+      return;
+    }
+    if (p === '/api/youtube-dj/transport/seek-relative') {
+      ctx.body = await askElectron('transport-seek-relative', { delta: body.delta ?? 0 });
+      return;
+    }
+    if (p === '/api/youtube-dj/transport/volume') {
+      ctx.body = await askElectron('transport-volume', { level: body.level ?? body.volume ?? 1 });
+      return;
+    }
 
     // ── Karaoke API compat ──
-    case '/api/youtube-karaoke/queue/add':
-      if (method === 'POST') {
-        ctx.body = { ok: true, electronMode: true };
-      }
-      break;
+    if (p === '/api/youtube-karaoke/queue/add' && method === 'POST') {
+      ctx.body = await askElectron('queue-add', body);
+      return;
+    }
 
-    default:
-      ctx.body = { ok: false, error: 'Unknown DJ endpoint: ' + ctx.path };
+    // Playlist stubs (phone UI optional tabs)
+    if (p === '/api/youtube-dj/playlist' || p.startsWith('/api/youtube-dj/playlists') || p === '/api/youtube-dj/sync' || p === '/api/youtube-dj/search') {
+      ctx.body = { ok: true, electronMode: true, config: { enabled: false, activePlaylistId: '', playlists: [], playlistId: '', playlistUrl: '', syncedVideoIds: [], lastSyncAt: null, lastSyncError: null, lastAddedCount: 0 }, results: [], result: { added: 0, removed: 0 } };
+      return;
+    }
+
+    ctx.body = { ok: false, error: 'Unknown DJ endpoint: ' + p };
+  } catch (e) {
+    console.error('[youtube-dj]', e.message);
+    ctx.status = 500;
+    ctx.body = { ok: false, error: e.message };
   }
 });
 
@@ -1105,15 +1202,43 @@ router.get('/api/ableton/template', (ctx) => {
 // ── Discovery endpoint (required by Android controller health check) ──
 router.get('/api/discover.json', (ctx) => {
   const lanIp = getLanIp();
+  const djControllerUrl = 'http://' + lanIp + ':' + PORT + '/dj-controller/';
   ctx.body = {
     name: 'Karol API Server',
     role: 'dj-host',
     ready: true,
     host: lanIp,
     port: PORT,
-    shareUrl: null,
+    shareUrl: djControllerUrl,
+    djControllerUrl,
+    controllerUrl: djControllerUrl,
     electronMode: true,
   };
+});
+
+// Phone connection QR (PNG) — always encodes the live LAN controller URL
+router.get('/api/connect-qr.png', async (ctx) => {
+  const lanIp = getLanIp();
+  const url = 'http://' + lanIp + ':' + PORT + '/dj-controller/';
+  const out = path.join('/tmp', 'karol-phone-connect-qr.png');
+  try {
+    const { execFileSync } = require('child_process');
+    execFileSync('/opt/homebrew/bin/qrencode', ['-s', '8', '-m', '2', '-o', out, url], { timeout: 5000 });
+    ctx.type = 'image/png';
+    ctx.set('Cache-Control', 'no-store');
+    ctx.set('X-Karol-Connect-Url', url);
+    ctx.body = fs.createReadStream(out);
+  } catch (e) {
+    ctx.status = 500;
+    ctx.type = 'application/json';
+    ctx.body = { ok: false, error: 'qrencode failed: ' + e.message, url };
+  }
+});
+
+router.get('/api/connect-info', (ctx) => {
+  const lanIp = getLanIp();
+  const url = 'http://' + lanIp + ':' + PORT + '/dj-controller/';
+  ctx.body = { ok: true, url, lanIp, port: PORT, role: 'dj-host' };
 });
 
 // ── Local Player Mode API (stubs — playback handled by Electron app) ──
@@ -2060,6 +2185,35 @@ if (actualLibraryDir) {
     ctx.body = fs.createReadStream(path.join(serveLibDashboard, 'index.html'));
   });
   console.log('Library Dashboard: http://' + getLanIp() + ':' + PORT + '/library/');
+}
+
+// ── Static: Phone DJ Controller (S24) ──
+const djControllerCandidates = [
+  path.resolve(__dirname, '..', 'dj-controller', 'dist'),
+  '/Users/macdonk/Documents/GitHub/Karol/dj-controller/dist',
+  path.join(process.resourcesPath || '', 'dj-controller'),
+].filter(Boolean);
+const djControllerDir = djControllerCandidates.find((d) => fs.existsSync(path.join(d, 'index.html')));
+if (djControllerDir) {
+  app.use(async (ctx, next) => {
+    if (!ctx.path.startsWith('/dj-controller') ) { await next(); return; }
+    const relPath = ctx.path === '/dj-controller' || ctx.path === '/dj-controller/'
+      ? 'index.html'
+      : ctx.path.slice('/dj-controller/'.length) || 'index.html';
+    const filePath = path.join(djControllerDir, relPath);
+    try {
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const ext = path.extname(filePath);
+        ctx.type = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : ext === '.svg' ? 'image/svg+xml' : ext === '.png' ? 'image/png' : 'application/octet-stream';
+        ctx.set('Cache-Control', ext === '.html' ? 'no-cache' : 'public, max-age=3600');
+        ctx.body = fs.createReadStream(filePath);
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    ctx.type = 'text/html';
+    ctx.body = fs.createReadStream(path.join(djControllerDir, 'index.html'));
+  });
+  console.log('DJ Controller (phone): http://' + getLanIp() + ':' + PORT + '/dj-controller/');
 }
 
 // ── Static: Ableton Mixer SPA (iPhone-friendly) ──
