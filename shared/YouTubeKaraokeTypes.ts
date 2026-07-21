@@ -137,6 +137,12 @@ export type YouTubeDjStatus = {
 	/** `direct` = android-player tablet host; `mac` or omitted = Karol on Mac */
 	hostMode?: 'direct' | 'mac';
 	showActive?: boolean;
+	karaokeActive?: boolean;
+	powerBlockerActive?: boolean;
+	onBattery?: boolean;
+	externalDisplayReady?: boolean;
+	closedDisplayReady?: boolean;
+	closedDisplayNote?: string;
 	queueLength?: number;
 	currentTitle?: string;
 	interstitialMessage?: string | null;

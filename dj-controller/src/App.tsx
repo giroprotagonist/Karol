@@ -38,6 +38,7 @@ import {
 	transportSkipNext,
 	transportSkipPrev,
 	transportVolume,
+	triggerFx,
 	fetchLibraryStatus,
 	fetchLibraryList,
 	fetchLibraryScan,
@@ -488,6 +489,16 @@ export default function App() {
 				<div className="banner tablet-alert-banner" role="alert">{status.interstitialMessage || status.lastPlaybackError}</div>
 			) : null}
 
+			{connected && !isDirectHost ? (
+				<div className={`clamshell-status ${status?.closedDisplayReady ? 'ready' : 'warn'}`}>
+					<span>{status?.closedDisplayReady ? 'Closed-lid ready' : 'Keep lid open'}</span>
+					<small>
+						{status?.closedDisplayNote
+							|| 'Connect external power and HDMI before closing the MacBook lid'}
+					</small>
+				</div>
+			) : null}
+
 			{error && !reconnecting ? (
 				<div className="banner error-banner" role="alert">
 					{error}
@@ -673,6 +684,7 @@ export default function App() {
 
 				{/* Tab: Player — full-screen transport controls */}
 				{activeTab === 'player' && (
+					<>
 					<NowPlayingCard
 						title={currentTitle}
 						videoId={currentVideoId}
@@ -747,6 +759,17 @@ export default function App() {
 						}}
 						libraryStatus={libraryStatus}
 					/>
+					<section className="show-fx-card" aria-label="Live show effects">
+						<div className="show-fx-title">Live FX</div>
+						<div className="show-fx-grid">
+							<button className="show-fx-btn sendit" onClick={() => void triggerFx(host, 'sendit')}>🚀 SEND IT</button>
+							<button className="show-fx-btn" onClick={() => void triggerFx(host, 'applause')}>👏 Applause</button>
+							<button className="show-fx-btn" onClick={() => void triggerFx(host, 'airhorn')}>📯 Air Horn</button>
+							<button className="show-fx-btn" onClick={() => void triggerFx(host, 'fire')}>🔥 Fire</button>
+							<button className="show-fx-btn" onClick={() => void triggerFx(host, 'encore')}>⭐ Encore</button>
+						</div>
+					</section>
+					</>
 				)}
 
 				{/* Tab: Add — search, queue URL, import playlist */}

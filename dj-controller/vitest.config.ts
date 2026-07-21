@@ -9,7 +9,7 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: {
-			'@common': resolve(__dirname, '../common'),
+			'@common': resolve(__dirname, '../shared'),
 		},
 	},
 });

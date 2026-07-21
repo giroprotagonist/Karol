@@ -291,6 +291,16 @@ app.use(async (ctx, next) => {
       return;
     }
 
+    // ── Live-show FX + karaoke power readiness ──
+    if (p === '/api/youtube-dj/fx' && method === 'POST') {
+      ctx.body = await askElectron('fx-trigger', { name: body.name });
+      return;
+    }
+    if (p === '/api/youtube-dj/karaoke-power') {
+      ctx.body = await askElectron('karaoke-power-status');
+      return;
+    }
+
     // ── Karaoke API compat ──
     if (p === '/api/youtube-karaoke/queue/add' && method === 'POST') {
       ctx.body = await askElectron('queue-add', body);
@@ -331,9 +341,15 @@ const LIBRARY_SEARCH_DIRS = [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const SCRIPTS_DIR = path.resolve(__dirname, '..', 'scripts');
 
-fs.mkdirSync(LIBRARY_DIR, { recursive: true });
-fs.mkdirSync(LIBRARY_KARAOKE_DIR, { recursive: true });
-fs.mkdirSync(LIBRARY_SONGS_DIR, { recursive: true });
+// The external archive may be unplugged or temporarily denied by macOS privacy.
+// Remote transport/FX must still start, so never crash the API server here.
+for (const dir of LIBRARY_SEARCH_DIRS) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    console.warn('[library] External directory unavailable:', dir, e.code || e.message);
+  }
+}
 
 // Determine the download directory for a video based on its tag
 function getDownloadDir(videoId) {
@@ -649,6 +665,30 @@ router.get('/api/queue/request/list', async (ctx) => {
     map = await mysql.requestMap() || {};
   } catch (e) { console.error('[requests] MySQL fetch error:', e.message); }
   ctx.body = { ok: true, requestMap: map, count: Object.keys(map).length };
+});
+
+// ── Crowd reactions: guests tap an emoji on their phone → floats up the HDMI screen ──
+const REACTION_EMOJI = new Set(['🔥', '❤️', '🤘', '👏', '😂']);
+const reactionCooldowns = new Map(); // ip -> last accepted ts
+router.post('/api/reaction', async (ctx) => {
+  const emoji = String((ctx.request.body || {}).emoji || '');
+  if (!REACTION_EMOJI.has(emoji)) {
+    ctx.status = 400;
+    ctx.body = { ok: false, error: 'Invalid reaction' };
+    return;
+  }
+  const ip = ctx.ip || 'unknown';
+  const now = Date.now();
+  if (now - (reactionCooldowns.get(ip) || 0) < 900) {
+    ctx.body = { ok: true, throttled: true };
+    return;
+  }
+  reactionCooldowns.set(ip, now);
+  if (reactionCooldowns.size > 5000) reactionCooldowns.clear();
+  if (process.send) {
+    try { process.send({ type: 'crowd-reaction', emoji }); } catch (e) {}
+  }
+  ctx.body = { ok: true };
 });
 
 // ── Minimal OSC bundle builder (plain UDP, no npm dep) ──

@@ -18,6 +18,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .tip-link{font-weight:600;text-decoration:none;font-size:0.7rem}
 .tip-link:hover{text-decoration:underline;opacity:.9}
 .tip-venmo{color:var(--accent)}.tip-cashapp{color:var(--green)}
+#reactionBar{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:150;display:flex;gap:6px;align-items:center;background:rgba(16,16,22,.95);border:1px solid var(--border);border-radius:26px;padding:6px 12px;box-shadow:0 4px 18px rgba(0,0,0,.5)}
+#reactionBar .rb-label{font-size:.62rem;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-right:2px}
+.rb-btn{background:none;border:none;font-size:1.5rem;line-height:1;padding:4px 6px;cursor:pointer;border-radius:50%}.rb-btn:active{transform:scale(1.5)}.rb-btn.cooling{opacity:.35;pointer-events:none}
+body{padding-bottom:72px}
 .custom-bar{display:flex;gap:6px;padding:8px 16px;flex-wrap:wrap;align-items:center;background:var(--bg2);border-bottom:1px solid var(--border)}
 .custom-bar input{flex:1;min-width:140px;max-width:360px;padding:5px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.82rem;outline:none}
 .custom-bar input:focus{border-color:var(--accent)}
@@ -153,6 +157,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   <tbody id="listBody"><tr><td colspan="8" class="loading"><span class="spin"></span> Fetching library...</td></tr></tbody>
 </table>
 <div class="toast" id="toast"></div>
+<div id="reactionBar" aria-label="Send a reaction to the karaoke screen">
+  <span class="rb-label">Cheer</span>
+  <button class="rb-btn" onclick="sendReaction(this,'🔥')">🔥</button>
+  <button class="rb-btn" onclick="sendReaction(this,'❤️')">❤️</button>
+  <button class="rb-btn" onclick="sendReaction(this,'🤘')">🤘</button>
+  <button class="rb-btn" onclick="sendReaction(this,'👏')">👏</button>
+  <button class="rb-btn" onclick="sendReaction(this,'😂')">😂</button>
+</div>
 
 <div id="requestModal">
   <div class="modal-box">
@@ -229,6 +241,7 @@ function observeImages(rootEl){
 
 // ── API ──
 function apiPost(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()})}
+function sendReaction(btn,emoji){if(btn.classList.contains('cooling'))return;btn.classList.add('cooling');setTimeout(function(){btn.classList.remove('cooling')},1000);apiPost('/api/reaction',{emoji:emoji}).catch(function(){})}
 function apiGet(path){return fetch(path).then(function(r){return r.json()})}
 
 // ── Status ──

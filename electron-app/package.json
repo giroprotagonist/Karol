@@ -45,6 +45,14 @@
       {
         "from": "../api-server",
         "to": "api-server"
+      },
+      {
+        "from": "../dj-controller/dist",
+        "to": "dj-controller"
+      },
+      {
+        "from": "../library-dashboard",
+        "to": "library-dashboard"
       }
     ]
   },

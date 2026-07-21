@@ -357,6 +357,54 @@ body.is-monitor #between-songs{justify-content:center}
 body.is-monitor #between-songs .bs-qr-wrap{display:none}
 body.is-monitor #between-songs .bs-details{align-items:center;text-align:center;flex:0 1 auto;transition-delay:0s}
 
+/* ── Showtime: singer entrance ── */
+#entrance{position:absolute;inset:0;z-index:75;display:none;flex-direction:column;align-items:center;justify-content:center;gap:clamp(8px,2vh,24px);pointer-events:none;overflow:hidden;background:radial-gradient(ellipse at center,rgba(12,7,24,0.5) 0%,rgba(2,2,6,0.9) 100%);--en-a:#f0c040;--en-b:#fff2b0}
+#entrance.active{display:flex}
+#entrance .en-spot{position:absolute;top:-40%;left:50%;width:52vw;height:170vh;transform-origin:top center;background:linear-gradient(to bottom,rgba(255,255,255,0.2),transparent 65%);filter:blur(26px);animation:enSpot 2.2s ease-in-out infinite alternate;mix-blend-mode:screen}
+#entrance .en-spot2{animation-delay:-1.1s;animation-direction:alternate-reverse;width:38vw;background:linear-gradient(to bottom,rgba(255,255,255,0.13),transparent 60%)}
+@keyframes enSpot{from{transform:translateX(-50%) rotate(-26deg)}to{transform:translateX(-50%) rotate(26deg)}}
+#entrance .en-label{font-size:clamp(22px,3vw,44px);font-weight:800;letter-spacing:8px;text-transform:uppercase;color:var(--en-b);text-shadow:0 0 24px var(--en-a);opacity:0;animation:enFadeUp .5s ease .15s both}
+#entrance .en-name{font-size:clamp(64px,11vw,200px);font-weight:900;line-height:1.02;text-align:center;max-width:94vw;word-wrap:break-word;color:var(--en-b);background:linear-gradient(180deg,var(--en-b) 20%,var(--en-a) 85%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 26px var(--en-a)) drop-shadow(0 6px 18px rgba(0,0,0,0.8));animation:enSlam .75s cubic-bezier(0.16,1.5,0.3,1) both}
+@keyframes enSlam{0%{transform:scale(3.4) rotate(-3deg);opacity:0}45%{transform:scale(0.92) rotate(0.5deg);opacity:1}70%{transform:scale(1.05)}100%{transform:scale(1)}}
+#entrance .en-song{font-size:clamp(24px,3.4vw,52px);font-weight:700;color:rgba(255,255,255,0.85);text-shadow:0 2px 12px rgba(0,0,0,0.8);opacity:0;animation:enFadeUp .5s ease .55s both;max-width:88vw;text-align:center}
+@keyframes enFadeUp{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:translateY(0)}}
+#entrance .en-p{position:absolute;bottom:-4vh;width:var(--sz);height:var(--sz);left:var(--x);background:var(--c);border-radius:2px;opacity:0;animation:enRise var(--dur) ease-out var(--delay) both}
+@keyframes enRise{0%{opacity:0;transform:translateY(0) rotate(0)}12%{opacity:1}100%{opacity:0;transform:translateY(-104vh) rotate(var(--rot))}}
+#video-layer.quake{animation:vlQuake .5s ease-out}
+@keyframes vlQuake{0%,100%{transform:none}20%{transform:translate(6px,-5px)}40%{transform:translate(-6px,4px)}60%{transform:translate(4px,3px)}80%{transform:translate(-3px,-3px)}}
+body.is-monitor #entrance{display:none !important}
+
+/* ── Showtime: song finale ── */
+#finale{position:absolute;inset:0;z-index:38;display:none;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:6vh;pointer-events:none;overflow:hidden;background:linear-gradient(to bottom,rgba(4,2,10,0.72) 0%,transparent 45%)}
+#finale.active{display:flex}
+#finale .fin-label{font-size:clamp(24px,3.4vw,52px);font-weight:800;letter-spacing:6px;text-transform:uppercase;color:var(--gold);text-shadow:0 0 24px rgba(240,192,64,0.8),0 2px 10px rgba(0,0,0,0.9);animation:finPulse 1.1s ease-in-out infinite}
+#finale .fin-name{font-size:clamp(48px,7.5vw,130px);font-weight:900;color:var(--white);line-height:1.05;text-align:center;max-width:92vw;text-shadow:0 0 34px rgba(240,192,64,0.65),0 4px 16px rgba(0,0,0,0.9);animation:finPulse 1.1s ease-in-out .2s infinite}
+@keyframes finPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.045)}}
+body.is-monitor #finale{display:none !important}
+
+/* ── Showtime: DJ FX layer ── */
+#fx-layer{position:absolute;inset:0;z-index:80;pointer-events:none;overflow:hidden}
+.fx-banner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:900;text-align:center;white-space:nowrap;text-transform:uppercase;font-size:clamp(70px,12vw,220px);color:#fff;letter-spacing:4px;text-shadow:0 0 30px rgba(255,255,255,0.7),0 0 90px var(--fxc,#8b5cf6),0 6px 20px rgba(0,0,0,0.9);animation:fxBanner var(--ms,3000ms) cubic-bezier(0.16,1.4,0.3,1) both}
+@keyframes fxBanner{0%{transform:translate(-50%,-50%) scale(3);opacity:0}18%{transform:translate(-50%,-50%) scale(0.95);opacity:1}30%{transform:translate(-50%,-50%) scale(1)}82%{opacity:1;transform:translate(-50%,-50%) scale(1.06)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.35)}}
+.fx-flash{position:absolute;inset:0;background:#fff;animation:fxFlash .55s ease-out both;mix-blend-mode:screen}
+@keyframes fxFlash{0%{opacity:0.95}100%{opacity:0}}
+.fx-c{position:absolute;top:-3vh;left:var(--x);width:var(--sz);height:calc(var(--sz) * 0.45);background:var(--c);opacity:0;animation:fxConfetti var(--dur) linear var(--delay) both}
+@keyframes fxConfetti{0%{opacity:1;transform:translateY(0) rotateZ(0) rotateX(0)}100%{opacity:0.9;transform:translateY(108vh) rotateZ(var(--rot)) rotateX(900deg)}}
+.fx-laser{position:absolute;top:-20%;left:var(--x);width:clamp(3px,0.4vw,7px);height:150%;transform-origin:top center;background:linear-gradient(to bottom,transparent,var(--c) 22%,var(--c) 70%,transparent);filter:blur(1px) drop-shadow(0 0 12px var(--c));animation:fxLaser 2.6s ease-in-out both;mix-blend-mode:screen}
+@keyframes fxLaser{0%{opacity:0;transform:rotate(-40deg)}12%{opacity:0.9}50%{transform:rotate(38deg)}88%{opacity:0.9}100%{opacity:0;transform:rotate(-32deg)}}
+.fx-flames{position:absolute;left:0;right:0;bottom:0;height:34vh;animation:fxFlamesIn 4s ease-out both;background:
+  radial-gradient(60% 130% at 10% 100%,rgba(255,106,0,0.85) 0%,rgba(255,60,0,0.4) 40%,transparent 70%),
+  radial-gradient(50% 150% at 35% 100%,rgba(255,180,0,0.8) 0%,rgba(255,106,0,0.35) 45%,transparent 72%),
+  radial-gradient(55% 140% at 60% 100%,rgba(255,80,0,0.85) 0%,rgba(255,140,0,0.4) 42%,transparent 70%),
+  radial-gradient(60% 150% at 88% 100%,rgba(255,160,0,0.8) 0%,rgba(255,60,0,0.35) 45%,transparent 72%);
+  filter:blur(6px);mix-blend-mode:screen}
+@keyframes fxFlamesIn{0%{opacity:0;transform:translateY(40%) scaleY(0.4)}12%{opacity:1;transform:none}55%{opacity:1;transform:scaleY(1.15)}100%{opacity:0;transform:translateY(20%) scaleY(0.6)}}
+
+/* ── Showtime: crowd reactions ── */
+#reaction-layer{position:absolute;inset:0;z-index:72;pointer-events:none;overflow:hidden}
+.rx{position:absolute;bottom:-8vh;left:var(--x);font-size:var(--sz);opacity:0;animation:rxFloat var(--dur) ease-out both;filter:drop-shadow(0 2px 8px rgba(0,0,0,0.6))}
+@keyframes rxFloat{0%{opacity:0;transform:translate(0,0) scale(0.4)}10%{opacity:1;transform:translate(calc(var(--drift) * 0.2),-12vh) scale(1.1)}50%{transform:translate(calc(var(--drift) * 0.7),-52vh) scale(1)}100%{opacity:0;transform:translate(var(--drift),-102vh) scale(0.85)}}
+
 #lyric-slider{position:absolute;bottom:0;left:0;width:100%;z-index:25;background:linear-gradient(180deg,rgba(10,10,18,0),rgba(10,10,18,0.95) 15%,rgba(10,10,18,0.95) 100%);padding:28px 40px 22px;display:none;flex-direction:column;gap:12px;pointer-events:all}
 #lyric-slider.active{display:flex}
 #lyric-slider label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);font-weight:700;text-align:center}
@@ -579,6 +627,19 @@ body.is-monitor #between-songs .bs-details{align-items:center;text-align:center;
       </div>
     </div>
   </div>
+  <div id="finale" aria-hidden="true">
+    <div class="fin-label">Make some noise for</div>
+    <div class="fin-name" id="fin-name">&mdash;</div>
+  </div>
+  <div id="entrance" aria-hidden="true">
+    <div class="en-spot"></div>
+    <div class="en-spot en-spot2"></div>
+    <div class="en-label" id="en-label">Now on stage</div>
+    <div class="en-name" id="en-name">&mdash;</div>
+    <div class="en-song" id="en-song"></div>
+  </div>
+  <div id="reaction-layer" aria-hidden="true"></div>
+  <div id="fx-layer" aria-hidden="true"></div>
 </div>
 
 <div id="full-lyrics">
@@ -693,6 +754,8 @@ function createVideo() {
 
   el.addEventListener('ended', function() {
     console.log('[player] Video ended naturally');
+    hideFinale();
+    hideEntrance();
     playerState = 'ended';
     stopProgressTimer();
     reportState({ state: 'ended' });
@@ -755,6 +818,8 @@ api.on('player-event', function(event) {
     case 'toggle-full-lyrics': if (event.active && event.lines && event.lines.length) {
       renderFullLyrics(event.lines, event.title || '');
     } else { hideFullLyrics(); } break;
+    case 'fx': handleFx(event.name); break;
+    case 'reaction': spawnReaction(event.emoji); break;
   }
 });
 
@@ -900,6 +965,12 @@ function handlePlay(videoId, isYT, title, requester) {
     stopProgressTimer();
     destroyVideo();
 
+    currentSingerName = String(requester || '').trim();
+    currentSongTitle = String(title || '').trim();
+    finaleShown = false;
+    hideFinale();
+    showEntrance(currentSingerName, currentSongTitle);
+
     updateMarquee(title || videoId, requester || '');
     showLoading('Loading...');
 
@@ -925,6 +996,8 @@ function handlePlay(videoId, isYT, title, requester) {
 
 function handleBetweenSongs(event) {
   pauseInterstitialActive = false;
+  hideFinale();
+  hideEntrance();
   hideLoading();
   hideLyrics();
   hideFullLyrics();
@@ -961,6 +1034,8 @@ function handlePauseInterstitial(event) {
     try { currentVideoEl.pause(); } catch (e) {}
   }
   stopMicBuddyAudio();
+  hideFinale();
+  hideEntrance();
   pauseInterstitialActive = true;
   hideLoading();
   hideLyrics();
@@ -1136,6 +1211,8 @@ function handlePause() {
 }
 
 function handleStop() {
+  hideFinale();
+  hideEntrance();
   destroyVideo();
   hideFullLyrics();
   if (isYouTube) { youtubeFrame.src = ''; youtubeFrame.style.display = 'none'; }
@@ -1746,6 +1823,7 @@ function startProgressTimer() {
     reportState({ state: playerState, currentTime: ct, duration: dur });
     if (lyricEngine) lyricEngine.update(ct);
     highlightFullLyrics(ct);
+    maybeShowFinale(ct, dur);
   }, 500);
 }
 
@@ -1763,6 +1841,300 @@ function reportState(state) {
       state: state.state || playerState, error: state.error || null
     });
   } catch(e) {}
+}
+
+// ── Showtime: entrance, finale, DJ FX, crowd reactions ──────────────
+
+var currentSingerName = '';
+var currentSongTitle = '';
+var finaleShown = false;
+var entranceTimer = null;
+var finaleSpawner = null;
+
+var ENTRANCE_THEMES = [
+  { label: '\uD83D\uDD25 Now on stage \uD83D\uDD25', a: '#ff6a00', b: '#ffd76a', confetti: ['#ff6a00','#ffd000','#ff2200','#ffaa00'] },
+  { label: '\u2728 Give it up for \u2728',           a: '#ff4fd8', b: '#ffd6f6', confetti: ['#ff4fd8','#4fd8ff','#ffe600','#b04fff'] },
+  { label: '\u26A1 Now on stage \u26A1',             a: '#00c8ff', b: '#c8f4ff', confetti: ['#00e5ff','#8b5cf6','#00ffb3','#4f8cff'] },
+  { label: '\uD83C\uDF1F The one and only \uD83C\uDF1F', a: '#f0c040', b: '#fff2b0', confetti: ['#f0c040','#ffffff','#ffe27a','#d9a520'] },
+  { label: '\uD83E\uDD18 Make it loud for \uD83E\uDD18', a: '#ff2244', b: '#ffb3c0', confetti: ['#ff2244','#ffffff','#8b0020','#ff7788'] }
+];
+
+function showEntrance(singer, title) {
+  if (IS_MONITOR || !singer) return;
+  var el = document.getElementById('entrance');
+  if (!el) return;
+  if (entranceTimer) { clearTimeout(entranceTimer); entranceTimer = null; }
+
+  var theme = ENTRANCE_THEMES[Math.floor(Math.random() * ENTRANCE_THEMES.length)];
+  el.style.setProperty('--en-a', theme.a);
+  el.style.setProperty('--en-b', theme.b);
+  document.getElementById('en-label').textContent = theme.label;
+  document.getElementById('en-name').textContent = singer;
+  document.getElementById('en-song').textContent = title || '';
+
+  // Fresh particle burst each time
+  Array.prototype.slice.call(el.querySelectorAll('.en-p')).forEach(function(p) { p.remove(); });
+  for (var i = 0; i < 36; i++) {
+    var p = document.createElement('div');
+    p.className = 'en-p';
+    p.style.setProperty('--x', (Math.random() * 100) + '%');
+    p.style.setProperty('--sz', (6 + Math.random() * 12) + 'px');
+    p.style.setProperty('--c', theme.confetti[i % theme.confetti.length]);
+    p.style.setProperty('--dur', (2.2 + Math.random() * 2) + 's');
+    p.style.setProperty('--delay', (Math.random() * 1.4) + 's');
+    p.style.setProperty('--rot', (Math.random() * 720 - 360) + 'deg');
+    el.appendChild(p);
+  }
+
+  // Restart the slam animation even if the element was just shown
+  el.classList.remove('active');
+  void el.offsetWidth;
+  el.classList.add('active');
+  el.setAttribute('aria-hidden', 'false');
+  videoLayer.classList.remove('quake');
+  void videoLayer.offsetWidth;
+  videoLayer.classList.add('quake');
+
+  entranceTimer = setTimeout(function() { hideEntrance(); }, 5000);
+}
+
+function hideEntrance() {
+  if (entranceTimer) { clearTimeout(entranceTimer); entranceTimer = null; }
+  var el = document.getElementById('entrance');
+  if (el) { el.classList.remove('active'); el.setAttribute('aria-hidden', 'true'); }
+  videoLayer.classList.remove('quake');
+}
+
+function maybeShowFinale(ct, dur) {
+  if (IS_MONITOR || finaleShown || playerState !== 'playing') return;
+  if (!dur || dur < 60 || !ct) return;
+  var remaining = dur - ct;
+  if (remaining > 0.5 && remaining <= 13) {
+    finaleShown = true;
+    showFinale(currentSingerName);
+  }
+}
+
+function showFinale(singer) {
+  var el = document.getElementById('finale');
+  if (!el) return;
+  document.getElementById('fin-name').textContent = (singer || 'this singer') + '!';
+  el.classList.add('active');
+  el.setAttribute('aria-hidden', 'false');
+  // Steady stream of claps/fire while the finale runs
+  if (finaleSpawner) clearInterval(finaleSpawner);
+  var finaleEmoji = ['\uD83D\uDC4F', '\uD83D\uDD25', '\uD83C\uDF89', '\uD83E\uDD18'];
+  var bursts = 0;
+  finaleSpawner = setInterval(function() {
+    spawnReaction(finaleEmoji[bursts % finaleEmoji.length]);
+    if (bursts % 2 === 0) spawnReaction(finaleEmoji[(bursts + 1) % finaleEmoji.length]);
+    bursts++;
+    if (bursts > 40) hideFinale();  // safety: never spin forever
+  }, 400);
+}
+
+function hideFinale() {
+  if (finaleSpawner) { clearInterval(finaleSpawner); finaleSpawner = null; }
+  var el = document.getElementById('finale');
+  if (el) { el.classList.remove('active'); el.setAttribute('aria-hidden', 'true'); }
+}
+
+// ── DJ FX ──
+
+function fxLayer() { return document.getElementById('fx-layer'); }
+
+function fxBanner(text, color, ms) {
+  var layer = fxLayer();
+  if (!layer) return;
+  var b = document.createElement('div');
+  b.className = 'fx-banner';
+  b.textContent = text;
+  b.style.setProperty('--fxc', color);
+  b.style.setProperty('--ms', ms + 'ms');
+  layer.appendChild(b);
+  setTimeout(function() { b.remove(); }, ms + 200);
+}
+
+function fxFlash() {
+  var layer = fxLayer();
+  if (!layer) return;
+  var f = document.createElement('div');
+  f.className = 'fx-flash';
+  layer.appendChild(f);
+  setTimeout(function() { f.remove(); }, 700);
+}
+
+function fxConfetti(count, colors) {
+  var layer = fxLayer();
+  if (!layer) return;
+  for (var i = 0; i < count; i++) {
+    var c = document.createElement('div');
+    c.className = 'fx-c';
+    c.style.setProperty('--x', (Math.random() * 100) + '%');
+    c.style.setProperty('--sz', (8 + Math.random() * 14) + 'px');
+    c.style.setProperty('--c', colors[i % colors.length]);
+    c.style.setProperty('--dur', (2 + Math.random() * 2.2) + 's');
+    c.style.setProperty('--delay', (Math.random() * 0.9) + 's');
+    c.style.setProperty('--rot', (Math.random() * 1080 - 540) + 'deg');
+    layer.appendChild(c);
+    (function(node, ttl) { setTimeout(function() { node.remove(); }, ttl); })(c, 5500);
+  }
+}
+
+function fxLasers() {
+  var layer = fxLayer();
+  if (!layer) return;
+  var colors = ['#ff006e', '#00e5ff', '#ffe600', '#8b5cf6', '#00ffb3', '#ff6a00'];
+  for (var i = 0; i < 6; i++) {
+    var l = document.createElement('div');
+    l.className = 'fx-laser';
+    l.style.setProperty('--x', (8 + i * 15 + Math.random() * 6) + '%');
+    l.style.setProperty('--c', colors[i]);
+    l.style.animationDelay = (i * 0.12) + 's';
+    layer.appendChild(l);
+    (function(node) { setTimeout(function() { node.remove(); }, 3600); })(l);
+  }
+}
+
+function fxFlames() {
+  var layer = fxLayer();
+  if (!layer) return;
+  var f = document.createElement('div');
+  f.className = 'fx-flames';
+  layer.appendChild(f);
+  setTimeout(function() { f.remove(); }, 4200);
+}
+
+function spawnEmojiBurst(emoji, count, staggerMs) {
+  var n = 0;
+  var iv = setInterval(function() {
+    spawnReaction(emoji);
+    if (++n >= count) clearInterval(iv);
+  }, staggerMs);
+}
+
+function handleFx(name) {
+  if (IS_MONITOR) return;
+  console.log('[player] FX:', name);
+  switch (String(name || '')) {
+    case 'sendit':
+      fxFlash();
+      fxBanner('SEND IT!', '#ff006e', 3400);
+      fxLasers();
+      fxConfetti(140, ['#ff006e', '#00e5ff', '#ffe600', '#8b5cf6', '#00ffb3', '#ff6a00', '#ffffff']);
+      spawnEmojiBurst('\uD83D\uDE80', 6, 300);
+      playFxSound('sendit');
+      break;
+    case 'applause':
+      fxBanner('\uD83D\uDC4F APPLAUSE \uD83D\uDC4F', '#f0c040', 3000);
+      spawnEmojiBurst('\uD83D\uDC4F', 22, 130);
+      break;
+    case 'airhorn':
+      fxBanner('\uD83D\uDCEF', '#00e5ff', 1600);
+      playFxSound('airhorn');
+      break;
+    case 'fire':
+      fxFlames();
+      fxBanner('\uD83D\uDD25 ON FIRE \uD83D\uDD25', '#ff6a00', 3000);
+      spawnEmojiBurst('\uD83D\uDD25', 18, 160);
+      break;
+    case 'encore':
+      fxBanner('ENCORE!', '#f0c040', 3400);
+      fxConfetti(80, ['#f0c040', '#ffffff', '#ffe27a', '#d9a520']);
+      spawnEmojiBurst('\u2B50', 12, 220);
+      break;
+  }
+}
+
+// Synthesized FX sounds (no assets, offline). Modest volume so they sit
+// on top of the karaoke mix without drowning it.
+var fxAudioCtx = null;
+function getFxAudioCtx() {
+  if (!fxAudioCtx) {
+    try { fxAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+  }
+  if (fxAudioCtx.state === 'suspended') { try { fxAudioCtx.resume(); } catch (e) {} }
+  return fxAudioCtx;
+}
+
+function playFxSound(kind) {
+  if (IS_MONITOR) return;
+  var ctx = getFxAudioCtx();
+  if (!ctx) return;
+  var now = ctx.currentTime;
+  try {
+    if (kind === 'airhorn') {
+      // Classic reggaeton horn: detuned saws, three stabs, pitch drop on the last
+      var master = ctx.createGain();
+      master.gain.setValueAtTime(0.16, now);
+      master.connect(ctx.destination);
+      [0, 0.22, 0.44].forEach(function(t, i) {
+        var last = i === 2;
+        [440, 446].forEach(function(freq) {
+          var o = ctx.createOscillator();
+          var g = ctx.createGain();
+          o.type = 'sawtooth';
+          o.frequency.setValueAtTime(freq, now + t);
+          if (last) o.frequency.exponentialRampToValueAtTime(freq * 0.6, now + t + 0.55);
+          g.gain.setValueAtTime(0.0001, now + t);
+          g.gain.exponentialRampToValueAtTime(0.5, now + t + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001, now + t + (last ? 0.6 : 0.16));
+          o.connect(g); g.connect(master);
+          o.start(now + t); o.stop(now + t + (last ? 0.7 : 0.2));
+        });
+      });
+    } else if (kind === 'sendit') {
+      // White-noise riser into a sub boom
+      var dur = 1.1;
+      var buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (i / data.length);
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      var bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(300, now);
+      bp.frequency.exponentialRampToValueAtTime(6000, now + dur);
+      var ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.12, now);
+      src.connect(bp); bp.connect(ng); ng.connect(ctx.destination);
+      src.start(now); src.stop(now + dur);
+
+      var boom = ctx.createOscillator();
+      var bg = ctx.createGain();
+      boom.type = 'sine';
+      boom.frequency.setValueAtTime(120, now + dur);
+      boom.frequency.exponentialRampToValueAtTime(38, now + dur + 0.5);
+      bg.gain.setValueAtTime(0.0001, now + dur);
+      bg.gain.exponentialRampToValueAtTime(0.35, now + dur + 0.02);
+      bg.gain.exponentialRampToValueAtTime(0.0001, now + dur + 0.7);
+      boom.connect(bg); bg.connect(ctx.destination);
+      boom.start(now + dur); boom.stop(now + dur + 0.8);
+    }
+  } catch (e) {
+    console.log('[player] FX sound failed:', e && e.message);
+  }
+}
+
+// ── Crowd reactions (phones → screen) ──
+
+var RX_MAX_LIVE = 70;
+
+function spawnReaction(emoji) {
+  var layer = document.getElementById('reaction-layer');
+  if (!layer) return;
+  if (layer.childElementCount >= RX_MAX_LIVE) return;
+  var span = document.createElement('span');
+  span.className = 'rx';
+  span.textContent = String(emoji || '\u2764\uFE0F').slice(0, 8);
+  span.style.setProperty('--x', (4 + Math.random() * 92) + '%');
+  span.style.setProperty('--sz', (34 + Math.random() * 44) + 'px');
+  span.style.setProperty('--dur', (2.8 + Math.random() * 1.6) + 's');
+  span.style.setProperty('--drift', (Math.random() * 120 - 60) + 'px');
+  layer.appendChild(span);
+  span.addEventListener('animationend', function() { span.remove(); });
+  // Fallback removal in case animationend never fires
+  setTimeout(function() { if (span.parentNode) span.remove(); }, 5500);
 }
 
 // ── Lyrics ──

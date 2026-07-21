@@ -1,7 +1,7 @@
 // Karol Electron — Stable Architecture
 // Absolute paths for modules, preload, and HTML to avoid resolution issues.
 
-const { app, BrowserWindow, ipcMain, screen, protocol, session } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, protocol, session, powerSaveBlocker, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, fork } = require('child_process');
@@ -328,6 +328,7 @@ function startDirectDownload(videoId, url) {
 let queue = [];
 let queueIndex = -1;
 let playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
+let volumeLevel = 1;
 let skipRequested = false;
 
 // ── State persistence ──
@@ -420,9 +421,51 @@ let ctrlWin = null;
 let playWin = null;
 let monitorWin = null;
 let monitorModeEnabled = false;
+let karaokePowerBlockerId = null;
 
 let pendingPlay = null;
 let isQuitting = false;
+
+function isKaraokeActive() {
+  return !!(playWin && !playWin.isDestroyed());
+}
+
+function getKaraokePowerStatus() {
+  const active = isKaraokeActive();
+  const onBattery = powerMonitor.isOnBatteryPower();
+  const externalDisplayReady = !!getExternalDisplay();
+  return {
+    karaokeActive: active,
+    powerBlockerActive: karaokePowerBlockerId !== null
+      && powerSaveBlocker.isStarted(karaokePowerBlockerId),
+    onBattery,
+    externalDisplayReady,
+    closedDisplayReady: active && !onBattery && externalDisplayReady,
+    closedDisplayNote: active && !onBattery && externalDisplayReady
+      ? 'Ready for macOS closed-display mode'
+      : 'Connect external power and an external display before closing the lid',
+  };
+}
+
+function updateKaraokePowerPolicy(reason) {
+  const shouldBlock = isKaraokeActive();
+  const blockerRunning = karaokePowerBlockerId !== null
+    && powerSaveBlocker.isStarted(karaokePowerBlockerId);
+
+  if (shouldBlock && !blockerRunning) {
+    // Keeps the external HDMI display lit and prevents idle system suspension.
+    // macOS itself still controls lid-close sleep; closed-display mode requires
+    // external power + external display (and a wake-capable input device).
+    karaokePowerBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+    console.log('[karol] Karaoke power blocker started', karaokePowerBlockerId,
+      reason ? `(${reason})` : '');
+  } else if (!shouldBlock && blockerRunning) {
+    powerSaveBlocker.stop(karaokePowerBlockerId);
+    console.log('[karol] Karaoke power blocker stopped',
+      reason ? `(${reason})` : '');
+    karaokePowerBlockerId = null;
+  }
+}
 
 // ── Window close handler — forces window destruction on macOS ──
 // On macOS, BrowserWindow.close() hides the window instead of destroying it.
@@ -451,6 +494,7 @@ function resolveVid(videoId) {
 function handlePlayerCrash() {
   const prevPlayWin = playWin;
   playWin = null;
+  updateKaraokePowerPolicy('player-crash');
 
   // Try to destroy the crashed window
   try { if (prevPlayWin && !prevPlayWin.isDestroyed()) prevPlayWin.destroy(); } catch(e) {}
@@ -618,6 +662,7 @@ function createPlayer() {
     fullscreen: !!ext,
     alwaysOnTop: !!ext,
   });
+  updateKaraokePowerPolicy('player-opened');
 
   playWin.webContents.on('console-message', (e, l, m) => console.log('[player]', m));
   playWin.webContents.on('did-finish-load', () => {
@@ -648,7 +693,10 @@ function createPlayer() {
 
   // ── Player window close → null out reference (don't quit app) ──
   playWin.on('close', onWindowClose);
-  playWin.on('closed', () => { playWin = null; });
+  playWin.on('closed', () => {
+    playWin = null;
+    updateKaraokePowerPolicy('player-closed');
+  });
   playWin.loadFile(PLAY_HTML);
 }
 
@@ -698,6 +746,7 @@ function buildPhoneQueueState() {
     currentThumbnail: baseId ? ('https://i.ytimg.com/vi/' + baseId + '/hqdefault.jpg') : '',
     currentTime: playback.currentTime || 0,
     duration: playback.duration || 0,
+    ...getKaraokePowerStatus(),
   };
 }
 
@@ -716,8 +765,9 @@ function buildPhoneNowPlaying() {
     currentTime: playback.currentTime || 0,
     duration: playback.duration || 0,
     state,
-    volumeLevel: 1,
+    volumeLevel,
     requester: item.singer || item.requester || '',
+    ...getKaraokePowerStatus(),
   };
 }
 
@@ -743,10 +793,16 @@ function handleDjApi(action, payload) {
       return {
         ok: true,
         electronMode: true,
+        hostMode: 'mac',
         status: 'online',
+        djActive: true,
+        castConnected: isKaraokeActive(),
+        captureReady: isKaraokeActive(),
+        showActive: isKaraokeActive(),
         queueLength: queue.length,
         currentTitle: queue[queueIndex]?.title || '',
-        volumeLevel: 1,
+        volumeLevel,
+        ...getKaraokePowerStatus(),
       };
     case 'now-playing':
       return buildPhoneNowPlaying();
@@ -876,9 +932,20 @@ function handleDjApi(action, payload) {
     }
     case 'transport-volume': {
       const level = Number(payload.level ?? payload.volume ?? 1);
-      notifyPlayer({ type: 'volume', level });
-      return { ok: true, volumeLevel: level, nowPlaying: buildPhoneNowPlaying() };
+      volumeLevel = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 1));
+      notifyPlayer({ type: 'volume', level: volumeLevel });
+      return { ok: true, volumeLevel, nowPlaying: buildPhoneNowPlaying() };
     }
+    case 'fx-trigger': {
+      const allowed = new Set(['sendit', 'applause', 'airhorn', 'fire', 'encore']);
+      const name = String(payload.name || '');
+      if (!allowed.has(name)) return { ok: false, error: 'Invalid FX' };
+      if (!isKaraokeActive()) createPlayer();
+      notifyPlayer({ type: 'fx', name });
+      return { ok: true, name, ...getKaraokePowerStatus() };
+    }
+    case 'karaoke-power-status':
+      return { ok: true, ...getKaraokePowerStatus() };
     default:
       return { ok: false, error: 'Unknown action: ' + action };
   }
@@ -1040,12 +1107,23 @@ app.whenReady().then(async () => {
     } else {
       createPlayer();
     }
+    updateKaraokePowerPolicy('display-added');
   });
   screen.on('display-removed', (_e, display) => {
     console.log('[karol] Display removed:', display.label || display.id);
+    updateKaraokePowerPolicy('display-removed');
   });
   screen.on('display-metrics-changed', () => {
     placePlayerOnExternalDisplay('display-metrics-changed');
+    updateKaraokePowerPolicy('display-metrics-changed');
+  });
+  powerMonitor.on('on-ac', () => {
+    console.log('[karol] External power connected');
+    updateKaraokePowerPolicy('on-ac');
+  });
+  powerMonitor.on('on-battery', () => {
+    console.log('[karol] Running on battery');
+    updateKaraokePowerPolicy('on-battery');
   });
 
   // Load library cache
@@ -1110,7 +1188,16 @@ function startApiServer() {
   apiServerProcess.stderr.on('data', (d) => console.error('[api-server]', d.toString().trim()));
   
   // IPC message handlers (shared with respawn)
+  const reactionTimes = []; // global flood guard: max 10 reactions/sec to the screen
   const handleApiMessage = (msg) => {
+    if (msg && msg.type === 'crowd-reaction') {
+      const now = Date.now();
+      while (reactionTimes.length && now - reactionTimes[0] > 1000) reactionTimes.shift();
+      if (reactionTimes.length < 10) {
+        reactionTimes.push(now);
+        notifyPlayer({ type: 'reaction', emoji: String(msg.emoji || '❤️').slice(0, 8) });
+      }
+    }
     if (msg && msg.type === 'web-karaoke-status') {
       const { videoId, requestId } = msg;
       const job = processingJobs[videoId] || null;
@@ -1478,6 +1565,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.on('transport-prev', () => advanceQueue(-1));
   ipcMain.on('transport-seek', (_e, t) => notifyPlayer({ type: 'seek', time: t }));
   ipcMain.on('transport-volume', (_e, l) => notifyPlayer({ type: 'volume', level: l }));
+  ipcMain.on('fx-trigger', (_e, name) => notifyPlayer({ type: 'fx', name: String(name || '').slice(0, 24) }));
   ipcMain.on('toggle-lyric-slider', (_e, active) => {
     notifyPlayer({ type: 'toggle-lyric-slider', active });
   });
@@ -1528,6 +1616,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     }
     return { ok: true, url, lanIp, port, qrDataUrl };
   });
+  ipcMain.handle('karaoke-power-status', () => ({ ok: true, ...getKaraokePowerStatus() }));
 
   // ── Download / Request handlers ──
   ipcMain.handle('download-start', (_e, { videoId, karaoke, url }) => {
@@ -1965,6 +2054,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (karaokePowerBlockerId !== null && powerSaveBlocker.isStarted(karaokePowerBlockerId)) {
+    powerSaveBlocker.stop(karaokePowerBlockerId);
+    karaokePowerBlockerId = null;
+  }
   if (apiServerProcess && !apiServerProcess.killed) {
     apiServerProcess.kill();
     console.log('[karol] API server stopped');

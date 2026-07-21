@@ -158,6 +158,95 @@ textarea {
 	color: #fbbf24;
 }
 
+.clamshell-status {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-bottom: 12px;
+	padding: 9px 12px;
+	border-radius: 12px;
+	border: 1px solid var(--border);
+	background: var(--bg-elevated);
+}
+
+.clamshell-status span {
+	flex-shrink: 0;
+	font-size: 0.78rem;
+	font-weight: 800;
+}
+
+.clamshell-status small {
+	color: var(--text-muted);
+	font-size: 0.68rem;
+	text-align: right;
+}
+
+.clamshell-status.ready {
+	border-color: rgba(52, 211, 153, 0.35);
+	background: var(--success-bg);
+}
+
+.clamshell-status.ready span {
+	color: var(--success);
+}
+
+.clamshell-status.warn {
+	border-color: rgba(251, 191, 36, 0.35);
+}
+
+.clamshell-status.warn span {
+	color: #fbbf24;
+}
+
+.show-fx-card {
+	margin-top: 14px;
+	padding: 14px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-card);
+}
+
+.show-fx-title {
+	margin-bottom: 10px;
+	color: var(--text-muted);
+	font-size: 0.72rem;
+	font-weight: 800;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+}
+
+.show-fx-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 8px;
+}
+
+.show-fx-btn {
+	min-height: 48px;
+	border: 1px solid var(--border-strong);
+	border-radius: 12px;
+	background: var(--bg-elevated);
+	color: var(--text);
+	font-weight: 750;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.show-fx-btn:active {
+	transform: scale(0.95);
+}
+
+.show-fx-btn.sendit {
+	grid-column: 1 / -1;
+	min-height: 58px;
+	border: none;
+	background: linear-gradient(135deg, #ff006e, #8b5cf6);
+	box-shadow: 0 8px 28px rgba(255, 0, 110, 0.28);
+	font-size: 1.05rem;
+	letter-spacing: 0.08em;
+}
+
 .tab-nav {
 	display: flex;
 	gap: 8px;

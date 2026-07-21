@@ -8,7 +8,7 @@ import type {
 	YouTubeKaraokeState,
 	YouTubeSearchResult,
 } from '@common/YouTubeKaraokeTypes';
-import type {
+
 type HardwareMixerState = {
 	micVolume: number;
 	micMuted: boolean;
@@ -401,6 +401,15 @@ export async function transportVolume(host: string, level: number): Promise<void
 	await request(host, '/transport/volume', {
 		method: 'POST',
 		body: JSON.stringify({ level }),
+	});
+}
+
+export type KarolFxName = 'sendit' | 'applause' | 'airhorn' | 'fire' | 'encore';
+
+export async function triggerFx(host: string, name: KarolFxName): Promise<void> {
+	await request(host, '/fx', {
+		method: 'POST',
+		body: JSON.stringify({ name }),
 	});
 }
 

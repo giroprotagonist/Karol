@@ -65,6 +65,15 @@ input,select{font-family:inherit}
 .transport-btn.neutral{background:var(--border);color:var(--text)}
 .transport-btn.neutral:hover{background:#2a2a44}
 
+/* ── DJ FX bar ── */
+#fx-bar{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+#fx-bar .fx-label{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--textDim);font-weight:700;margin-right:2px}
+.fx-btn{border:1px solid var(--border);background:var(--bg2,#16162a);color:var(--text);padding:7px 14px;border-radius:18px;font-size:13px;font-weight:700;cursor:pointer;transition:transform .08s,background .15s,box-shadow .15s;user-select:none}
+.fx-btn:hover{background:#2a2a44}
+.fx-btn:active{transform:scale(0.92)}
+.fx-btn.sendit{background:linear-gradient(135deg,#ff006e,#8b5cf6);color:#fff;border:none;font-size:14px;letter-spacing:1px;padding:8px 20px;box-shadow:0 0 14px rgba(255,0,110,0.45)}
+.fx-btn.sendit:hover{box-shadow:0 0 22px rgba(255,0,110,0.7);filter:brightness(1.1)}
+
 /* Main area */
 #main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 
@@ -293,6 +302,15 @@ body.dragging{cursor:col-resize;user-select:none}
     <button class="transport-btn neutral" id="btn-next" onclick="api.transport.skip()">⏭</button>
   </div>
 
+  <div id="fx-bar">
+    <span class="fx-label">FX</span>
+    <button class="fx-btn sendit" onclick="triggerFx('sendit')">🚀 SEND IT</button>
+    <button class="fx-btn" onclick="triggerFx('applause')">👏 Applause</button>
+    <button class="fx-btn" onclick="triggerFx('airhorn')">📯 Air Horn</button>
+    <button class="fx-btn" onclick="triggerFx('fire')">🔥 Fire</button>
+    <button class="fx-btn" onclick="triggerFx('encore')">⭐ Encore</button>
+  </div>
+
   <div id="queue-header">
     Queue (<span id="queue-count">0</span>)
     <button onclick="api.queue.clear().then(refreshQueue)">Clear All</button>
@@ -303,6 +321,7 @@ body.dragging{cursor:col-resize;user-select:none}
 
   <div id="status-bar">
     <div class="stat"><span class="dot online"></span> Player connected</div>
+    <div class="stat" id="power-status" title="macOS closed-display readiness">Power: checking…</div>
     <div class="stat">Library: <span id="lib-count">—</span> videos</div>
     <div id="request-status" class="stat" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
     <button id="player-window-btn" onclick="api.window.launchPlayer()">Show Player Window</button>
@@ -320,6 +339,11 @@ body.dragging{cursor:col-resize;user-select:none}
 
 <script>
 const api = window.karolAPI;
+
+// ── DJ FX (fires on the HDMI player screen) ──
+function triggerFx(name) {
+  if (api.fx && api.fx.trigger) api.fx.trigger(name);
+}
 
 // ── State ──
 let allVideos = [];
@@ -439,6 +463,28 @@ async function init() {
 
   refreshPhoneConnect();
   setInterval(refreshPhoneConnect, 60000);
+  refreshPowerStatus();
+  setInterval(refreshPowerStatus, 5000);
+}
+
+async function refreshPowerStatus() {
+  try {
+    var status = await api.app.powerStatus();
+    var el = document.getElementById('power-status');
+    if (!el || !status) return;
+    if (status.closedDisplayReady) {
+      el.innerHTML = '<span class="dot online"></span> Closed-lid ready';
+      el.title = 'External power + HDMI detected; Karol is blocking idle/display sleep';
+    } else if (status.onBattery) {
+      el.innerHTML = '<span class="dot offline"></span> Plug in power before closing lid';
+      el.title = status.closedDisplayNote || '';
+    } else {
+      el.innerHTML = '<span class="dot offline"></span> Connect HDMI before closing lid';
+      el.title = status.closedDisplayNote || '';
+    }
+  } catch (e) {
+    console.warn('[controller] power status failed:', e.message);
+  }
 }
 
 async function refreshPhoneConnect() {

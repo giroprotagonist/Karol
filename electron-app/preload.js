@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('karolAPI', {
     toggleFullLyrics: (videoId, show) => ipcRenderer.send('toggle-full-lyrics', { videoId, show }),
   },
 
+  // ── DJ effects (controller → player screen) ──
+  fx: {
+    trigger: (name) => ipcRenderer.send('fx-trigger', name),
+  },
+
   // ── Queue management ──
   queue: {
     add: (videoId, title, requester, url) =>
@@ -102,6 +107,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
     getVersion: () => ipcRenderer.invoke('app-version'),
     getDisplayInfo: () => ipcRenderer.invoke('display-info'),
     connectionInfo: () => ipcRenderer.invoke('connection-info'),
+    powerStatus: () => ipcRenderer.invoke('karaoke-power-status'),
   },
 
   // ── Health ──

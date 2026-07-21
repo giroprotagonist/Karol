@@ -15,6 +15,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .tip-link{font-weight:600;text-decoration:none;font-size:0.7rem}
 .tip-link:hover{text-decoration:underline;opacity:.9}
 .tip-venmo{color:var(--accent)}.tip-cashapp{color:var(--green)}
+/* ── Crowd reaction bar: taps fly up the karaoke screen ── */
+#reactionBar{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:150;display:flex;gap:6px;align-items:center;background:rgba(16,16,22,0.95);border:1px solid var(--border);border-radius:26px;padding:6px 12px;box-shadow:0 4px 18px rgba(0,0,0,.5);padding-bottom:calc(6px + env(safe-area-inset-bottom,0px))}
+#reactionBar .rb-label{font-size:0.62rem;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-right:2px}
+.rb-btn{background:none;border:none;font-size:1.5rem;line-height:1;padding:4px 6px;cursor:pointer;transition:transform .1s;border-radius:50%}
+.rb-btn:active{transform:scale(1.5)}
+.rb-btn.cooling{opacity:0.35;pointer-events:none}
+body{padding-bottom:72px}
 .btn-custom-url{background:var(--accent);color:#fff;border:none;padding:5px 12px;border-radius:var(--radius);cursor:pointer;font-size:0.78rem;font-weight:600;white-space:nowrap}
 .btn-custom-url:hover{opacity:0.9}
 .toolbar{display:flex;gap:8px;padding:8px 16px;flex-wrap:wrap;align-items:center;position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--border);max-width:100vw;overflow:hidden}
@@ -135,6 +142,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 </div>
 <div class="toast" id="toast"></div>
 
+<div id="reactionBar" aria-label="Send a reaction to the karaoke screen">
+  <span class="rb-label">Cheer</span>
+  <button class="rb-btn" onclick="sendReaction(this,'🔥')">🔥</button>
+  <button class="rb-btn" onclick="sendReaction(this,'❤️')">❤️</button>
+  <button class="rb-btn" onclick="sendReaction(this,'🤘')">🤘</button>
+  <button class="rb-btn" onclick="sendReaction(this,'👏')">👏</button>
+  <button class="rb-btn" onclick="sendReaction(this,'😂')">😂</button>
+</div>
+
 <div id="requestModal">
   <div class="modal-box">
     <h3>Add to Queue</h3>
@@ -234,6 +250,14 @@ function observeImages(rootEl){
 // ── API ──
 function apiPost(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()})}
 function apiGet(path){return fetch(path).then(function(r){return r.json()})}
+
+// ── Crowd reactions: fly up the karaoke screen (server enforces per-IP cooldown too) ──
+function sendReaction(btn, emoji){
+  if(btn.classList.contains('cooling')) return;
+  btn.classList.add('cooling');
+  setTimeout(function(){btn.classList.remove('cooling')},1000);
+  apiPost('/api/reaction',{emoji:emoji}).catch(function(){});
+}
 
 // ── Status ──
 function checkStatus(){
