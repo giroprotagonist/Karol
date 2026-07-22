@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const mysql = require('./karol-mysql');
+const { createMediaResolver } = require('../media-resolver');
 
 const PORT = parseInt(process.env.PORT, 10) || 3131;
 
@@ -326,7 +327,7 @@ app.use(async (ctx, next) => {
 // ═══════════════════════════════════════════════════════════════
 
 // External drive with full video archive (8,000+ karaoke mp4s)
-const EXTERNAL_DRIVE = '/Volumes/maxone';
+const EXTERNAL_DRIVE = process.env.KAROL_EXTERNAL_DRIVE || '/Volumes/maxone';
 const LIBRARY_DIR = path.join(EXTERNAL_DRIVE, 'Deskreen');
 const LIBRARY_KARAOKE_DIR = path.join(LIBRARY_DIR, 'karaoke');
 const LIBRARY_SONGS_DIR = path.join(LIBRARY_DIR, 'songs');
@@ -393,6 +394,14 @@ function getVideoPath(videoId) {
   if (found) return found;
   return path.join(LIBRARY_DIR, videoId + '.mp4'); // fallback expected path
 }
+
+const mediaResolver = createMediaResolver({
+  findLocal(videoId) {
+    const candidate = getVideoPath(videoId);
+    return fs.existsSync(candidate) ? candidate : null;
+  },
+  catalogLookup: (videoId) => mysql.catalogGetMedia(videoId),
+});
 
 function getInfoPath(videoId) {
   const found = _findInLibraryDirs((dir) => {
@@ -523,16 +532,69 @@ function resolveYoutubeTitle(videoId) {
   });
 }
 
+async function persistSongRequest(videoId, requester, title, sourceUrl = '', karaokeify = false, opts = {}) {
+  const result = await mysql.requestAdd(videoId, requester, title, sourceUrl, karaokeify, opts);
+  if (!result || result.ok === false || !result.id) {
+    throw new Error(result?.error || 'MySQL request insert failed');
+  }
+  return Number(result.id);
+}
+
+// Normalize the four request types; legacy karaokeify boolean maps to karaokify.
+const REQUEST_TYPES = new Set(['yt_karaoke', 'karaokify', 'jukebox', 'by_name']);
+function normalizeRequestType(rawType, karaokeify) {
+  const t = String(rawType || '').trim();
+  if (REQUEST_TYPES.has(t)) return t;
+  if (t === 'karaokeify') return 'karaokify';
+  return karaokeify ? 'karaokify' : 'jukebox';
+}
+
+// Handoff is claim-based: rows are atomically claimed from MySQL, sent to
+// Electron over IPC, and only marked `preparing` once Electron ACKs that the
+// request is durably in its local queue. `playing` is set only when the
+// player actually starts the track. Failed handoffs release the lease so the
+// poller can retry — requests are never stranded in `playing`.
+function scheduleRequestSync() {
+  setTimeout(() => { syncQueuedMysqlRequests().catch(() => {}); }, 50);
+}
+
 router.post('/api/queue/request', async (ctx) => {
   const body = ctx.request.body || {};
   let { videoId, name, title } = body;
   const url = body.url || '';
-  const karaokeify = !!body.karaokeify;
+  const requestType = normalizeRequestType(body.request_type, !!body.karaokeify);
+  const karaokeify = requestType === 'karaokify';
 
   const cleanName = String(name || '').trim().substring(0, 40);
   if (!cleanName) {
     ctx.status = 400;
     ctx.body = { ok: false, error: 'name is required' };
+    return;
+  }
+
+  // ── By-name request: no video yet — persist needs_match for the DJ to fill ──
+  if (requestType === 'by_name') {
+    const byNameTitle = String(title || '').trim().substring(0, 120);
+    const byNameArtist = String(body.artist || '').trim().substring(0, 120);
+    if (!byNameTitle && !byNameArtist) {
+      ctx.status = 400;
+      ctx.body = { ok: false, error: 'song title or artist is required' };
+      return;
+    }
+    let mysqlRequestId;
+    try {
+      mysqlRequestId = await persistSongRequest('', cleanName, byNameTitle, '', false, {
+        requestType: 'by_name',
+        artist: byNameArtist,
+      });
+    } catch (e) {
+      console.error('[requests] MySQL by_name add error:', e.message);
+      ctx.status = 503;
+      ctx.body = { ok: false, error: 'Could not persist request; please retry' };
+      return;
+    }
+    // needs_match rows are never claimed — the DJ matches them from the controller
+    ctx.body = { ok: true, id: mysqlRequestId, requester: cleanName, needsMatch: true, status: 'needs_match' };
     return;
   }
 
@@ -559,8 +621,9 @@ router.post('/api/queue/request', async (ctx) => {
   }
 
   let cleanTitle = title ? String(title).trim().substring(0, 120) : '';
-  // Don't keep raw YouTube URLs as the display title
-  if (/^https?:\/\//i.test(cleanTitle) || /youtube\.com|youtu\.be/i.test(cleanTitle)) {
+  // Don't keep raw YouTube URLs or bare video ids as the display title
+  if (/^https?:\/\//i.test(cleanTitle) || /youtube\.com|youtu\.be/i.test(cleanTitle)
+      || /^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(cleanTitle)) {
     cleanTitle = '';
   }
   // Resolve title from local tags if not provided
@@ -586,77 +649,52 @@ router.post('/api/queue/request', async (ctx) => {
     const karaokeId = videoId + '-karaoke';
     const karaokeMp4 = path.join(LIBRARY_KARAOKE_DIR, karaokeId + '.mp4');
 
-    // Already made — save to MySQL only, queue it in the Electron app
+    // Already made — persist as a request for the karaoke variant; the claim
+    // loop hands it to Electron and only advances state after the ACK.
     if (fs.existsSync(karaokeMp4)) {
       console.log(`[request] Karaoke exists for ${videoId}`);
-      mysql.requestAdd(karaokeId, cleanName, cleanTitle).catch(e => {});
-      if (process.send) {
-        try {
-          const karaokeTag = (() => { try { return JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8')); } catch {} return {}; })()[karaokeId];
-          process.send({
-            type: 'web-queue-request',
-            videoId: karaokeId,
-            title: karaokeTag?.title || cleanTitle || videoId,
-            requester: cleanName,
-          });
-        } catch (e) {
-          console.error('[request] IPC send error (karaoke):', e.message);
-        }
+      let mysqlRequestId;
+      try {
+        mysqlRequestId = await persistSongRequest(karaokeId, cleanName, cleanTitle, url, true, { requestType: 'karaokify' });
+      } catch (e) {
+        ctx.status = 503;
+        ctx.body = { ok: false, error: 'Could not persist request; please retry' };
+        return;
       }
-      ctx.body = { ok: true, videoId: karaokeId, requester: cleanName, karaokeify: true, queued: true };
+      scheduleRequestSync();
+      ctx.body = { ok: true, id: mysqlRequestId, videoId: karaokeId, requester: cleanName, karaokeify: true, queued: true };
       return;
     }
 
-    // Delegate to Electron main process via IPC — it handles serial queueing
-    if (process.send) {
-      try {
-        process.send({
-          type: 'web-karaoke-request',
-          videoId: videoId,
-          url: url || ('https://www.youtube.com/watch?v=' + videoId),
-          requester: cleanName,
-          title: cleanTitle || '',
-        });
-        console.log('[request] Karaoke request sent to Electron pipeline:', videoId, cleanName, cleanTitle);
-      } catch (e) {
-        console.error('[request] IPC send error (karaoke pipeline):', e.message);
-      }
-    } else {
-      console.warn('[request] No IPC to Electron main — karaoke request not sent for:', videoId);
+    // Persist first; the claim loop delegates to Electron's karaoke pipeline.
+    let mysqlRequestId;
+    try {
+      mysqlRequestId = await persistSongRequest(videoId, cleanName, cleanTitle, url, true, { requestType: 'karaokify' });
+    } catch (e) {
+      ctx.status = 503;
+      ctx.body = { ok: false, error: 'Could not persist request; please retry' };
+      return;
     }
-
-    ctx.body = { ok: true, videoId, requester: cleanName, karaokeify: true, status: 'queued', progress: 0 };
+    scheduleRequestSync();
+    ctx.body = { ok: true, id: mysqlRequestId, videoId, requester: cleanName, karaokeify: true, status: 'queued', progress: 0 };
     return;
   }
 
-  // ── Standard (non-karaoke) request ──
-  // Persist request to MySQL via Bluehost proxy (fire-and-forget, never blocks)
-  mysql.requestAdd(videoId, cleanName, cleanTitle).catch(e => {
+  // ── Standard (non-karaoke) request: yt_karaoke or jukebox ──
+  // MySQL is authoritative. Never acknowledge an unpersisted request.
+  let mysqlRequestId;
+  try {
+    mysqlRequestId = await persistSongRequest(videoId, cleanName, cleanTitle, url, false, { requestType });
+  } catch (e) {
     console.error('[requests] MySQL add error:', e.message);
-  });
+    ctx.status = 503;
+    ctx.body = { ok: false, error: 'Could not persist request; please retry' };
+    return;
+  }
 
   ctx.status = 200;
-  if (process.send) {
-    try {
-      const resolvedTags = (() => { try { return JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8')); } catch { return {}; } })();
-      const karaokeId = videoId + '-karaoke';
-      const karaokeTag = resolvedTags[karaokeId];
-      // Prefer karaoke variant if it exists
-      const queueVideoId = karaokeTag ? karaokeId : videoId;
-      const queueTitle = karaokeTag?.title || cleanTitle;
-      process.send({
-        type: 'web-queue-request',
-        videoId: queueVideoId,
-        title: queueTitle || cleanTitle || videoId,
-        requester: cleanName,
-        url: url || ('https://www.youtube.com/watch?v=' + videoId),
-        karaokeify: false,
-      });
-    } catch (e) {
-      console.error('[request] IPC send error:', e.message);
-    }
-  }
-  ctx.body = { ok: true, videoId, requester: cleanName, queued: true };
+  scheduleRequestSync();
+  ctx.body = { ok: true, id: mysqlRequestId, videoId, requester: cleanName, queued: true };
 });
 
 router.get('/api/queue/request/list', async (ctx) => {
@@ -665,6 +703,174 @@ router.get('/api/queue/request/list', async (ctx) => {
     map = await mysql.requestMap() || {};
   } catch (e) { console.error('[requests] MySQL fetch error:', e.message); }
   ctx.body = { ok: true, requestMap: map, count: Object.keys(map).length };
+});
+
+// ── By-name request matching (DJ workflow) ──
+// Guests request "song X by artist Y" with no link; rows sit in needs_match
+// until the DJ attaches a YouTube video + type from the controller.
+router.get('/api/queue/needs-match', async (ctx) => {
+  try {
+    const rows = await mysql.requestListNeedsMatch(100);
+    ctx.body = { ok: true, rows: rows || [], count: (rows || []).length };
+  } catch (e) {
+    console.error('[requests] needs-match list error:', e.message);
+    ctx.status = 503;
+    ctx.body = { ok: false, error: 'Could not fetch needs-match requests' };
+  }
+});
+
+router.post('/api/queue/fill-match', async (ctx) => {
+  const body = ctx.request.body || {};
+  const id = Number(body.id);
+  let videoId = String(body.videoId || body.video_id || '').trim();
+  const url = String(body.url || '').trim();
+  const requestType = normalizeRequestType(body.request_type, false);
+  const title = String(body.title || '').trim().substring(0, 120);
+  if (!id) {
+    ctx.status = 400;
+    ctx.body = { ok: false, error: 'id is required' };
+    return;
+  }
+  if (requestType === 'by_name') {
+    ctx.status = 400;
+    ctx.body = { ok: false, error: 'request_type must be yt_karaoke, karaokify, or jukebox' };
+    return;
+  }
+  if (!videoId && url) {
+    const match = url.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|^)([a-zA-Z0-9_-]{11})/);
+    if (match) videoId = match[1];
+  }
+  if (!videoId) {
+    ctx.status = 400;
+    ctx.body = { ok: false, error: 'videoId or YouTube URL is required' };
+    return;
+  }
+  try {
+    const result = await mysql.requestFillMatch(id, { videoId, url, requestType, title });
+    if (!result || result.ok === false) {
+      ctx.status = 404;
+      ctx.body = { ok: false, error: result?.error || 'Fill match failed' };
+      return;
+    }
+    scheduleRequestSync();
+    ctx.body = { ok: true, id, videoId, request_type: requestType, status: 'queued' };
+  } catch (e) {
+    console.error('[requests] fill-match error:', e.message);
+    ctx.status = 503;
+    ctx.body = { ok: false, error: 'Could not fill match; please retry' };
+  }
+});
+
+// Drain durable cloud requests into Electron whenever the Mac is online.
+// Claim-based handoff:
+//   queued → claimed  (atomic MySQL lease, this host)
+//   claimed → preparing  (Electron ACKs it is durably in the local queue)
+//   preparing → playing  (player actually started the track)
+//   playing → ended/error  (playback outcome)
+// Requests remain `queued` in MySQL while the Mac is off. If the IPC handoff
+// fails or Electron never ACKs, the lease expires and reclaim_expired puts
+// the row back to `queued` — nothing is ever stranded in `playing`.
+const CLAIM_OWNER = 'mac-' + os.hostname().split('.')[0];
+const CLAIM_LEASE_SECONDS = 180;
+let mysqlRequestSyncInFlight = false;
+let lastReclaimAt = 0;
+
+async function syncQueuedMysqlRequests() {
+  if (mysqlRequestSyncInFlight || !process.send) return;
+  mysqlRequestSyncInFlight = true;
+  try {
+    // Reclaim expired leases / auto-close stale playing rows (once a minute)
+    if (Date.now() - lastReclaimAt > 60_000) {
+      lastReclaimAt = Date.now();
+      try {
+        const rec = await mysql.requestReclaimExpired(180);
+        if (rec && (rec.requeued || rec.closed_stale_playing)) {
+          console.log('[requests] Reclaimed:', rec.requeued, 'requeued,', rec.closed_stale_playing, 'stale playing closed');
+        }
+      } catch (e) {
+        console.error('[requests] Reclaim failed:', e.message);
+      }
+    }
+
+    const claim = await mysql.requestClaimBatch(CLAIM_OWNER, CLAIM_LEASE_SECONDS, 25);
+    if (!claim || claim.ok === false || !Array.isArray(claim.rows)) return;
+    for (const row of claim.rows) {
+      const id = Number(row.id);
+      // Guests are long gone — never flood tonight's queue with last week's
+      // unclaimed requests (the table keeps them for history, marked ended).
+      const ageMs = Date.now() - new Date(String(row.requested_at).replace(' ', 'T') + 'Z').getTime();
+      if (Number.isFinite(ageMs) && ageMs > 24 * 3600 * 1000) {
+        try { await mysql.requestUpdate(id, 'ended', 'expired unclaimed request'); } catch {}
+        continue;
+      }
+      try {
+        // request_type is authoritative when present; legacy rows fall back to
+        // the karaokeify flag. needs_match rows are never claimed by claim_batch.
+        const requestType = normalizeRequestType(row.request_type, !!Number(row.karaokeify));
+        const karaokeify = requestType === 'karaokify';
+        const baseVid = String(row.video_id).replace(/-karaoke$/, '');
+        const karaokeId = baseVid + '-karaoke';
+        const karaokeExists = fs.existsSync(path.join(LIBRARY_KARAOKE_DIR, karaokeId + '.mp4'));
+        // Never hand Electron a bare video id as the display title — resolve
+        // from tags.json, then oEmbed; empty string lets Electron's own
+        // resolution chain (library / catalog / oEmbed + placeholder) run.
+        let songTitle = String(row.song_title || '').trim();
+        const bareIdTitle = (t) => !t || /^[A-Za-z0-9_-]{11}(-karaoke)?$/.test(t) || /^https?:\/\//i.test(t);
+        if (bareIdTitle(songTitle)) {
+          try {
+            const tags = JSON.parse(fs.readFileSync(TAGS_PATH, 'utf8'));
+            const entry = tags[karaokeId] || tags[row.video_id] || tags[baseVid] || {};
+            if (entry.title && !bareIdTitle(String(entry.title).trim())) songTitle = String(entry.title).trim();
+          } catch {}
+        }
+        if (bareIdTitle(songTitle)) {
+          try { songTitle = await resolveYoutubeTitle(baseVid); } catch { songTitle = ''; }
+          if (bareIdTitle(songTitle)) songTitle = '';
+        }
+        process.send({
+          // Karaoke requests whose variant already exists are plain queue adds
+          type: (karaokeify && !karaokeExists) ? 'web-karaoke-request' : 'web-queue-request',
+          videoId: row.video_id,
+          title: songTitle,
+          requester: row.requester_name || '',
+          url: row.source_url || '',
+          karaokeify,
+          requestType,
+          mysqlRequestId: id,
+          fromMysqlSync: true,
+        });
+        console.log('[requests] Claimed + handed to Electron (awaiting ACK):', id, row.video_id);
+      } catch (e) {
+        console.error('[requests] IPC handoff failed:', id, e.message);
+        // Release immediately instead of waiting out the lease
+        try { await mysql.requestUpdate(id, 'queued', 'IPC handoff failed: ' + e.message); } catch {}
+        break;
+      }
+    }
+  } catch (e) {
+    console.error('[requests] MySQL queue sync failed:', e.message);
+  } finally {
+    mysqlRequestSyncInFlight = false;
+  }
+}
+setInterval(syncQueuedMysqlRequests, 10_000).unref();
+setTimeout(syncQueuedMysqlRequests, 3_000).unref();
+
+process.on('message', (msg) => {
+  if (msg && msg.type === 'trigger-request-sync') {
+    // Electron nudge (e.g. DJ just filled a by-name match) — claim right away
+    scheduleRequestSync();
+  }
+  if (msg && msg.type === 'mysql-request-status' && msg.id && msg.status) {
+    // Electron ACK: request is durably queued locally → preparing (long lease
+    // covers waiting through the night's queue / karaoke generation).
+    const update = msg.status === 'preparing'
+      ? mysql.requestAck(msg.id)
+      : mysql.requestUpdate(msg.id, msg.status, msg.error || '');
+    update.catch(e => {
+      console.error('[requests] MySQL status update failed:', msg.id, e.message);
+    });
+  }
 });
 
 // ── Crowd reactions: guests tap an emoji on their phone → floats up the HDMI screen ──
@@ -1600,9 +1806,16 @@ router.get('/api/library/stream/:videoId', async (ctx) => {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
   }
-  const mp4 = getVideoPath(videoId);
+  let mp4 = mediaResolver.findExisting(videoId);
+  if (!mp4) {
+    try {
+      mp4 = await mediaResolver.resolve(videoId);
+    } catch (e) {
+      console.error('[media-cache] stream fallback failed:', e.message);
+    }
+  }
   // If already cached (non-empty), serve from disk like /file
-  if (fs.existsSync(mp4) && fs.statSync(mp4).size > 0) {
+  if (mp4 && fs.existsSync(mp4) && fs.statSync(mp4).size > 0) {
     const stat = fs.statSync(mp4);
     const range = ctx.req.headers.range;
     ctx.set('Accept-Ranges', 'bytes');
@@ -1622,6 +1835,7 @@ router.get('/api/library/stream/:videoId', async (ctx) => {
     }
     return;
   }
+  mp4 = getVideoPath(videoId);
   // Not cached — spawn yt-dlp and pipe directly to the client.
   // ExoPlayer progressive HTTP playback starts as soon as data arrives.
   console.log('[library] Streaming live: ' + videoId);
@@ -1668,10 +1882,18 @@ router.get('/api/library/file/:videoId', async (ctx) => {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
     ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
   }
-  const mp4 = getVideoPath(videoId);
-  if (!fs.existsSync(mp4)) {
+  let mp4;
+  try {
+    mp4 = await mediaResolver.resolve(videoId);
+  } catch (e) {
+    console.error('[media-cache] file fallback failed:', e.message);
+    ctx.status = 502;
+    ctx.body = { ok: false, error: 'Cloud fallback failed' };
+    return;
+  }
+  if (!mp4 || !fs.existsSync(mp4)) {
     ctx.status = 404;
-    ctx.body = { ok: false, error: 'Video not downloaded yet' };
+    ctx.body = { ok: false, error: 'Video is not available locally or in R2' };
     return;
   }
   const stat = fs.statSync(mp4);
@@ -1691,6 +1913,11 @@ router.get('/api/library/file/:videoId', async (ctx) => {
     ctx.set('Content-Length', String(stat.size));
     ctx.body = fs.createReadStream(mp4);
   }
+});
+
+router.get('/api/library/cloud-usage', (ctx) => {
+  ctx.set('Cache-Control', 'no-store');
+  ctx.body = mediaResolver.getUsage();
 });
 
 // Quick status check: is the video downloaded and ready?
@@ -1754,7 +1981,7 @@ function tryLoadCacheFromDisk() {
     if (!fs.existsSync(CACHE_FILE)) return false;
     const rawJson = fs.readFileSync(CACHE_FILE, 'utf8');
     const result = JSON.parse(rawJson);
-    if (result && result.ok) {
+    if (result && result.ok && result.count > 0) {
       __libraryListCache = { ts: Date.now(), data: result, rawJson, archiveMtime: result.archiveMtime || 0 };
       console.log('[library] Loaded from disk: ' + result.count + ' videos');
       return true;
@@ -1776,7 +2003,7 @@ function buildLibraryCache() {
       try { rawJson = await fs.promises.readFile(CACHE_FILE, 'utf8'); } catch (e) { console.error('[library] Read cache file:', e.message); }
       let result = null;
       try { result = rawJson ? JSON.parse(rawJson) : null; } catch (e) { console.error('[library] Parse error:', e.message); }
-      if (result && result.ok) {
+      if (result && result.ok && result.count > 0) {
         // Store the pre-serialized JSON string to avoid re-stringifying on every request
         __libraryListCache = { ts: Date.now(), data: result, rawJson, archiveMtime: result.archiveMtime || 0 };
         console.log('[library] Cache built: ' + result.count + ' videos');
@@ -1798,18 +2025,22 @@ router.get('/api/library/list', async (ctx) => {
     tryLoadCacheFromDisk();
   }
   if (!__libraryListCache.data) {
-    ctx.status = 503;
-    ctx.body = '{"ok":false,"error":"Library not loaded — run: node api-server/library-scan-worker.js"}';
-    return;
+    await buildLibraryCache();
+    if (!__libraryListCache.data) {
+      ctx.status = 503;
+      ctx.body = '{"ok":false,"error":"Library drive is not ready yet — retry shortly"}';
+      return;
+    }
   }
 
   // Client-side search params — filter server-side for speed
   const q = (ctx.query.q || '').toLowerCase();
   const year = ctx.query.year || '';
+  const tag = ctx.query.tag || '';
   const page = parseInt(ctx.query.page, 10) || 1;
   const limit = parseInt(ctx.query.limit, 10) || 0;
 
-  const hasQuery = ctx.query.q || ctx.query.year || ctx.query.page || ctx.query.limit;
+  const hasQuery = ctx.query.q || ctx.query.year || ctx.query.tag || ctx.query.page || ctx.query.limit;
   if (!hasQuery) {
     // Fast path: return full cached JSON (compressed by middleware)
     // Library data changes infrequently — allow browser/CDN to cache for 5 min
@@ -1832,6 +2063,9 @@ router.get('/api/library/list', async (ctx) => {
   }
   if (year) {
     videos = videos.filter(v => String(v.year) === year);
+  }
+  if (tag) {
+    videos = videos.filter(v => (v.tag || '') === tag);
   }
   const total = videos.length;
   if (limit > 0) {
@@ -1977,7 +2211,10 @@ function loadTags() {
         if (typeof val === 'string') {
           normalized[vid] = { tag: val, year: '', artist: '', source: '' };
         } else if (val && typeof val === 'object') {
+          // Preserve extra fields (title, duration, …) written by the karaoke
+          // pipeline — dropping them here would destroy titles on next save.
           normalized[vid] = {
+            ...val,
             tag: val.tag || val.type || 'music',
             year: val.year || '',
             artist: val.artist || '',
@@ -2011,7 +2248,12 @@ function loadTags() {
 
 function saveTags(tags) {
   try {
-    fs.writeFileSync(TAGS_PATH, JSON.stringify(tags, null, 2), 'utf8');
+    // Atomic write (temp + rename): a concurrent reader must never observe a
+    // partially-written tags.json — a truncated read parses as {} and can
+    // trigger a destructive rebuild that loses karaoke-maker provenance.
+    const tmpPath = TAGS_PATH + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(tags, null, 2), 'utf8');
+    fs.renameSync(tmpPath, TAGS_PATH);
   } catch (e) { console.error('[library/tags] save error:', e.message); }
 }
 
@@ -2044,11 +2286,15 @@ function rebuildTagsFromDisk() {
                 || dir.includes('karaoke');
               const isSong = dir.includes('songs');
               const autoTag = isKaraoke ? 'karaoke' : (isSong ? 'music' : 'music');
+              // '<id>-karaoke' files are only ever produced by the local
+              // karaoke pipeline, so the suffix itself is durable provenance —
+              // the Custom library filter keys off source === 'karaoke-maker'.
+              const isPipelineOutput = /^[A-Za-z0-9_-]{11}-karaoke$/.test(videoId);
               tags[videoId] = {
                 tag: autoTag,
                 year: (info.upload_date || '').slice(0, 4),
                 artist: info.uploader || '',
-                source: 'rebuilt-from-info.json'
+                source: isPipelineOutput ? 'karaoke-maker' : 'rebuilt-from-info.json'
               };
               added++;
             } catch (e) { /* skip corrupted info.json */ }
@@ -2128,9 +2374,10 @@ router.post('/api/library/tags', async (ctx) => {
     ctx.status = 400; ctx.body = { ok: false, error: 'tag must be "karaoke", "music", or "song"' }; return;
   }
   const tags = loadTags();
-  // Merge: preserve existing metadata, apply new fields
+  // Merge: preserve existing metadata (incl. title), apply new fields
   const existing = tags[videoId] || { tag: 'music', year: '', artist: '', source: '' };
   tags[videoId] = {
+    ...existing,
     tag: tag,
     year: body.year !== undefined ? String(body.year) : existing.year,
     artist: body.artist !== undefined ? String(body.artist) : existing.artist,

@@ -122,7 +122,7 @@ body{padding-bottom:72px}
     <option value="title">Title A-Z</option>
     <option value="duration">Duration</option>
   </select>
-  <button class="btn-custom-url" onclick="openCustomUrlModal()">+ Custom URL</button>
+  <button class="btn-custom-url" onclick="openCustomUrlModal()">+ Request a Song</button>
 </div>
 <div class="video-grid" id="grid"><div class="empty" style="padding:60px 20px">🔍 Type to search the library</div></div>
 <div style="max-width:100vw;overflow-x:auto;width:100%">
@@ -165,11 +165,29 @@ body{padding-bottom:72px}
 
 <div id="customUrlModal">
   <div class="modal-box">
-    <h3>Custom YouTube URL</h3>
-    <input type="text" id="customUrl" placeholder="https://youtube.com/watch?v=...">
-    <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text2);margin-bottom:8px;cursor:pointer;justify-content:center">
-      <input type="checkbox" id="customKaraokeify"> Make karaoke (vocals out + lyrics)
-    </label>
+    <h3>Request a Song</h3>
+    <div id="rtPicker" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;text-align:left">
+      <label class="rt-option" style="display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text);cursor:pointer;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+        <input type="radio" name="requestType" value="yt_karaoke" checked onchange="onRequestTypeChange()"> It&#39;s already a karaoke video
+      </label>
+      <label class="rt-option" style="display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text);cursor:pointer;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+        <input type="radio" name="requestType" value="karaokify" onchange="onRequestTypeChange()"> Make it karaoke (Karaokify)
+      </label>
+      <label class="rt-option" style="display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text);cursor:pointer;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+        <input type="radio" name="requestType" value="jukebox" onchange="onRequestTypeChange()"> Jukebox &mdash; play as-is video
+      </label>
+      <label class="rt-option" style="display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text);cursor:pointer;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+        <input type="radio" name="requestType" value="by_name" onchange="onRequestTypeChange()"> Request by name (no link)
+      </label>
+    </div>
+    <div id="rtUrlFields">
+      <input type="text" id="customUrl" placeholder="https://youtube.com/watch?v=...">
+    </div>
+    <div id="rtNameFields" style="display:none">
+      <input type="text" id="byNameTitle" placeholder="Song title" maxlength="120">
+      <input type="text" id="byNameArtist" placeholder="Artist" maxlength="120">
+      <input type="text" id="byNameRequester" placeholder="Your name" maxlength="40" autocomplete="name">
+    </div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeCustomUrlModal()">Cancel</button>
       <button class="btn-submit" onclick="requestCustom()">Request</button>
@@ -248,8 +266,21 @@ function observeImages(rootEl){
 }
 
 // ── API ──
-function apiPost(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()})}
-function apiGet(path){return fetch(path).then(function(r){return r.json()})}
+var CLOUD_MODE=location.hostname==='karol.rideyrbike.com';
+var LIVE_API_ORIGIN='https://request.rideyrbike.com';
+function apiUrl(apiPath,method){
+  if(!CLOUD_MODE)return apiPath;
+  if(apiPath.indexOf('/api/library/list')===0){
+    var query=apiPath.indexOf('?')>=0?apiPath.substring(apiPath.indexOf('?')):'';
+    return '/db.php?table=song_catalog&action=list_public&'+query.replace(/^\?/,'');
+  }
+  if(apiPath==='/api/queue/request')return '/db.php?table=song_requests&action=add_public';
+  if(apiPath==='/api/queue/request/list')return '/db.php?table=song_requests&action=get_map_public';
+  if(apiPath==='/api/health.json')return '/db.php?table=system&action=health';
+  return LIVE_API_ORIGIN+apiPath;
+}
+function apiPost(path,body){return fetch(apiUrl(path,'POST'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()})}
+function apiGet(path){return fetch(apiUrl(path,'GET')).then(function(r){return r.json()})}
 
 // ── Crowd reactions: fly up the karaoke screen (server enforces per-IP cooldown too) ──
 function sendReaction(btn, emoji){
@@ -319,7 +350,13 @@ function confirmRequest(){
   if(!name){showToast('Enter your name first');return}
   document.getElementById('requestModal').classList.remove('show');
   var body={videoId:pendingVideoId,name:name,title:pendingTitle};
-  if(pendingVideoId==='__custom__'){var url=document.getElementById('customUrl').value.trim();body.url=url;body.videoId='';var karaoke=document.getElementById('customKaraokeify').checked;body.karaokeify=karaoke}
+  if(pendingVideoId==='__custom__'){
+    var url=document.getElementById('customUrl').value.trim();
+    body.url=url;body.videoId='';
+    body.request_type=pendingRequestType||'jukebox';
+    // Legacy back-compat: karaokeify boolean maps from type (karaokify => true)
+    body.karaokeify=(body.request_type==='karaokify');
+  }
   showToast('Adding...');
   apiPost('/api/queue/request',body).then(function(r){
     if(r.ok){
@@ -378,20 +415,57 @@ function startKaraokePoll(videoId) {
   }, 3000);
 }
 
+var pendingRequestType='yt_karaoke';
+var REQUEST_TYPE_LABELS={
+  yt_karaoke:'Karaoke link \u2192 sing it',
+  karaokify:'Custom link \u2192 make karaoke',
+  jukebox:'Jukebox \u2192 play as-is'
+};
+function getSelectedRequestType(){
+  var checked=document.querySelector('input[name="requestType"]:checked');
+  return checked?checked.value:'yt_karaoke';
+}
+function onRequestTypeChange(){
+  var byName=getSelectedRequestType()==='by_name';
+  document.getElementById('rtUrlFields').style.display=byName?'none':'block';
+  document.getElementById('rtNameFields').style.display=byName?'block':'none';
+}
 function requestCustom(){
+  var type=getSelectedRequestType();
+  if(type==='by_name'){requestByName();return}
   var url=document.getElementById('customUrl').value.trim();
   if(!url){showToast('Paste a YouTube URL first');return}
-  var karaoke=document.getElementById('customKaraokeify').checked;
   closeCustomUrlModal();
+  pendingRequestType=type;
   pendingVideoId='__custom__';
   pendingTitle=''; // resolve real title on the server (never use raw URL)
-  document.getElementById('modalSongTitle').textContent=karaoke?'Custom link → make karaoke':'Custom link → play as-is';
+  document.getElementById('modalSongTitle').textContent=REQUEST_TYPE_LABELS[type]||'Custom link';
   document.getElementById('requesterName').value='';
   document.getElementById('requestModal').classList.add('show');
 }
+function requestByName(){
+  var title=document.getElementById('byNameTitle').value.trim();
+  var artist=document.getElementById('byNameArtist').value.trim();
+  var name=document.getElementById('byNameRequester').value.trim();
+  if(!title&&!artist){showToast('Enter a song title or artist');return}
+  if(!name){showToast('Enter your name');return}
+  closeCustomUrlModal();
+  showToast('Sending request...');
+  apiPost('/api/queue/request',{videoId:'',name:name,title:title,artist:artist,request_type:'by_name'}).then(function(r){
+    if(r.ok){showToast('Request sent! The DJ will find your song.')}
+    else{showToast(r.error||'Request failed')}
+  }).catch(function(){showToast('Network error')});
+  document.getElementById('paymentTitle').textContent=name+', almost done!';
+  document.getElementById('paymentModal').style.display='flex';
+}
 function openCustomUrlModal(){
   document.getElementById('customUrl').value='';
-  document.getElementById('customKaraokeify').checked=false; // opt-in: plain transfer by default
+  document.getElementById('byNameTitle').value='';
+  document.getElementById('byNameArtist').value='';
+  document.getElementById('byNameRequester').value='';
+  var first=document.querySelector('input[name="requestType"][value="yt_karaoke"]');
+  if(first)first.checked=true;
+  onRequestTypeChange();
   document.getElementById('customUrlModal').classList.add('show');
 }
 function closeCustomUrlModal(){document.getElementById('customUrlModal').classList.remove('show');}
@@ -423,8 +497,9 @@ function loadLibrary(){
   document.getElementById('apiLabel').textContent='loading...';
   libraryLoading=true; libraryLoadedPages=0;
 
-  // Load first page fast — user sees results immediately
-  apiGet('/api/library/list?page=1&limit='+PAGE_SIZE).then(function(d){
+  // Load first page fast — user sees results immediately.
+  // Guests only see karaoke tracks (custom karaoke-maker tracks are also tag=karaoke).
+  apiGet('/api/library/list?tag=karaoke&page=1&limit='+PAGE_SIZE).then(function(d){
     if(d&&d.videos){
       allVideos=d.videos.filter(function(v){return !isBogusEntry(v)});
       libraryTotal=d.count;
@@ -454,7 +529,7 @@ function loadRemainingPages(){
   if(totalPages<=1){libraryLoading=false;finishLoading();return}
   // Load pages in batches of 4 to avoid overwhelming the server
   var batch=[];
-  for(var p=2;p<=totalPages;p++) batch.push('/api/library/list?page='+p+'&limit='+PAGE_SIZE);
+  for(var p=2;p<=totalPages;p++) batch.push('/api/library/list?tag=karaoke&page='+p+'&limit='+PAGE_SIZE);
   var loaded=0;
   batch.forEach(function(url){
     apiGet(url).then(function(d){

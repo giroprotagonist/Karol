@@ -31,6 +31,7 @@ input,select{font-family:inherit}
 .lib-tag.music{background:rgba(240,192,64,0.15);color:var(--gold)}
 .lib-tag.song{background:rgba(16,185,129,0.15);color:var(--success)}
 .lib-tag.custom-tag{background:rgba(236,72,153,0.18);color:#ec4899;margin-left:3px}
+.lib-tag.yt-tag{background:rgba(255,0,0,0.15);color:#ff5c5c;margin-left:3px}
 .lib-actions{display:flex;gap:4px}
 .lib-btn{padding:4px 8px;border-radius:4px;font-size:10px;font-weight:600;transition:all 0.15s}
 .lib-btn.queue{background:var(--accent);color:#fff}
@@ -43,6 +44,27 @@ input,select{font-family:inherit}
 .lib-btn.reprocess:hover{background:rgba(239,68,68,0.35)}
 .lib-btn.full-lyrics-btn{background:rgba(16,185,129,0.15);color:#34d399}
 .lib-btn.full-lyrics-btn:hover{background:rgba(16,185,129,0.35)}
+.lib-btn.reclass{background:rgba(122,122,154,0.15);color:var(--textDim);padding:4px 6px}
+.lib-btn.reclass:hover{background:rgba(139,92,246,0.25);color:var(--accent)}
+#reclass-menu{display:none;position:fixed;z-index:1200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,0.5);padding:4px;min-width:170px}
+#reclass-menu button{display:block;width:100%;text-align:left;background:none;color:var(--text);font-size:12px;padding:7px 10px;border-radius:5px}
+#reclass-menu button:hover{background:rgba(139,92,246,0.15);color:var(--accent)}
+
+/* Needs-match panel: by-name requests waiting for the DJ to attach a video */
+#needs-match-panel{display:none;border-bottom:1px solid var(--border);background:rgba(240,192,64,0.04);padding:10px 20px}
+#needs-match-header{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--gold);font-weight:700;margin-bottom:6px}
+.nm-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;border-bottom:1px solid rgba(30,30,56,0.3);flex-wrap:wrap}
+.nm-row:last-child{border-bottom:none}
+.nm-song{flex:1;min-width:180px}
+.nm-song .nm-title{font-weight:600}
+.nm-song .nm-artist{color:var(--textDim)}
+.nm-song .nm-who{color:var(--gold);font-size:11px;margin-left:6px}
+.nm-row input{flex:2;min-width:200px;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px}
+.nm-row input:focus{outline:none;border-color:var(--gold)}
+.nm-row select{padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px}
+.nm-row .nm-go{padding:6px 14px;background:var(--gold);color:#000;border-radius:6px;font-size:11px;font-weight:700}
+.nm-row .nm-go:hover{background:#d4a830}
+.nm-row .nm-go:disabled{opacity:0.5;cursor:default}
 
 /* Now playing bar */
 #now-playing-bar{background:linear-gradient(135deg,var(--surface),#1a1a30);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;gap:16px}
@@ -253,7 +275,9 @@ body.dragging{cursor:col-resize;user-select:none}
   </div>
   <div id="filter-bar">
     <button class="filter-tab active" data-filter="all" onclick="setLibraryFilter('all')">All</button>
+    <button class="filter-tab" data-filter="karaoke" onclick="setLibraryFilter('karaoke')">Karaoke</button>
     <button class="filter-tab" data-filter="custom" onclick="setLibraryFilter('custom')">Custom</button>
+    <button class="filter-tab" data-filter="musicvideo" onclick="setLibraryFilter('musicvideo')">Music Videos</button>
     <button class="rescan-btn" onclick="rescanLibrary()" title="Rescan library">Rescan</button>
   </div>
   <div id="library-list">
@@ -311,6 +335,11 @@ body.dragging{cursor:col-resize;user-select:none}
     <button class="fx-btn" onclick="triggerFx('encore')">⭐ Encore</button>
   </div>
 
+  <div id="needs-match-panel">
+    <div id="needs-match-header">By-Name Requests (<span id="needs-match-count">0</span>) — paste a YouTube link or library video ID to queue them</div>
+    <div id="needs-match-list"></div>
+  </div>
+
   <div id="queue-header">
     Queue (<span id="queue-count">0</span>)
     <button onclick="api.queue.clear().then(refreshQueue)">Clear All</button>
@@ -348,7 +377,11 @@ function triggerFx(name) {
 // ── State ──
 let allVideos = [];
 let customVideoIds = new Set();  // Set of video IDs that are custom karaoke tracks
-let libraryFilter = 'all';       // 'all' | 'custom'
+let karaokeVideoIds = new Set(); // Ids tagged karaoke that are NOT karaoke-maker products
+let musicVideoIds = new Set();   // Base ids of regular (non-karaoke) music videos
+let musicVideoMeta = {};         // id -> {title, artist, year} from tags.json for remote-only rows
+let tagMetaById = {};            // id -> {tag, source} live from tags.json (wins over stale scan rows)
+let libraryFilter = 'all';       // 'all' | 'karaoke' | 'custom' | 'musicvideo'
 let queue = [];
 let currentIndex = -1;
 let nowPlaying = null;
@@ -389,6 +422,92 @@ let processingJobs = {}; // Track active karaoke pipeline jobs
   });
 })();
 
+// Rebuild the Karaoke + Custom + Music Videos membership sets from tags.json.
+// Called at init AND on every library refresh — tags can change while the
+// window is open (pipeline publishes, rescans, DJ reclassifies), so the sets
+// must never be a one-shot snapshot.
+async function refreshCustomVideoIds() {
+  try {
+    var tags = await api.library.tags();
+    if (!tags || Object.keys(tags).length === 0) return; // keep previous sets on transient read failure
+    var next = new Set();
+    var kNext = new Set();
+    var mvNext = new Set();
+    var mvMeta = {};
+    var metaNext = {};
+    for (var key in tags) {
+      var entry = tags[key];
+      metaNext[key] = { tag: entry.tag || '', source: entry.source || '' };
+      if (entry.source === 'karaoke-maker') {
+        // Library rows may use either the base id or the '-karaoke'
+        // variant id — index both so the Custom filter matches.
+        next.add(key.replace(/-karaoke$/, ''));
+        next.add(key.replace(/-karaoke$/, '') + '-karaoke');
+      } else if (entry.tag === 'karaoke') {
+        // Karaoke tab: tag=karaoke, NOT a karaoke-maker product
+        kNext.add(key);
+      } else if ((entry.tag === 'music' || entry.tag === 'song') && !/-karaoke$/.test(key)) {
+        // Regular downloaded music videos: tagged music/song, never a
+        // pipeline '-karaoke' variant, never a karaoke-maker product.
+        mvNext.add(key);
+        mvMeta[key] = { title: entry.title || '', artist: entry.artist || '', year: entry.year || '',
+                        unavailable: !!entry.title_unavailable };
+      }
+    }
+    if (next.size > 0 || customVideoIds.size === 0) customVideoIds = next;
+    if (kNext.size > 0 || karaokeVideoIds.size === 0) karaokeVideoIds = kNext;
+    if (mvNext.size > 0 || musicVideoIds.size === 0) { musicVideoIds = mvNext; musicVideoMeta = mvMeta; }
+    tagMetaById = metaNext;
+    console.log('[controller] Karaoke:', karaokeVideoIds.size, '| Custom:', customVideoIds.size, '| Music videos:', musicVideoIds.size);
+  } catch(_) { /* keep previous sets */ }
+}
+
+// Effective tag/source for a library row: live tags.json wins over the cached
+// scan row (scan republish lags behind a DJ reclassify by up to a minute).
+function effectiveTag(v) {
+  var m = tagMetaById[v.videoId];
+  return (m && m.tag) ? m.tag : (v.tag || '');
+}
+function effectiveSource(v) {
+  var m = tagMetaById[v.videoId];
+  // Non-empty tags.json source wins; empty falls back to the scan row (the
+  // scan stamps 'karaoke-maker' on '-karaoke' variants that lost provenance).
+  return (m && m.source) ? m.source : (v.source || '');
+}
+function isKaraokeTabMember(v) {
+  return effectiveTag(v) === 'karaoke' && effectiveSource(v) !== 'karaoke-maker';
+}
+
+// Rows for the Music Videos tab: local library rows first (playable from
+// disk), then remote-only entries from tags/MySQL that play via YouTube.
+function buildMusicVideoRows() {
+  var localIds = new Set();
+  var rows = [];
+  for (var i = 0; i < allVideos.length; i++) {
+    var v = allVideos[i];
+    // Member if tagged music/song in tags.json, or a local non-karaoke row
+    // (scan defaults untagged local files to 'music').
+    var eTag = effectiveTag(v);
+    var isMember = musicVideoIds.has(v.videoId) ||
+      ((eTag === 'music' || eTag === 'song') && !/-karaoke$/.test(v.videoId));
+    if (isMember && effectiveSource(v) !== 'karaoke-maker' && !localIds.has(v.videoId)) {
+      localIds.add(v.videoId);
+      rows.push(v);
+    }
+  }
+  var remote = [];
+  musicVideoIds.forEach(function(id) {
+    if (localIds.has(id)) return;
+    var m = musicVideoMeta[id] || {};
+    remote.push({ videoId: id, title: m.title || '', artist: m.artist || '', year: m.year || '',
+                  tag: 'music', remote: true, unavailable: !!m.unavailable });
+  });
+  remote.sort(function(a, b) {
+    return (a.artist || '\uffff').localeCompare(b.artist || '\uffff') || (a.title || '').localeCompare(b.title || '');
+  });
+  return rows.concat(remote);
+}
+
 // ── Init ──
 async function init() {
   console.log('[controller] Starting init...');
@@ -397,18 +516,7 @@ async function init() {
     console.log('[controller] Library list result:', result?.ok, result?.count);
     if (result && result.ok) {
       allVideos = result.videos || [];
-      // Build custom track set from tags.json
-      try {
-        var tags = await api.library.tags();
-        if (tags) {
-          for (var key in tags) {
-            if (tags[key].source === 'karaoke-maker') {
-              customVideoIds.add(key.replace(/-karaoke$/, ''));
-            }
-          }
-        }
-        console.log('[controller] Custom tracks detected:', customVideoIds.size);
-      } catch(_) {}
+      await refreshCustomVideoIds();
       applyFilterAndRender();
       document.getElementById('lib-count').textContent = result.count || allVideos.length;
     } else {
@@ -442,6 +550,7 @@ async function init() {
           if (result && result.ok) {
             allVideos = result.videos || [];
             document.getElementById('lib-count').textContent = result.count || allVideos.length;
+            await refreshCustomVideoIds();
             applyFilterAndRender();
             renderProcessingPanel();
           }
@@ -465,6 +574,10 @@ async function init() {
   setInterval(refreshPhoneConnect, 60000);
   refreshPowerStatus();
   setInterval(refreshPowerStatus, 5000);
+
+  // By-name requests waiting for a DJ match
+  refreshNeedsMatch();
+  setInterval(refreshNeedsMatch, 15000);
 }
 
 async function refreshPowerStatus() {
@@ -532,7 +645,7 @@ function renderLibrary(videos) {
   var html = '';
   for (var i = 0; i < Math.min(videos.length, 200); i++) {
     var v = videos[i];
-    var tagClass = v.tag || 'music';
+    var tagClass = effectiveTag(v) || 'music';
     var tagLabel = tagClass === 'karaoke' ? 'K' : tagClass === 'song' ? 'S' : 'M';
 
     // Check if this video is currently processing
@@ -545,16 +658,22 @@ function renderLibrary(videos) {
       var stage = job.status === 'downloading' ? 'Downloading...' : 'Processing...';
       actionsHtml = '<span class="lib-badge processing-badge">' + stage + '</span>';
     } else {
+      // Empty title → main process resolves the real one on queue; never send the raw id
       actionsHtml = '<div class="lib-actions">' +
-        '<button class="lib-btn queue" onclick="queueVideo(\'' + v.videoId + '\',\'' + escapeJs(v.title||v.videoId) + '\')">+ Queue</button>' +
-        '<button class="lib-btn playnow" onclick="playNow(\'' + v.videoId + '\',\'' + escapeJs(v.title||v.videoId) + '\')">Play</button>' +
+        '<button class="lib-btn queue" onclick="queueVideo(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">+ Queue</button>' +
+        '<button class="lib-btn playnow" onclick="playNow(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">Play</button>' +
+        '<button class="lib-btn reclass" title="Move to Karaoke / Custom / Music Video" onclick="event.stopPropagation();openReclassMenu(event,\'' + v.videoId + '\')">&#8942;</button>' +
       '</div>';
     }
 
+    var shownTitle = v.title ||
+      (v.unavailable ? ((v.artist ? v.artist + ' ' : '') + '(unavailable)')
+        : (v.remote ? safeDisplayTitle('', v.videoId) : v.videoId));
     html += '<div class="' + itemClass + '">' +
       '<span class="lib-tag ' + tagClass + '">' + tagLabel + '</span>' +
       (customVideoIds.has(v.videoId) ? '<span class="lib-tag custom-tag">C</span>' : '') +
-      '<span class="lib-title" title="' + escapeHtml(v.title||'') + '">' + escapeHtml(v.title||v.videoId) + '</span>' +
+      (v.remote ? '<span class="lib-tag yt-tag" title="Not on local drive — plays from YouTube">YT</span>' : '') +
+      '<span class="lib-title" title="' + escapeHtml(v.title||'') + '">' + escapeHtml(shownTitle) + '</span>' +
       '<span class="lib-artist">' + escapeHtml(v.artist||'') + '</span>' +
       '<span class="lib-year">' + (v.year||'') + '</span>' +
       actionsHtml +
@@ -573,9 +692,13 @@ function applyFilterAndRender() {
   var q = (document.getElementById('search-box').value || '').toLowerCase();
   var videos = allVideos;
 
-  // Apply custom filter
-  if (libraryFilter === 'custom') {
+  // Apply category filter
+  if (libraryFilter === 'karaoke') {
+    videos = videos.filter(function(v) { return isKaraokeTabMember(v); });
+  } else if (libraryFilter === 'custom') {
     videos = videos.filter(function(v) { return customVideoIds.has(v.videoId); });
+  } else if (libraryFilter === 'musicvideo') {
+    videos = buildMusicVideoRows();
   }
 
   // Apply search filter
@@ -586,9 +709,53 @@ function applyFilterAndRender() {
   }
 
   renderLibrary(videos.slice(0, 200));
+  if (libraryFilter === 'musicvideo') resolveVisibleMusicVideoTitles(videos.slice(0, 200));
   // Update placeholder with current filter count
-  var label = libraryFilter === 'custom' ? 'Custom tracks' : 'all ' + allVideos.length + ' videos';
+  var label = libraryFilter === 'karaoke' ? videos.length + ' karaoke tracks'
+    : libraryFilter === 'custom' ? videos.length + ' custom tracks'
+    : libraryFilter === 'musicvideo' ? videos.length + ' music videos'
+    : 'all ' + allVideos.length + ' videos';
   document.getElementById('search-box').placeholder = 'Search ' + label + '...';
+}
+
+// Remote-only music videos have no local info.json, so titles may be unknown.
+// Resolve visible ones through the main process (tags → catalog → oEmbed);
+// results are persisted into tags.json so this is one-time work per id.
+var _titleResolveInFlight = false;
+var _titleResolveAttempted = new Set();
+async function resolveVisibleMusicVideoTitles(rows) {
+  if (_titleResolveInFlight) return;
+  var need = [];
+  for (var i = 0; i < rows.length && need.length < 20; i++) {
+    var v = rows[i];
+    if (v.remote && !v.title && !v.unavailable && !_titleResolveAttempted.has(v.videoId)) need.push(v.videoId);
+  }
+  if (need.length === 0) return;
+  _titleResolveInFlight = true;
+  var changed = false;
+  try {
+    need.forEach(function(id) { _titleResolveAttempted.add(id); });
+    var res = await api.library.resolveTitles(need);
+    var titles = (res && res.titles) || {};
+    var gone = (res && res.unavailable) || [];
+    for (var id in titles) {
+      if (titles[id] && musicVideoMeta[id]) { musicVideoMeta[id].title = titles[id]; changed = true; }
+    }
+    for (var j = 0; j < gone.length; j++) {
+      if (musicVideoMeta[gone[j]]) { musicVideoMeta[gone[j]].unavailable = true; changed = true; }
+    }
+  } catch(_) {}
+  _titleResolveInFlight = false;
+  if (changed && libraryFilter === 'musicvideo') applyFilterAndRender();
+  // Keep trickling through the rest of the set in the background so every
+  // remote row eventually gets a persisted title, not just the visible ones.
+  if (libraryFilter === 'musicvideo') {
+    setTimeout(function() {
+      if (libraryFilter === 'musicvideo' && !_titleResolveInFlight) {
+        resolveVisibleMusicVideoTitles(buildMusicVideoRows());
+      }
+    }, 2000);
+  }
 }
 
 function setLibraryFilter(filter) {
@@ -599,6 +766,144 @@ function setLibraryFilter(filter) {
     tabs[i].classList.toggle('active', tabs[i].getAttribute('data-filter') === filter);
   }
   applyFilterAndRender();
+}
+
+// ── Per-track reclassify: Karaoke / Custom / Music Video ──
+var RECLASS_TARGETS = {
+  karaoke: { tag: 'karaoke', source: 'manual', label: 'Karaoke' },
+  custom: { tag: 'karaoke', source: 'karaoke-maker', label: 'Custom' },
+  music: { tag: 'music', source: 'manual', label: 'Music Video' }
+};
+var reclassMenuVideoId = null;
+
+function openReclassMenu(e, videoId) {
+  reclassMenuVideoId = videoId;
+  var menu = document.getElementById('reclass-menu');
+  menu.style.display = 'block';
+  var rect = e.currentTarget.getBoundingClientRect();
+  var top = rect.bottom + 4;
+  // Keep the menu on screen when the row is near the bottom
+  if (top + menu.offsetHeight > window.innerHeight - 8) top = rect.top - menu.offsetHeight - 4;
+  menu.style.top = Math.max(8, top) + 'px';
+  menu.style.left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8) + 'px';
+}
+
+function closeReclassMenu() {
+  document.getElementById('reclass-menu').style.display = 'none';
+  reclassMenuVideoId = null;
+}
+
+document.addEventListener('click', function(e) {
+  var menu = document.getElementById('reclass-menu');
+  if (menu.style.display === 'block' && !menu.contains(e.target) && !e.target.classList.contains('reclass')) {
+    closeReclassMenu();
+  }
+});
+
+async function reclassifyTrack(bucket) {
+  var videoId = reclassMenuVideoId;
+  closeReclassMenu();
+  var target = RECLASS_TARGETS[bucket];
+  if (!videoId || !target) return;
+  try {
+    var r = await api.library.reclassify(videoId, target.tag, target.source);
+    if (!r || r.ok === false) {
+      setRequestStatus('Reclassify failed: ' + ((r && r.error) || 'unknown error'), '#ef4444');
+      return;
+    }
+    // Immediate local update so the row moves tabs without waiting for a rescan
+    for (var i = 0; i < allVideos.length; i++) {
+      if (allVideos[i].videoId === videoId) {
+        allVideos[i].tag = target.tag;
+        allVideos[i].source = target.source;
+      }
+    }
+    await refreshCustomVideoIds();
+    applyFilterAndRender();
+    setRequestStatus('Moved to ' + target.label + ': ' + videoId, '#40f040');
+    setTimeout(function() { setRequestStatus(''); }, 3000);
+  } catch (e) {
+    setRequestStatus('Reclassify error: ' + e.message, '#ef4444');
+  }
+}
+
+// ── Needs-match panel: by-name requests the DJ resolves to a real video ──
+var needsMatchRows = [];
+var _fillMatchInFlight = new Set();
+
+async function refreshNeedsMatch() {
+  try {
+    var r = await api.queue.needsMatch();
+    if (!r || r.ok === false) return; // keep previous rows on transient failure
+    needsMatchRows = r.rows || [];
+    renderNeedsMatch();
+  } catch(_) { /* MySQL offline — retry next poll */ }
+}
+
+var _needsMatchSignature = '';
+function renderNeedsMatch() {
+  var panel = document.getElementById('needs-match-panel');
+  document.getElementById('needs-match-count').textContent = needsMatchRows.length;
+  if (needsMatchRows.length === 0) { panel.style.display = 'none'; _needsMatchSignature = ''; return; }
+  panel.style.display = 'block';
+  // Don't clobber the DJ's typing: skip the rebuild while a field in the
+  // panel has focus, or when the row set hasn't changed since last render.
+  var signature = needsMatchRows.map(function(r) { return r.id; }).join(',');
+  var active = document.activeElement;
+  if (panel.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT')) return;
+  if (signature === _needsMatchSignature) return;
+  _needsMatchSignature = signature;
+  var html = '';
+  for (var i = 0; i < needsMatchRows.length; i++) {
+    var row = needsMatchRows[i];
+    var id = Number(row.id);
+    html += '<div class="nm-row">' +
+      '<div class="nm-song">' +
+        '<span class="nm-title">' + escapeHtml(row.song_title || '(no title)') + '</span>' +
+        (row.artist ? ' <span class="nm-artist">— ' + escapeHtml(row.artist) + '</span>' : '') +
+        '<span class="nm-who">for ' + escapeHtml(row.requester_name || '?') + '</span>' +
+      '</div>' +
+      '<input type="text" id="nm-url-' + id + '" placeholder="YouTube URL or library video ID">' +
+      '<select id="nm-type-' + id + '">' +
+        '<option value="yt_karaoke">Karaoke video</option>' +
+        '<option value="karaokify" selected>Karaokify</option>' +
+        '<option value="jukebox">Jukebox (as-is)</option>' +
+      '</select>' +
+      '<button class="nm-go" id="nm-go-' + id + '" onclick="submitFillMatch(' + id + ')">Match</button>' +
+    '</div>';
+  }
+  document.getElementById('needs-match-list').innerHTML = html;
+}
+
+async function submitFillMatch(id) {
+  if (_fillMatchInFlight.has(id)) return;
+  var input = document.getElementById('nm-url-' + id);
+  var sel = document.getElementById('nm-type-' + id);
+  var btn = document.getElementById('nm-go-' + id);
+  var val = (input.value || '').trim();
+  if (!val) { setRequestStatus('Paste a YouTube URL or video ID first', '#ef4444'); return; }
+  var videoId = '', url = '';
+  var m = val.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+  if (m) { videoId = m[1]; url = val; }
+  else if (/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(val)) { videoId = val; }
+  else { setRequestStatus('Not a YouTube URL or video ID', '#ef4444'); return; }
+  _fillMatchInFlight.add(id);
+  if (btn) btn.disabled = true;
+  try {
+    var r = await api.queue.fillMatch({ id: id, videoId: videoId, url: url, requestType: sel.value });
+    if (r && r.ok) {
+      setRequestStatus('Matched — request queued', '#40f040');
+      setTimeout(function() { setRequestStatus(''); }, 3000);
+      await refreshNeedsMatch();
+    } else {
+      setRequestStatus('Match failed: ' + ((r && r.error) || 'unknown error'), '#ef4444');
+    }
+  } catch (e) {
+    setRequestStatus('Match error: ' + e.message, '#ef4444');
+  } finally {
+    _fillMatchInFlight.delete(id);
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function rescanLibrary() {
@@ -985,7 +1290,7 @@ function renderQueue() {
       '<span class="q-drag-handle" title="Drag to reorder">⠿</span>' +
       '<span class="q-num">' + (isActive ? '▶' : (i+1)) + '</span>' +
       '<div class="q-info">' +
-        '<div class="q-title">' + escapeHtml(item.title || item.videoId) + '</div>' +
+        '<div class="q-title">' + escapeHtml(safeDisplayTitle(item.title, item.videoId)) + '</div>' +
         '<div class="q-singer">' + escapeHtml(item.requester || item.singer || '\u2014') + '</div>' +
         '<div class="q-meta">' +
           '<span class="q-lyric-badge ' + escapeHtml(item.hasLyrics ? (item.lyricSource || 'unknown') : 'none') + '" title="' + escapeHtml(item.lyricLabel || (item.hasLyrics ? 'Lyrics' : 'No lyrics file')) + '">' +
@@ -1041,7 +1346,7 @@ function updateNowPlaying() {
     return;
   }
 
-  document.getElementById('np-title').textContent = nowPlaying.title;
+  document.getElementById('np-title').textContent = safeDisplayTitle(nowPlaying.title, nowPlaying.videoId);
   document.getElementById('np-singer').textContent = (nowPlaying.requester || 'DJ') + ' \u2022 ' + (nowPlaying.isYouTube ? 'YouTube' : 'Local');
   document.getElementById('np-current').textContent = formatTime(nowPlaying.currentTime || 0);
   document.getElementById('np-duration').textContent = formatTime(nowPlaying.duration || 0);
@@ -1086,7 +1391,8 @@ async function addRequest() {
 
   try {
     // Start the download pipeline via the request handler
-    await api.requests.add(videoId, singer, 'YouTube: ' + videoId, val, karaokify);
+    // Empty title → server resolves the real one (tags/oEmbed); never send the raw id
+    await api.requests.add(videoId, singer, '', val, karaokify);
     processingJobs[videoId] = { status: 'downloading', progress: 0, label: val, karaokify: karaokify };
     renderProcessingPanel();
 
@@ -1273,6 +1579,17 @@ function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Never render a raw YouTube id (or '<id>-karaoke') as a song title.
+function safeDisplayTitle(title, videoId) {
+  var t = String(title || '').trim();
+  var vid = String(videoId || '');
+  var base = vid.replace(/-karaoke$/, '');
+  if (!t || t === vid || t === base || /^[A-Za-z0-9_-]{11}(-karaoke)?$/.test(t) || /^https?:\/\//i.test(t)) {
+    return 'Loading title…';
+  }
+  return t;
+}
+
 function escapeJs(str) {
   if (!str) return '';
   return str.replace(/\\/g,'\\\\').replace(/'/g,'\\\'').replace(/"/g,'\\\"');
@@ -1308,6 +1625,13 @@ api.on('download-progress', function(jobs) {
 // ── Start ──
 init();
 </script>
+
+<!-- Per-track reclassify menu -->
+<div id="reclass-menu">
+  <button onclick="reclassifyTrack('karaoke')">Move to Karaoke</button>
+  <button onclick="reclassifyTrack('custom')">Move to Custom</button>
+  <button onclick="reclassifyTrack('music')">Move to Music Video</button>
+</div>
 
 <!-- Re-lyric config modal -->
 <div id="relyric-modal-overlay" onclick="if(event.target===this)closeRelyricModal()">

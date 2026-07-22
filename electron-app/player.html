@@ -65,27 +65,27 @@ body.is-monitor html,body.is-monitor{cursor:default}
 body.is-monitor #conn-status{top:12px;left:12px}
 
 /* Karaoke mic buddy — top-left mirror of QR corner (~236px), HDMI only */
-#donkey-buddy{position:absolute;top:18px;left:18px;z-index:54;width:236px;height:236px;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .35s ease,visibility .35s;--beat:0;--glow:0.35;--hop:0px;--squash:1;--tilt:0deg;--shake-x:0px;--shake-y:0px;--spin:0deg;--flash:0;--tempo:1;--hue:0deg;--burst:0;--bpm:120;--slowmo:1;--master-speed:1;--period:calc(60s / var(--bpm) * var(--slowmo) / var(--master-speed));--ease-body:cubic-bezier(0.34,1.56,0.64,1);--ease-snap:cubic-bezier(0.2,1.8,0.35,1)}
+#donkey-buddy{position:absolute;top:18px;left:18px;z-index:54;width:236px;height:236px;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .35s ease,visibility .35s;--beat:0;--glow:0.2;--hop:0px;--squash:1;--tilt:0deg;--shake-x:0px;--shake-y:0px;--spin:0deg;--flash:0;--tempo:1;--hue:0deg;--burst:0;--bpm:120;--slowmo:1;--master-speed:1;--period:calc(60s / var(--bpm) * var(--slowmo) / var(--master-speed));--ease-body:cubic-bezier(0.45,0.05,0.55,0.95);--ease-snap:cubic-bezier(0.4,0.15,0.4,1)}
 #donkey-buddy.visible{opacity:1;visibility:visible}
 #donkey-buddy .dk-fx{position:absolute;inset:0;pointer-events:none;overflow:visible}
-#donkey-buddy .dk-speedlines{position:absolute;inset:-12%;opacity:calc(var(--beat) * 0.85);background:repeating-conic-gradient(from 0deg,transparent 0deg 8deg,rgba(255,255,255,0.14) 8deg 9deg);mask-image:radial-gradient(circle at 50% 55%,transparent 28%,#000 52%,transparent 78%);-webkit-mask-image:radial-gradient(circle at 50% 55%,transparent 28%,#000 52%,transparent 78%);animation:dkSpeedSpin calc(var(--period) * 2) linear infinite;mix-blend-mode:screen}
-#donkey-buddy .dk-sparks{position:absolute;inset:0;opacity:calc(var(--burst) * 0.95);background:
+#donkey-buddy .dk-speedlines{position:absolute;inset:-12%;opacity:calc(var(--beat) * 0.18);background:repeating-conic-gradient(from 0deg,transparent 0deg 8deg,rgba(255,255,255,0.08) 8deg 9deg);mask-image:radial-gradient(circle at 50% 55%,transparent 28%,#000 52%,transparent 78%);-webkit-mask-image:radial-gradient(circle at 50% 55%,transparent 28%,#000 52%,transparent 78%);animation:dkSpeedSpin calc(var(--period) * 5) linear infinite;mix-blend-mode:screen}
+#donkey-buddy .dk-sparks{position:absolute;inset:0;opacity:calc(var(--burst) * 0.35);background:
   radial-gradient(circle at 18% 32%,#ffe600 0 2px,transparent 3px),
   radial-gradient(circle at 82% 28%,#ff006e 0 2.5px,transparent 4px),
   radial-gradient(circle at 70% 72%,#00e5ff 0 2px,transparent 3.5px),
   radial-gradient(circle at 28% 78%,#06d6a0 0 2px,transparent 3px),
   radial-gradient(circle at 50% 18%,#fff 0 1.5px,transparent 3px),
   radial-gradient(circle at 12% 58%,#8338ec 0 2px,transparent 3.5px),
-  radial-gradient(circle at 88% 62%,#fb5607 0 2px,transparent 3.5px);animation:dkSparkPop calc(var(--period) / 2) ease-out infinite;mix-blend-mode:screen}
-#donkey-buddy .dk-chroma{position:absolute;inset:6%;border-radius:50%;opacity:calc(var(--flash) * 0.7);background:linear-gradient(90deg,#ff006e,transparent 40%,#00e5ff);mix-blend-mode:screen;filter:blur(6px);animation:dkChromaKick calc(var(--period) / 2) steps(2,end) infinite;pointer-events:none}
-#donkey-buddy .dk-stage{position:relative;z-index:2;width:100%;height:100%;display:flex;align-items:center;justify-content:center;transform:translate(var(--shake-x),calc(var(--hop) + var(--shake-y))) rotate(calc(var(--tilt) + var(--spin))) scaleY(var(--squash)) scaleX(calc(2 - var(--squash)));transform-origin:50% 85%;will-change:transform,filter;filter:drop-shadow(0 0 calc(8px + var(--glow) * 32px) rgba(255,0,170,calc(0.25 + var(--glow) * 0.6))) drop-shadow(0 0 calc(4px + var(--glow) * 20px) rgba(0,229,255,calc(0.2 + var(--glow) * 0.45))) hue-rotate(var(--hue)) saturate(calc(1 + var(--glow) * 0.85))}
+  radial-gradient(circle at 88% 62%,#fb5607 0 2px,transparent 3.5px);animation:dkSparkPop calc(var(--period) * 1.2) ease-out infinite;mix-blend-mode:screen}
+#donkey-buddy .dk-chroma{position:absolute;inset:6%;border-radius:50%;opacity:calc(var(--flash) * 0.22);background:linear-gradient(90deg,#ff006e,transparent 40%,#00e5ff);mix-blend-mode:screen;filter:blur(8px);animation:dkChromaKick calc(var(--period)) ease-in-out infinite;pointer-events:none}
+#donkey-buddy .dk-stage{position:relative;z-index:2;width:100%;height:100%;display:flex;align-items:center;justify-content:center;transform:translate(var(--shake-x),calc(var(--hop) + var(--shake-y))) rotate(calc(var(--tilt) + var(--spin))) scaleY(var(--squash)) scaleX(calc(2 - var(--squash)));transform-origin:50% 85%;will-change:transform,filter;filter:drop-shadow(0 0 calc(4px + var(--glow) * 12px) rgba(255,0,170,calc(0.12 + var(--glow) * 0.3))) drop-shadow(0 0 calc(2px + var(--glow) * 8px) rgba(0,229,255,calc(0.1 + var(--glow) * 0.25))) hue-rotate(var(--hue)) saturate(calc(1 + var(--glow) * 0.25))}
 #donkey-buddy svg{width:94%;height:94%;overflow:visible}
 /* Lottie dance rig — replaces the hand-rolled SVG donkey when assets load */
 #donkey-buddy .dk-lottie{display:none;width:100%;height:100%;position:relative;z-index:2}
 #donkey-buddy.lottie-on .dk-lottie{display:block}
 #donkey-buddy.lottie-on .dk-stage>svg{display:none}
-#donkey-buddy .dk-aura{position:absolute;inset:4%;border-radius:50%;background:conic-gradient(from 0deg,#ff006e,#8338ec,#3a86ff,#06d6a0,#ffbe0b,#fb5607,#ff006e);filter:blur(18px);opacity:calc(0.18 + var(--glow) * 0.7);animation:dkAuraSpin calc(var(--period) * 4) linear infinite;mix-blend-mode:screen;pointer-events:none;transform:scale(calc(0.85 + var(--glow) * 0.45))}
-#donkey-buddy .dk-aura-2{position:absolute;inset:-6%;border-radius:50%;background:conic-gradient(from 180deg,#00e5ff,#ffe600,#ff006e,#8338ec,#00e5ff);filter:blur(28px);opacity:calc(var(--burst) * 0.55);animation:dkAuraSpin calc(var(--period) * 2) linear infinite reverse;mix-blend-mode:screen;pointer-events:none}
+#donkey-buddy .dk-aura{position:absolute;inset:4%;border-radius:50%;background:conic-gradient(from 0deg,#ff006e,#8338ec,#3a86ff,#06d6a0,#ffbe0b,#fb5607,#ff006e);filter:blur(18px);opacity:calc(0.08 + var(--glow) * 0.28);animation:dkAuraSpin calc(var(--period) * 8) linear infinite;mix-blend-mode:screen;pointer-events:none;transform:scale(calc(0.9 + var(--glow) * 0.18))}
+#donkey-buddy .dk-aura-2{position:absolute;inset:-6%;border-radius:50%;background:conic-gradient(from 180deg,#00e5ff,#ffe600,#ff006e,#8338ec,#00e5ff);filter:blur(28px);opacity:calc(var(--burst) * 0.18);animation:dkAuraSpin calc(var(--period) * 6) linear infinite reverse;mix-blend-mode:screen;pointer-events:none}
 /* Polyrhythm: body=1×, head=½×, ears=¾×, legs=2×, tail=⅓×, mouth=4× — joints use view-box origins */
 #donkey-buddy .dk-body{animation:dkChillBounce var(--period) var(--ease-body) infinite;transform-origin:100px 170px;transform-box:view-box}
 #donkey-buddy .dk-joint{transform-box:view-box;transform-origin:0 0}
@@ -114,187 +114,169 @@ body.is-monitor #conn-status{top:12px;left:12px}
 #donkey-buddy.mode-groove .dk-leg-fl,#donkey-buddy.mode-groove .dk-leg-fr{animation-name:dkGrooveLegF}
 #donkey-buddy.mode-groove .dk-leg-bl{animation-name:dkGrooveLegBL}
 #donkey-buddy.mode-groove .dk-leg-br{animation-name:dkGrooveLegBR}
-#donkey-buddy.mode-groove .dk-mouth{animation-duration:calc(var(--period) / 5)}
-#donkey-buddy.mode-groove .dk-ear-l,#donkey-buddy.mode-groove .dk-ear-r{animation-duration:calc(var(--period) * 0.55)}
+#donkey-buddy.mode-groove .dk-mouth{animation-duration:calc(var(--period) / 3)}
+#donkey-buddy.mode-groove .dk-ear-l,#donkey-buddy.mode-groove .dk-ear-r{animation-duration:calc(var(--period) * 0.85)}
 
-/* mode: frenzy */
+/* mode: frenzy — lively bounce, no flips */
 #donkey-buddy.mode-frenzy .dk-body{animation-name:dkFrenzyBody}
 #donkey-buddy.mode-frenzy .dk-head{animation-name:dkFrenzyHead}
-#donkey-buddy.mode-frenzy .dk-leg-fl,#donkey-buddy.mode-frenzy .dk-leg-fr{animation-name:dkFrenzyLegF;animation-duration:calc(var(--period) / 3)}
-#donkey-buddy.mode-frenzy .dk-leg-bl,#donkey-buddy.mode-frenzy .dk-leg-br{animation-name:dkFrenzyLegB;animation-duration:calc(var(--period) / 3)}
-#donkey-buddy.mode-frenzy .dk-mouth{animation-duration:calc(var(--period) / 6)}
-#donkey-buddy.mode-frenzy .dk-note{animation-duration:calc(var(--period) * 0.8)}
-#donkey-buddy.mode-frenzy .dk-starburst{opacity:calc(0.35 + var(--beat) * 0.65);animation:dkStarSpin calc(var(--period) / 2) linear infinite}
-#donkey-buddy.mode-frenzy .dk-tail{animation-duration:calc(var(--period) / 4)}
-#donkey-buddy.mode-frenzy .dk-ear-l,#donkey-buddy.mode-frenzy .dk-ear-r{animation-duration:calc(var(--period) / 3)}
+#donkey-buddy.mode-frenzy .dk-leg-fl,#donkey-buddy.mode-frenzy .dk-leg-fr{animation-name:dkFrenzyLegF;animation-duration:calc(var(--period) * 0.7)}
+#donkey-buddy.mode-frenzy .dk-leg-bl,#donkey-buddy.mode-frenzy .dk-leg-br{animation-name:dkFrenzyLegB;animation-duration:calc(var(--period) * 0.7)}
+#donkey-buddy.mode-frenzy .dk-mouth{animation-duration:calc(var(--period) / 3)}
+#donkey-buddy.mode-frenzy .dk-note{animation-duration:calc(var(--period) * 1.2)}
+#donkey-buddy.mode-frenzy .dk-starburst{opacity:calc(0.12 + var(--beat) * 0.25);animation:dkStarSpin calc(var(--period) * 2) linear infinite}
+#donkey-buddy.mode-frenzy .dk-tail{animation-duration:calc(var(--period) * 0.8)}
+#donkey-buddy.mode-frenzy .dk-ear-l,#donkey-buddy.mode-frenzy .dk-ear-r{animation-duration:calc(var(--period) * 0.7)}
 
-/* mode: peak */
+/* mode: peak — most energetic tier, still grounded */
 #donkey-buddy.mode-peak .dk-body{animation-name:dkPeakBody}
 #donkey-buddy.mode-peak .dk-head{animation-name:dkPeakHead}
-#donkey-buddy.mode-peak .dk-leg-fl,#donkey-buddy.mode-peak .dk-leg-fr{animation-name:dkPeakLegF;animation-duration:calc(var(--period) / 4)}
-#donkey-buddy.mode-peak .dk-leg-bl,#donkey-buddy.mode-peak .dk-leg-br{animation-name:dkPeakLegB;animation-duration:calc(var(--period) / 4)}
-#donkey-buddy.mode-peak .dk-mouth{animation-duration:calc(var(--period) / 8);animation-name:dkHeeHawPeak}
-#donkey-buddy.mode-peak .dk-note{animation-duration:calc(var(--period) * 0.55)}
-#donkey-buddy.mode-peak .dk-starburst{opacity:calc(0.55 + var(--beat) * 0.45);animation:dkStarSpin calc(var(--period) / 3) linear infinite}
-#donkey-buddy.mode-peak .dk-stage{filter:drop-shadow(0 0 calc(12px + var(--glow) * 40px) rgba(255,230,0,calc(0.4 + var(--glow) * 0.5))) drop-shadow(0 0 calc(6px + var(--glow) * 24px) rgba(255,0,110,calc(0.35 + var(--glow) * 0.5))) hue-rotate(var(--hue)) saturate(calc(1.4 + var(--glow)))}
-#donkey-buddy.mode-peak .dk-tail{animation-duration:calc(var(--period) / 5);filter:saturate(1.4) brightness(1.15)}
+#donkey-buddy.mode-peak .dk-leg-fl,#donkey-buddy.mode-peak .dk-leg-fr{animation-name:dkPeakLegF;animation-duration:calc(var(--period) * 0.55)}
+#donkey-buddy.mode-peak .dk-leg-bl,#donkey-buddy.mode-peak .dk-leg-br{animation-name:dkPeakLegB;animation-duration:calc(var(--period) * 0.55)}
+#donkey-buddy.mode-peak .dk-mouth{animation-duration:calc(var(--period) / 4);animation-name:dkHeeHawPeak}
+#donkey-buddy.mode-peak .dk-note{animation-duration:calc(var(--period))}
+#donkey-buddy.mode-peak .dk-starburst{opacity:calc(0.18 + var(--beat) * 0.28);animation:dkStarSpin calc(var(--period) * 1.5) linear infinite}
+#donkey-buddy.mode-peak .dk-stage{filter:drop-shadow(0 0 calc(6px + var(--glow) * 14px) rgba(255,230,0,calc(0.18 + var(--glow) * 0.25))) drop-shadow(0 0 calc(3px + var(--glow) * 10px) rgba(255,0,110,calc(0.14 + var(--glow) * 0.22))) hue-rotate(var(--hue)) saturate(calc(1.1 + var(--glow) * 0.2))}
+#donkey-buddy.mode-peak .dk-tail{animation-duration:calc(var(--period) * 0.65);filter:saturate(1.1) brightness(1.05)}
 
 @keyframes dkAuraSpin{to{transform:rotate(360deg)}}
 @keyframes dkSpeedSpin{to{transform:rotate(-360deg)}}
 @keyframes dkSparkPop{
-  0%{transform:scale(0.6);opacity:0}
-  30%{opacity:1;transform:scale(1.15)}
-  100%{transform:scale(1.55);opacity:0}
+  0%{transform:scale(0.85);opacity:0}
+  40%{opacity:0.7;transform:scale(1.05)}
+  100%{transform:scale(1.2);opacity:0}
 }
 @keyframes dkChromaKick{
-  0%{transform:translate(-6px,0) scaleX(1.05)}
-  50%{transform:translate(7px,-2px) scaleX(0.95)}
-  100%{transform:translate(-4px,3px) scaleX(1.08)}
+  0%,100%{transform:translate(0,0) scaleX(1)}
+  50%{transform:translate(2px,-1px) scaleX(1.02)}
 }
-@keyframes dkStarSpin{to{transform:rotate(360deg) scale(1.15)}}
+@keyframes dkStarSpin{to{transform:rotate(360deg) scale(1.05)}}
 @keyframes dkChillBounce{
   0%,100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
-  35%{transform:translateY(-12px) scaleY(1.1) scaleX(0.92) rotate(-4deg)}
-  55%{transform:translateY(5px) scaleY(0.88) scaleX(1.12) rotate(3deg)}
+  40%{transform:translateY(-5px) scaleY(1.03) scaleX(0.97) rotate(-2deg)}
+  60%{transform:translateY(2px) scaleY(0.97) scaleX(1.03) rotate(1.5deg)}
 }
 @keyframes dkChillHead{
-  0%,100%{transform:rotate(-8deg)}
-  50%{transform:rotate(10deg)}
+  0%,100%{transform:rotate(-4deg)}
+  50%{transform:rotate(5deg)}
 }
 @keyframes dkGrooveBounce{
   0%,100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
-  20%{transform:translateY(-20px) scaleY(1.2) scaleX(0.84) rotate(-10deg)}
-  38%{transform:translateY(9px) scaleY(0.74) scaleX(1.26) rotate(7deg)}
-  58%{transform:translateY(-14px) scaleY(1.12) scaleX(0.9) rotate(12deg)}
-  78%{transform:translateY(7px) scaleY(0.82) scaleX(1.18) rotate(-5deg)}
+  25%{transform:translateY(-8px) scaleY(1.06) scaleX(0.95) rotate(-4deg)}
+  50%{transform:translateY(3px) scaleY(0.95) scaleX(1.05) rotate(3deg)}
+  75%{transform:translateY(-5px) scaleY(1.03) scaleX(0.97) rotate(4deg)}
 }
 @keyframes dkGrooveHead{
-  0%,100%{transform:rotate(-12deg) scale(1)}
-  25%{transform:rotate(16deg) scale(1.04)}
-  50%{transform:rotate(-14deg) scale(0.98)}
-  75%{transform:rotate(18deg) scale(1.03)}
+  0%,100%{transform:rotate(-6deg) scale(1)}
+  25%{transform:rotate(8deg) scale(1.01)}
+  50%{transform:rotate(-7deg) scale(0.99)}
+  75%{transform:rotate(9deg) scale(1.01)}
 }
 @keyframes dkGrooveLegF{
-  0%,100%{transform:rotate(-22deg)}
-  40%{transform:rotate(34deg)}
-  70%{transform:rotate(-10deg)}
+  0%,100%{transform:rotate(-10deg)}
+  40%{transform:rotate(14deg)}
+  70%{transform:rotate(-5deg)}
 }
 @keyframes dkGrooveLegBL{
-  0%,100%{transform:rotate(14deg)}
-  35%{transform:rotate(-30deg)}
-  65%{transform:rotate(20deg)}
+  0%,100%{transform:rotate(6deg)}
+  35%{transform:rotate(-12deg)}
+  65%{transform:rotate(8deg)}
 }
 @keyframes dkGrooveLegBR{
-  0%,100%{transform:rotate(-14deg)}
-  35%{transform:rotate(30deg)}
-  65%{transform:rotate(-20deg)}
+  0%,100%{transform:rotate(-6deg)}
+  35%{transform:rotate(12deg)}
+  65%{transform:rotate(-8deg)}
 }
 @keyframes dkFrenzyBody{
-  0%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
-  12%{transform:translateY(-26px) scaleY(1.32) scaleX(0.72) rotate(-16deg)}
-  24%{transform:translateY(12px) scaleY(0.64) scaleX(1.38) rotate(20deg)}
-  38%{transform:translateY(-18px) scaleY(1.18) scaleX(0.8) rotate(160deg)}
-  52%{transform:translateY(9px) scaleY(0.72) scaleX(1.3) rotate(190deg)}
-  68%{transform:translateY(-22px) scaleY(1.26) scaleX(0.76) rotate(360deg)}
-  82%{transform:translateY(11px) scaleY(0.7) scaleX(1.34) rotate(370deg)}
-  100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(360deg)}
+  0%,100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
+  20%{transform:translateY(-10px) scaleY(1.08) scaleX(0.93) rotate(-5deg)}
+  40%{transform:translateY(4px) scaleY(0.93) scaleX(1.07) rotate(5deg)}
+  60%{transform:translateY(-8px) scaleY(1.06) scaleX(0.95) rotate(4deg)}
+  80%{transform:translateY(3px) scaleY(0.95) scaleX(1.05) rotate(-3deg)}
 }
 @keyframes dkFrenzyHead{
-  0%,100%{transform:rotate(-18deg) scale(1)}
-  20%{transform:rotate(22deg) scale(1.06)}
-  40%{transform:rotate(-24deg) scale(0.96)}
-  60%{transform:rotate(26deg) scale(1.08)}
-  80%{transform:rotate(-20deg) scale(0.98)}
+  0%,100%{transform:rotate(-8deg) scale(1)}
+  25%{transform:rotate(10deg) scale(1.02)}
+  50%{transform:rotate(-9deg) scale(0.99)}
+  75%{transform:rotate(11deg) scale(1.02)}
 }
 @keyframes dkFrenzyLegF{
-  0%{transform:rotate(-40deg)}
-  25%{transform:rotate(48deg)}
-  50%{transform:rotate(-44deg)}
-  75%{transform:rotate(52deg)}
-  100%{transform:rotate(-40deg)}
+  0%,100%{transform:rotate(-16deg)}
+  50%{transform:rotate(18deg)}
 }
 @keyframes dkFrenzyLegB{
-  0%{transform:rotate(32deg)}
-  25%{transform:rotate(-40deg)}
-  50%{transform:rotate(44deg)}
-  75%{transform:rotate(-48deg)}
-  100%{transform:rotate(32deg)}
-}
-@keyframes dkPeakBody{
-  0%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
-  8%{transform:translateY(-34px) scaleY(1.42) scaleX(0.64) rotate(-26deg)}
-  16%{transform:translateY(16px) scaleY(0.54) scaleX(1.52) rotate(30deg)}
-  28%{transform:translateY(-28px) scaleY(1.36) scaleX(0.7) rotate(160deg)}
-  40%{transform:translateY(14px) scaleY(0.6) scaleX(1.46) rotate(200deg)}
-  55%{transform:translateY(-38px) scaleY(1.48) scaleX(0.6) rotate(360deg)}
-  70%{transform:translateY(18px) scaleY(0.5) scaleX(1.58) rotate(400deg)}
-  85%{transform:translateY(-20px) scaleY(1.28) scaleX(0.74) rotate(720deg)}
-  100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(720deg)}
-}
-@keyframes dkPeakHead{
-  0%,100%{transform:rotate(0deg) scale(1)}
-  15%{transform:rotate(22deg) scale(1.08)}
-  30%{transform:rotate(-24deg) scale(0.95)}
-  50%{transform:rotate(28deg) scale(1.1)}
-  70%{transform:rotate(-22deg) scale(0.96)}
-  85%{transform:rotate(18deg) scale(1.05)}
-}
-@keyframes dkPeakLegF{
-  0%,100%{transform:rotate(-48deg) scale(1)}
-  33%{transform:rotate(56deg) scale(1.04)}
-  66%{transform:rotate(-52deg) scale(0.96)}
-}
-@keyframes dkPeakLegB{
-  0%,100%{transform:rotate(42deg) scale(1)}
-  33%{transform:rotate(-50deg) scale(1.04)}
-  66%{transform:rotate(46deg) scale(0.96)}
-}
-@keyframes dkHeeHaw{
-  0%,100%{transform:scaleY(0.75) scaleX(1.08)}
-  50%{transform:scaleY(1.3) scaleX(0.9)}
-}
-@keyframes dkHeeHawPeak{
-  0%,100%{transform:scaleY(0.55) scaleX(1.22)}
-  50%{transform:scaleY(1.55) scaleX(0.78)}
-}
-@keyframes dkEarL{
-  0%,100%{transform:rotate(-12deg)}
-  50%{transform:rotate(16deg)}
-}
-@keyframes dkEarR{
   0%,100%{transform:rotate(12deg)}
   50%{transform:rotate(-16deg)}
 }
+@keyframes dkPeakBody{
+  0%,100%{transform:translateY(0) scaleY(1) scaleX(1) rotate(0deg)}
+  18%{transform:translateY(-12px) scaleY(1.1) scaleX(0.92) rotate(-6deg)}
+  36%{transform:translateY(5px) scaleY(0.92) scaleX(1.08) rotate(6deg)}
+  54%{transform:translateY(-10px) scaleY(1.08) scaleX(0.94) rotate(5deg)}
+  72%{transform:translateY(4px) scaleY(0.94) scaleX(1.06) rotate(-4deg)}
+  88%{transform:translateY(-6px) scaleY(1.04) scaleX(0.97) rotate(3deg)}
+}
+@keyframes dkPeakHead{
+  0%,100%{transform:rotate(-6deg) scale(1)}
+  20%{transform:rotate(10deg) scale(1.02)}
+  40%{transform:rotate(-9deg) scale(0.99)}
+  60%{transform:rotate(11deg) scale(1.03)}
+  80%{transform:rotate(-8deg) scale(0.99)}
+}
+@keyframes dkPeakLegF{
+  0%,100%{transform:rotate(-18deg) scale(1)}
+  50%{transform:rotate(20deg) scale(1.01)}
+}
+@keyframes dkPeakLegB{
+  0%,100%{transform:rotate(14deg) scale(1)}
+  50%{transform:rotate(-18deg) scale(1.01)}
+}
+@keyframes dkHeeHaw{
+  0%,100%{transform:scaleY(0.88) scaleX(1.04)}
+  50%{transform:scaleY(1.12) scaleX(0.96)}
+}
+@keyframes dkHeeHawPeak{
+  0%,100%{transform:scaleY(0.82) scaleX(1.08)}
+  50%{transform:scaleY(1.18) scaleX(0.92)}
+}
+@keyframes dkEarL{
+  0%,100%{transform:rotate(-6deg)}
+  50%{transform:rotate(8deg)}
+}
+@keyframes dkEarR{
+  0%,100%{transform:rotate(6deg)}
+  50%{transform:rotate(-8deg)}
+}
 @keyframes dkLegFL{
-  0%,100%{transform:rotate(-18deg)}
-  50%{transform:rotate(28deg)}
+  0%,100%{transform:rotate(-8deg)}
+  50%{transform:rotate(12deg)}
 }
 @keyframes dkLegFR{
-  0%,100%{transform:rotate(18deg)}
-  50%{transform:rotate(-28deg)}
+  0%,100%{transform:rotate(8deg)}
+  50%{transform:rotate(-12deg)}
 }
 @keyframes dkLegBL{
-  0%,100%{transform:rotate(12deg)}
-  50%{transform:rotate(-24deg)}
+  0%,100%{transform:rotate(6deg)}
+  50%{transform:rotate(-10deg)}
 }
 @keyframes dkLegBR{
-  0%,100%{transform:rotate(-12deg)}
-  50%{transform:rotate(24deg)}
+  0%,100%{transform:rotate(-6deg)}
+  50%{transform:rotate(10deg)}
 }
 @keyframes dkTailWave{
-  0%,100%{transform:rotate(-22deg)}
-  30%{transform:rotate(28deg)}
-  55%{transform:rotate(-30deg)}
-  80%{transform:rotate(18deg)}
+  0%,100%{transform:rotate(-10deg)}
+  30%{transform:rotate(12deg)}
+  55%{transform:rotate(-14deg)}
+  80%{transform:rotate(8deg)}
 }
 @keyframes dkManeFlick{
-  0%,100%{transform:rotate(-4deg) scaleY(1)}
-  50%{transform:rotate(8deg) scaleY(1.08)}
+  0%,100%{transform:rotate(-2deg) scaleY(1)}
+  50%{transform:rotate(4deg) scaleY(1.03)}
 }
 @keyframes dkNoteFloat{
-  0%{transform:translate(0,10px) scale(0.55) rotate(-10deg);opacity:0}
-  20%{opacity:1}
-  100%{transform:translate(28px,-48px) scale(1.35) rotate(25deg);opacity:0}
+  0%{transform:translate(0,6px) scale(0.7) rotate(-6deg);opacity:0}
+  25%{opacity:0.75}
+  100%{transform:translate(16px,-28px) scale(1.05) rotate(12deg);opacity:0}
 }
 body.is-monitor #donkey-buddy{display:none}
 
@@ -943,6 +925,18 @@ function tripQr(toHero) {
   });
 }
 
+// Never render a raw YouTube id (or '<id>-karaoke') as a song title.
+function safeTitle(title, videoId) {
+  var t = String(title || '').trim();
+  var vid = String(videoId || '');
+  var base = vid.replace(/-karaoke$/, '');
+  if (!t) return '';
+  if (t === vid || t === base || /^[A-Za-z0-9_-]{11}(-karaoke)?$/.test(t) || /^https?:\/\//i.test(t)) {
+    return 'Loading title…';
+  }
+  return t;
+}
+
 function handlePlay(videoId, isYT, title, requester) {
   // Guard: don't restart the same video that's already playing
   if (currentVideoId === videoId && playerState === 'playing') return;
@@ -966,12 +960,12 @@ function handlePlay(videoId, isYT, title, requester) {
     destroyVideo();
 
     currentSingerName = String(requester || '').trim();
-    currentSongTitle = String(title || '').trim();
+    currentSongTitle = safeTitle(title, videoId);
     finaleShown = false;
     hideFinale();
     showEntrance(currentSingerName, currentSongTitle);
 
-    updateMarquee(title || videoId, requester || '');
+    updateMarquee(currentSongTitle, requester || '');
     showLoading('Loading...');
 
     if (isYouTube) {
@@ -1009,7 +1003,7 @@ function handleBetweenSongs(event) {
   currentVideoId = null;
 
   var singer = (event && event.singer) ? String(event.singer).trim() : '';
-  var title = (event && event.title) ? String(event.title).trim() : '';
+  var title = safeTitle(event && event.title, '');
   var labelEl = document.getElementById('bs-label');
   if (labelEl) labelEl.textContent = 'Up next';
   document.getElementById('bs-singer').textContent = singer || 'Next up';
@@ -1042,7 +1036,7 @@ function handlePauseInterstitial(event) {
   // Keep video loaded under the overlay so resume can continue mid-track
 
   var singer = (event && event.singer) ? String(event.singer).trim() : '';
-  var title = (event && event.title) ? String(event.title).trim() : '';
+  var title = safeTitle(event && event.title, '');
   var label = (event && event.label) ? String(event.label).trim() : 'Up next';
   var labelEl = document.getElementById('bs-label');
   if (labelEl) labelEl.textContent = label || 'Up next';
@@ -1120,6 +1114,15 @@ async function playLocal(videoId) {
 
   var filePath = await api.library.filePath(videoId);
   if (!filePath) {
+    // No local file and no R2 copy — stream from YouTube instead of erroring.
+    // Covers remote-only Music Videos entries (and any lost media).
+    var ytBase = String(videoId || '').replace(/-karaoke$/, '');
+    if (/^[A-Za-z0-9_-]{11}$/.test(ytBase)) {
+      console.warn('[player] No local media for ' + videoId + ' — falling back to YouTube embed');
+      isYouTube = true;
+      playYouTube(ytBase);
+      return;
+    }
     showErrorOverlay('Video file not found: ' + videoId);
     reportState({ state: 'error', error: 'File not found' });
     return;
@@ -1333,10 +1336,10 @@ var dkRotFlip = false;
 var dkSilentSince = 0;
 var dkSilent = false;
 var DK_MOVE_POOLS = {
-  chill:  ['bear', 'chicken'],
-  groove: ['raccoon', 'bear'],
-  frenzy: ['floss', 'raccoon'],
-  peak:   ['party', 'floss']
+  chill:  ['chicken', 'bear'],
+  groove: ['bear', 'raccoon'],
+  frenzy: ['raccoon', 'bear'],
+  peak:   ['raccoon', 'floss']
 };
 
 function dkLottieLoad(move) {
@@ -1638,17 +1641,17 @@ function micBuddyEstimateTempo(flux, now) {
       micBuddyBpm += (bpm - micBuddyBpm) * 0.12;
     }
   }
-  // Map BPM → animation tempo: slow songs weighty (~0.7), fast snappy (~1.8)
+  // Map BPM → animation tempo: keep the range tighter so fast songs don't go frantic
   var t = micBuddyBpm / 120;
-  micBuddyTempo += (Math.max(0.65, Math.min(1.95, t)) - micBuddyTempo) * 0.08;
+  micBuddyTempo += (Math.max(0.75, Math.min(1.35, t)) - micBuddyTempo) * 0.06;
 }
 
 function micBuddyPickMode(beat, tempo) {
-  // Energy gates + tempo bias so quiet/fast ≠ same as loud/slow
-  var score = beat * 0.72 + (tempo - 0.7) * 0.35;
-  if (score > 0.82 || (beat > 0.78 && tempo > 1.25)) return 'peak';
-  if (score > 0.52 || beat > 0.58) return 'frenzy';
-  if (score > 0.28 || beat > 0.32) return 'groove';
+  // Higher gates — spend more time in chill/groove; peak is rare
+  var score = beat * 0.65 + (tempo - 0.8) * 0.25;
+  if (score > 0.92 || (beat > 0.88 && tempo > 1.2)) return 'peak';
+  if (score > 0.68 || beat > 0.72) return 'frenzy';
+  if (score > 0.38 || beat > 0.42) return 'groove';
   return 'chill';
 }
 
@@ -1684,28 +1687,28 @@ function micBuddyTick() {
     flux = fluxSum / (len * 0.35);
     micBuddyEstimateTempo(flux, now);
   } else if (currentVideoEl && !currentVideoEl.paused) {
-    // Wild idle loop keyed to playback clock (tempo-ish pulse)
+    // Gentle idle pulse keyed to playback clock
     var t = currentVideoEl.currentTime || 0;
-    var pulse = Math.abs(Math.sin(t * Math.PI * 2.4));
-    var kick = Math.abs(Math.sin(t * Math.PI * 1.15));
-    energy = 0.35 + 0.4 * pulse + 0.2 * kick;
-    bass = 0.3 + 0.45 * kick;
-    flux = pulse > 0.92 ? 0.4 : 0.05;
-    micBuddyBpm = 118 + 22 * Math.sin(t * 0.07);
-    micBuddyTempo = 0.9 + 0.35 * pulse + 0.2 * kick;
-    if (flux > 0.3) { micBuddyHitFlash = 1; micBuddySpinKick = 0.7; }
+    var pulse = Math.abs(Math.sin(t * Math.PI * 1.6));
+    var kick = Math.abs(Math.sin(t * Math.PI * 0.8));
+    energy = 0.22 + 0.22 * pulse + 0.1 * kick;
+    bass = 0.2 + 0.25 * kick;
+    flux = pulse > 0.96 ? 0.22 : 0.03;
+    micBuddyBpm = 108 + 12 * Math.sin(t * 0.05);
+    micBuddyTempo = 0.88 + 0.18 * pulse + 0.08 * kick;
+    if (flux > 0.2) { micBuddyHitFlash = 0.45; micBuddySpinKick = 0.25; }
   } else {
     var idleT = now / 1000;
-    energy = 0.32 + 0.28 * Math.abs(Math.sin(idleT * 2.6));
-    bass = 0.28 + 0.22 * Math.abs(Math.sin(idleT * 1.4));
-    micBuddyTempo = 0.95 + 0.25 * Math.abs(Math.sin(idleT * 0.8));
-    if (Math.sin(idleT * 3.2) > 0.94) { micBuddyHitFlash = 0.85; micBuddySpinKick = 0.5; }
+    energy = 0.18 + 0.14 * Math.abs(Math.sin(idleT * 1.4));
+    bass = 0.16 + 0.1 * Math.abs(Math.sin(idleT * 0.9));
+    micBuddyTempo = 0.9 + 0.1 * Math.abs(Math.sin(idleT * 0.5));
+    if (Math.sin(idleT * 1.8) > 0.97) { micBuddyHitFlash = 0.35; micBuddySpinKick = 0.15; }
   }
 
-  micBuddyEnergy += (energy - micBuddyEnergy) * 0.32;
-  micBuddyBass += (bass - micBuddyBass) * 0.38;
-  micBuddyHitFlash *= 0.86;
-  micBuddySpinKick *= 0.9;
+  micBuddyEnergy += (energy - micBuddyEnergy) * 0.18;
+  micBuddyBass += (bass - micBuddyBass) * 0.22;
+  micBuddyHitFlash *= 0.9;
+  micBuddySpinKick *= 0.93;
 
   var beat = Math.max(0, Math.min(1, micBuddyEnergy * 0.55 + micBuddyBass * 0.55));
   var hit = micBuddyHitFlash;
@@ -1740,15 +1743,15 @@ function micBuddyTick() {
     if (desired !== dkLottieMove && now - dkMoveSwitchAt > 2500) {
       dkLottieLoad(desired);
     }
-    // Playback speed tracks tempo, lifted by energy, snapped by onsets
+    // Playback speed tracks tempo gently — never frantic
     var speed;
     if (dkSilent) {
-      speed = 0.1; // barely breathing while the room is quiet
+      speed = 0.12; // barely breathing while the room is quiet
     } else {
-      speed = micBuddyTempo * (0.7 + beat * 0.65) + hit * 0.35;
-      speed = Math.max(0.15, Math.min(2.6, speed));
+      speed = micBuddyTempo * (0.55 + beat * 0.35) + hit * 0.12;
+      speed = Math.max(0.2, Math.min(1.25, speed));
     }
-    if (Math.abs(speed - dkLastSpeed) > 0.04) {
+    if (Math.abs(speed - dkLastSpeed) > 0.03) {
       dkLastSpeed = speed;
       try { dkLottie.setSpeed(speed); } catch (e) {}
     }
@@ -1760,34 +1763,31 @@ function micBuddyTick() {
   beat = beat * live;
   hit = hit * live;
 
-  // Slow-mo on quiet / low energy; gentle snap on onsets
+  // Prefer slightly slower periods; avoid sudden snaps
   var targetSlow;
-  if (hit > 0.4) targetSlow = 0.72;
-  else if (beat < 0.22) targetSlow = 1.55;
-  else if (beat < 0.4) targetSlow = 1.25;
-  else if (beat < 0.6) targetSlow = 1.05;
-  else targetSlow = 0.92;
-  var slowBlend = hit > 0.4 ? 0.35 : 0.06;
+  if (hit > 0.5) targetSlow = 0.92;
+  else if (beat < 0.22) targetSlow = 1.4;
+  else if (beat < 0.4) targetSlow = 1.2;
+  else if (beat < 0.6) targetSlow = 1.08;
+  else targetSlow = 1.0;
+  var slowBlend = hit > 0.5 ? 0.18 : 0.05;
   micBuddySlowmo += (targetSlow - micBuddySlowmo) * slowBlend;
 
-  // Weightier hops on slow tempo, snappier on fast — amp boosted so analyser
-  // energy is obvious even before CSS keyframe period catches tempo
-  var weight = 1.15 / Math.max(0.7, Math.min(1.6, micBuddyTempo));
-  // Lottie characters fill the box (no internal padding) — softer hop/squash
-  // so they bounce in place instead of leaving the top of the screen
-  var amp = dkLottieOk ? 0.5 : 1;
-  var hop = -Math.round((beat * 36 + hit * 28) * weight * (0.7 + 0.3 / Math.max(0.5, micBuddySlowmo)) * amp);
-  var squash = (1 + (beat * 0.32 + hit * 0.28) * amp).toFixed(3);
-  var tilt = (((beat - 0.3) * 26 + (hit - 0.3) * 18 * Math.sin(now / 90)) * amp).toFixed(2) + 'deg';
-  var glow = (0.22 + beat * 1.15 + hit * 0.5).toFixed(3);
-  var shakeX = ((hit * 14 + beat * 5) * Math.sin(now / 28) * amp).toFixed(1) + 'px';
-  var shakeY = ((hit * 12 + beat * 4) * Math.cos(now / 22) * amp).toFixed(1) + 'px';
-  var spin = (micBuddySpinKick * 36 * Math.sin(now / 55) * amp).toFixed(1) + 'deg';
-  var flash = Math.max(0, Math.min(1, hit * 1.1 + (mode === 'peak' ? beat * 0.4 : 0))).toFixed(3);
-  var burst = Math.max(0, Math.min(1, hit * 0.9 + (mode === 'peak' || mode === 'frenzy' ? beat * 0.55 : beat * 0.15))).toFixed(3);
-  var hue = Math.round(beat * 40 + hit * 80 + (mode === 'peak' ? now / 8 % 360 * 0.15 : 0));
+  // Soft hop/squash/tilt — groove in place, not a seizure
+  var weight = 1.05 / Math.max(0.8, Math.min(1.35, micBuddyTempo));
+  var amp = dkLottieOk ? 0.28 : 0.55;
+  var hop = -Math.round((beat * 14 + hit * 10) * weight * amp);
+  var squash = (1 + (beat * 0.1 + hit * 0.08) * amp).toFixed(3);
+  var tilt = (((beat - 0.35) * 8 + (hit - 0.35) * 5 * Math.sin(now / 140)) * amp).toFixed(2) + 'deg';
+  var glow = (0.12 + beat * 0.35 + hit * 0.15).toFixed(3);
+  var shakeX = ((hit * 3 + beat * 1.2) * Math.sin(now / 55) * amp).toFixed(1) + 'px';
+  var shakeY = ((hit * 2.5 + beat * 1) * Math.cos(now / 48) * amp).toFixed(1) + 'px';
+  var spin = (micBuddySpinKick * 8 * Math.sin(now / 90) * amp).toFixed(1) + 'deg';
+  var flash = Math.max(0, Math.min(1, hit * 0.45 + (mode === 'peak' ? beat * 0.12 : 0))).toFixed(3);
+  var burst = Math.max(0, Math.min(1, hit * 0.35 + (mode === 'peak' || mode === 'frenzy' ? beat * 0.18 : beat * 0.06))).toFixed(3);
+  var hue = Math.round(beat * 12 + hit * 18 + (mode === 'peak' ? now / 20 % 360 * 0.05 : 0));
   // Lottie characters have real palettes — big hue-rotate turns them green.
-  if (dkLottieOk) hue = Math.min(hue, 10);
+  if (dkLottieOk) hue = Math.min(hue, 4);
 
   micBuddyEl.style.setProperty('--beat', beat.toFixed(3));
   micBuddyEl.style.setProperty('--glow', glow);
@@ -1803,7 +1803,7 @@ function micBuddyTick() {
   micBuddyEl.style.setProperty('--slowmo', micBuddySlowmo.toFixed(3));
   micBuddyEl.style.setProperty('--hue', hue + 'deg');
   micBuddyEl.style.setProperty('--burst', burst);
-  micBuddyEl.classList.toggle('hot', beat > 0.5 || hit > 0.4);
+  micBuddyEl.classList.toggle('hot', beat > 0.72 || hit > 0.55);
   micBuddyRaf = requestAnimationFrame(micBuddyTick);
 }
 
@@ -2396,7 +2396,7 @@ function renderMarquee() {
   for (var dup = 0; dup < 2; dup++) {
     for (var k = 0; k < items.length; k++) {
       var item = items[k];
-      html += '<div class="qm-tick"><span class="qm-num">'+(k+1)+'</span><span class="qm-tick-singer">'+escapeHtml(item.requester||'\u2014')+'</span><span class="qm-tick-divider">\u2022</span><span class="qm-tick-song">'+escapeHtml(item.title||item.videoId||'\u2014')+'</span></div>';
+      html += '<div class="qm-tick"><span class="qm-num">'+(k+1)+'</span><span class="qm-tick-singer">'+escapeHtml(item.requester||'\u2014')+'</span><span class="qm-tick-divider">\u2022</span><span class="qm-tick-song">'+escapeHtml(safeTitle(item.title, item.videoId)||'\u2014')+'</span></div>';
     }
     // Add Venmo/CashApp promo in the scroller after each full loop of queue
     html += '<div class="qm-tick"><span class="qm-tick-venmo">Venmo @karolpdx</span><span class="qm-tick-divider">\u2022</span><span class="qm-tick-venmo">CashApp $karolpdx</span></div>';

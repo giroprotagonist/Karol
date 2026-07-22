@@ -5,6 +5,8 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
+const mysql = require('../api-server/karol-mysql');
+const { createMediaResolver } = require('../media-resolver');
 
 // ── Directories (configurable via env, same as api-server defaults) ──
 const EXTERNAL_DRIVE = process.env.KAROL_EXTERNAL_DRIVE || '/Volumes/maxone';
@@ -44,7 +46,10 @@ function loadTags() {
         if (typeof val === 'string') {
           normalized[vid] = { tag: val, year: '', artist: '', source: '' };
         } else if (val && typeof val === 'object') {
+          // Preserve extra fields (title, duration, …) written by the karaoke
+          // pipeline — dropping them here would destroy titles on next save.
           normalized[vid] = {
+            ...val,
             tag: val.tag || val.type || 'music',
             year: val.year || '',
             artist: val.artist || '',
@@ -60,7 +65,12 @@ function loadTags() {
 
 function saveTags(tags) {
   try {
-    fs.writeFileSync(TAGS_PATH, JSON.stringify(tags, null, 2), 'utf8');
+    // Atomic write (temp + rename): a concurrent reader must never observe a
+    // partially-written tags.json — a truncated read parses as {} and can
+    // trigger a destructive rebuild that loses karaoke-maker provenance.
+    const tmpPath = TAGS_PATH + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(tags, null, 2), 'utf8');
+    fs.renameSync(tmpPath, TAGS_PATH);
   } catch (e) { console.error('[library/tags] save error:', e.message); }
 }
 
@@ -88,11 +98,15 @@ function rebuildTagsFromDisk() {
                 || dir.includes('karaoke');
               const isSong = dir.includes('songs');
               const autoTag = isKaraoke ? 'karaoke' : (isSong ? 'music' : 'music');
+              // '<id>-karaoke' files are only ever produced by the local
+              // karaoke pipeline, so the suffix itself is durable provenance —
+              // the Custom library filter keys off source === 'karaoke-maker'.
+              const isPipelineOutput = /^[A-Za-z0-9_-]{11}-karaoke$/.test(videoId);
               tags[videoId] = {
                 tag: autoTag,
                 year: (info.upload_date || '').slice(0, 4),
                 artist: info.uploader || '',
-                source: 'rebuilt-from-info.json'
+                source: isPipelineOutput ? 'karaoke-maker' : 'rebuilt-from-info.json'
               };
               added++;
             } catch (e) { /* skip corrupted */ }
@@ -144,9 +158,20 @@ function getVideoPath(videoId) {
 }
 
 function getFilePath(videoId) {
-  const p = getVideoPath(videoId);
-  return (p && fs.existsSync(p)) ? p : null;
+  return mediaResolver.findExisting(videoId);
 }
+
+async function resolveFilePath(videoId) {
+  return mediaResolver.resolve(videoId);
+}
+
+const mediaResolver = createMediaResolver({
+  findLocal(videoId) {
+    const p = getVideoPath(videoId);
+    return (p && fs.existsSync(p)) ? p : null;
+  },
+  catalogLookup: (videoId) => mysql.catalogGetMedia(videoId),
+});
 
 function getInfoPath(videoId) {
   const found = _findInLibraryDirs((dir) => {
@@ -440,7 +465,7 @@ function tryLoadCacheFromDisk() {
     if (!fs.existsSync(CACHE_FILE)) return false;
     const rawJson = fs.readFileSync(CACHE_FILE, 'utf8');
     const result = JSON.parse(rawJson);
-    if (result && result.ok) {
+    if (result && result.ok && result.count > 0) {
       __libraryListCache = { ts: Date.now(), data: result, rawJson, archiveMtime: result.archiveMtime || 0 };
       console.log('[library] Loaded from disk: ' + result.count + ' videos');
       return true;
@@ -452,9 +477,15 @@ function tryLoadCacheFromDisk() {
 function buildLibraryCache() {
   if (__libraryScanInFlight) return __libraryScanInFlight;
   __libraryScanInFlight = new Promise((resolve) => {
+    const workerCandidates = [
+      path.resolve(__dirname, '..', 'api-server', 'library-scan-worker.js'),
+      path.resolve(__dirname, '..', '..', 'api-server', 'library-scan-worker.js'),
+      path.join('/Users/macdonk/Documents/GitHub/Karol', 'api-server', 'library-scan-worker.js'),
+    ];
+    const workerPath = workerCandidates.find(p => fs.existsSync(p)) || workerCandidates[0];
     const worker = execFile(
       '/opt/homebrew/bin/node',
-      [path.join('/Users/macdonk/Documents/GitHub/Karol', 'api-server', 'library-scan-worker.js'), ARCHIVE_PATH, LIBRARY_DIR, DOWNLOADS_DIR, TAGS_PATH],
+      [workerPath, ARCHIVE_PATH, LIBRARY_DIR, DOWNLOADS_DIR, TAGS_PATH],
       { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
       async (err, stdout, stderr) => {
         if (stderr) console.error('[library] Worker stderr:', stderr.trim());
@@ -478,10 +509,13 @@ function buildLibraryCache() {
 
 // ── Public API ──
 
-function init() {
+function init(force) {
   return new Promise((resolve) => {
+    if (force) {
+      __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
+    }
     tryLoadCacheFromDisk();
-    if (!__libraryListCache.data) {
+    if (force || !__libraryListCache.data) {
       console.log('[library] No cache — starting background scan...');
       buildLibraryCache().then(() => {
         tryLoadCacheFromDisk();
@@ -547,11 +581,100 @@ function getTags() {
   return loadTags();
 }
 
-function setTag(videoId, tag) {
+// Merge fields into a tag entry without clobbering existing non-empty values.
+// Used to persist resolved titles for remote-only music videos.
+function mergeTagMeta(videoId, fields) {
   const tags = loadTags();
-  tags[videoId] = { tag, year: '', artist: '', source: 'manual' };
+  const existing = tags[videoId] || { tag: 'music', year: '', artist: '', source: '' };
+  const merged = { ...existing };
+  for (const [k, v] of Object.entries(fields || {})) {
+    if (v !== '' && v != null && !existing[k]) merged[k] = v;
+  }
+  tags[videoId] = merged;
   saveTags(tags);
   return true;
+}
+
+// Batch variant: one load + one atomic save for many ids (tags.json is large;
+// per-id writes were a major slowdown when resolving titles in bulk).
+function mergeTagMetaBatch(byId) {
+  const tags = loadTags();
+  let changed = false;
+  for (const [videoId, fields] of Object.entries(byId || {})) {
+    const existing = tags[videoId] || { tag: 'music', year: '', artist: '', source: '' };
+    const merged = { ...existing };
+    for (const [k, v] of Object.entries(fields || {})) {
+      if (v !== '' && v != null && !existing[k]) { merged[k] = v; changed = true; }
+    }
+    tags[videoId] = merged;
+  }
+  if (changed) saveTags(tags);
+  return true;
+}
+
+function setTag(videoId, tag) {
+  const tags = loadTags();
+  // Merge — keep title/artist/year/source written by other sources. Never
+  // demote a karaoke-maker provenance stamp to 'manual'.
+  const existing = tags[videoId] || {};
+  const keepSource = existing.source === 'karaoke-maker' ? 'karaoke-maker' : 'manual';
+  tags[videoId] = { year: '', artist: '', ...existing, tag, source: keepSource };
+  saveTags(tags);
+  return true;
+}
+
+// DJ reclassification: unlike setTag/mergeTagMeta (which preserve provenance /
+// only fill empties), this OVERWRITES tag and source as requested — moving a
+// track between Karaoke / Custom / Music Video buckets is an explicit intent.
+// Other fields (title, artist, year, …) are preserved.
+function reclassify(videoId, { tag, source } = {}) {
+  if (!videoId || !tag) return { ok: false, error: 'videoId and tag required' };
+  const tags = loadTags();
+  const existing = tags[videoId] || { tag: 'music', year: '', artist: '', source: '' };
+  const next = { ...existing, tag };
+  if (source != null) next.source = source;
+  tags[videoId] = next;
+  saveTags(tags);
+  // Stale-mark the list cache so the next scan republishes the new tag
+  __libraryListCache.ts = 0;
+  // Durable MySQL write, immediate + best-effort (same paths the tag sync
+  // uses): library_tags for base ids, song_catalog tag/source via
+  // read-modify-write so upsert_batch doesn't blank other columns.
+  _syncReclassifyToMysql(videoId, next).catch((e) => {
+    console.error('[library/tags] reclassify MySQL sync failed:', e.message);
+  });
+  return { ok: true, videoId, tag: next.tag, source: next.source || '' };
+}
+
+async function _syncReclassifyToMysql(videoId, entry) {
+  // library_tags (tagSet itself skips variant/invalid ids)
+  try {
+    await mysql.tagSet(videoId, entry.tag || 'music', entry.artist || '', entry.year || '', entry.source || '');
+  } catch (e) {
+    console.error('[library/tags] MySQL tagSet failed:', videoId, e.message);
+  }
+  // song_catalog: upsert_batch overwrites title/artist/year/duration/thumbnail,
+  // so re-send the existing row's values with only tag/source changed.
+  try {
+    const row = await mysql.catalogGetPublic(videoId);
+    if (row && row.title) {
+      await mysql.catalogUpsertBatch([{
+        video_id: videoId,
+        title: row.title,
+        artist: row.artist || '',
+        year: row.year || 0,
+        duration: row.duration || 0,
+        tag: entry.tag || 'music',
+        source: entry.source || '',
+        thumbnail_url: row.thumbnail || '',
+        size_bytes: row.size || 0,
+        r2_uploaded: row.cloudBacked ? 1 : 0,
+        available_local: row.availableLocal != null ? (row.availableLocal ? 1 : 0) : 1,
+      }]);
+    }
+  } catch (e) {
+    console.error('[library/tags] MySQL catalog sync failed:', videoId, e.message);
+  }
 }
 
 function getDownloadDir(videoId) {
@@ -588,10 +711,14 @@ module.exports = {
   init,
   list,
   getTags,
+  mergeTagMeta,
+  mergeTagMetaBatch,
   setTag,
+  reclassify,
   getMetadata,
   getVideoPath,
   getFilePath,
+  resolveFilePath,
   getInfoPath,
   getThumbPath,
   getLyrics,

@@ -3428,6 +3428,81 @@ def step_deepseek_diagnose(
 # ── Registration ──────────────────────────────────────────────────────
 
 
+def _sha256_file(path: Path | str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _atomic_publish(src: str | Path, dest: Path) -> None:
+    """Copy src into dest's directory under a staging name, fsync, then
+    atomically rename into place. Readers never observe a partial file."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    staging = dest.parent / f".staging-{dest.name}.{os.getpid()}.part"
+    try:
+        shutil.copy2(src, staging)
+        with open(staging, "rb+") as f:
+            os.fsync(f.fileno())
+        os.replace(staging, dest)
+    finally:
+        if staging.exists():
+            try:
+                staging.unlink()
+            except OSError:
+                pass
+
+
+def write_bundle_manifest(video_id: str, karaoke_dir: Path) -> Optional[Path]:
+    """Write ``{video_id}-karaoke.bundle.json`` LAST, after all assets are in
+    place. It lists the required bundle files with sha256 + size; its presence
+    marks the karaoke variant as locally `ready`. Cloud durability (R2
+    upload/verify) is tracked separately in MySQL media_assets."""
+    karaoke_id = f"{video_id}-karaoke"
+    role_files = {
+        "media": f"{karaoke_id}.mp4",
+        "lyrics": f"{karaoke_id}.lrc.json",
+        "metadata": f"{karaoke_id}.info.json",
+    }
+    for ext in (".jpg", ".webp", ".png"):
+        if (karaoke_dir / f"{karaoke_id}{ext}").exists():
+            role_files["thumbnail"] = f"{karaoke_id}{ext}"
+            break
+
+    files: dict = {}
+    missing = []
+    for role, name in role_files.items():
+        path = karaoke_dir / name
+        if not path.exists():
+            missing.append(role)
+            continue
+        files[name] = {
+            "role": role,
+            "size": path.stat().st_size,
+            "sha256": _sha256_file(path),
+        }
+    if "thumbnail" not in role_files:
+        missing.append("thumbnail")
+
+    bundle = {
+        "videoId": karaoke_id,
+        "baseVideoId": video_id,
+        "recipe": "karaoke-v1",
+        "createdAt": time.time(),
+        "complete": not missing,
+        "missingRoles": missing,
+        "files": files,
+    }
+    bundle_path = karaoke_dir / f"{karaoke_id}.bundle.json"
+    temp = karaoke_dir / f".staging-{karaoke_id}.bundle.json.{os.getpid()}"
+    temp.write_text(json.dumps(bundle, indent=2))
+    os.replace(temp, bundle_path)
+    log("library", f"Bundle manifest written ({'complete' if not missing else 'missing: ' + ','.join(missing)}) → {bundle_path}")
+    return bundle_path
+
+
 def step_register(
     video_id: str,
     karaoke_mp4: str,
@@ -3448,17 +3523,22 @@ def step_register(
     karaoke_dir = LIBRARY_KARAOKE_DIR
     karaoke_dir.mkdir(parents=True, exist_ok=True)
 
-    # Move karaoke mp4
+    # Publish karaoke mp4 atomically (stage in dest dir → fsync → rename) so
+    # scanners / the player never see a half-copied file on the USB drive.
     dest_mp4 = karaoke_dir / f"{video_id}-karaoke.mp4"
-    shutil.move(karaoke_mp4, dest_mp4)
-    log("library", f"Moved karaoke MP4 → {dest_mp4}")
+    _atomic_publish(karaoke_mp4, dest_mp4)
+    try:
+        os.unlink(karaoke_mp4)
+    except OSError:
+        pass
+    log("library", f"Published karaoke MP4 → {dest_mp4}")
 
     # Copy .lrc.json if it exists (for real-time overlay on tablet)
     src_lrc_json = Path(karaoke_mp4).parent / f"{video_id}-karaoke.lrc.json"
     if src_lrc_json.exists():
         dest_lrc_json = karaoke_dir / f"{video_id}-karaoke.lrc.json"
         if should_overwrite_lrc(dest_lrc_json, src_lrc_json, force=force_overwrite_lyrics):
-            shutil.copy2(src_lrc_json, dest_lrc_json)
+            _atomic_publish(src_lrc_json, dest_lrc_json)
             # ── Repair: ensure word arrays match line text (prevents stale-word bugs) ──
             repair_lrc_json_words(dest_lrc_json)
             log("library", f"Copied LRC JSON → {dest_lrc_json}")
@@ -3477,7 +3557,7 @@ def step_register(
     if src_info.exists():
         dest_info = karaoke_dir / f"{video_id}-karaoke.info.json"
         if src_info.resolve() != dest_info.resolve():
-            shutil.copy2(src_info, dest_info)
+            _atomic_publish(src_info, dest_info)
 
     # Copy thumbnail if it exists
     for ext in [".jpg", ".webp", ".png"]:
@@ -3485,7 +3565,7 @@ def step_register(
         if src_thumb.exists():
             dest_thumb = karaoke_dir / f"{video_id}-karaoke{ext}"
             if src_thumb.resolve() != dest_thumb.resolve():
-                shutil.copy2(src_thumb, dest_thumb)
+                _atomic_publish(src_thumb, dest_thumb)
             break
 
     # Update tags.json
@@ -3515,7 +3595,9 @@ def step_register(
         "year": existing.get("year", ""),
         "artist": existing.get("artist") or artist,
         "title": existing.get("title") or title,
-        "source": existing.get("source", "karaoke-maker"),
+        # Always stamp pipeline provenance — the Custom library filter keys off
+        # this value, and scan rebuilds must not be able to clobber it.
+        "source": "karaoke-maker",
         "duration": duration,
     }
 
@@ -3532,6 +3614,12 @@ def step_register(
             ARCHIVE_PATH.write_text(f"{archive}{chr(10) if needs_nl else ''}{entry}\n")
     except OSError as e:
         log("library", f"Archive update warning: {e}")
+
+    # Bundle manifest LAST — its presence marks the local bundle as ready
+    try:
+        write_bundle_manifest(video_id, karaoke_dir)
+    except Exception as e:  # noqa: BLE001 — manifest failure must not undo the publish
+        log("library", f"Bundle manifest warning: {e}")
 
     log("library", f"Done! Karaoke video registered: {dest_mp4}")
 
@@ -4510,6 +4598,10 @@ def main() -> None:
                 shutil.copy2(json_path, dest_lrc)
                 repair_lrc_json_words(dest_lrc)
                 log("library", f"Lyrics-only update → {dest_lrc}")
+                try:
+                    write_bundle_manifest(video_id, LIBRARY_KARAOKE_DIR)
+                except Exception as e:  # noqa: BLE001
+                    log("library", f"Bundle manifest warning: {e}")
                 # Update tags.json (minimal — just refresh existing entry)
                 if TAGS_PATH.exists():
                     try:
@@ -4549,6 +4641,10 @@ def main() -> None:
                         shutil.copy2(json_path, dest_lrc)
                         repair_lrc_json_words(dest_lrc)
                         log("library", f"Lyrics-only update → {dest_lrc}")
+                        try:
+                            write_bundle_manifest(video_id, LIBRARY_KARAOKE_DIR)
+                        except Exception as e:  # noqa: BLE001
+                            log("library", f"Bundle manifest warning: {e}")
                     else:
                         log("library", "Kept existing LRC (new result not better / synced sticky)")
                 elif not gate_ok:

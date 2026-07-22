@@ -24,13 +24,14 @@ try {
     const raw = JSON.parse(fs.readFileSync(tagsPath, 'utf8'));
     for (const [vid, val] of Object.entries(raw)) {
       if (typeof val === 'string') {
-        tagsData[vid] = { tag: val, year: '', artist: '', source: '' };
+        tagsData[vid] = { tag: val, year: '', artist: '', source: '', title: '' };
       } else if (val && typeof val === 'object') {
         tagsData[vid] = {
           tag: val.tag || val.type || 'music',
           year: val.year || '',
           artist: val.artist || '',
           source: val.source || '',
+          title: val.title || '',
         };
       }
     }
@@ -66,13 +67,9 @@ for (const dir of scanDirs) {
     const vid = (extMatch[1] === 'vtt')
       ? base.split('.')[0].replace(/\.f\d+$/, '')
       : base.replace(/\.f\d+$/, '');
-    let videoIdFromFile = null;
-    if (vid.endsWith('-karaoke')) {
-      // Strip '-karaoke' suffix (8 chars) — karaoke variant of a base video
-      videoIdFromFile = vid.slice(0, -8);
-    } else {
-      videoIdFromFile = vid;
-    }
+    // IMPORTANT: '-karaoke' variants are DISTINCT library entries. Never strip
+    // the suffix for identity — 'VIDEO_ID' and 'VIDEO_ID-karaoke' are two rows.
+    const videoIdFromFile = vid;
     // Index ALL files that exist on disk — the archive only tracks download status,
     // it doesn't gate whether a file is a valid library entry
     if (!videoIdFromFile) continue;
@@ -97,25 +94,48 @@ for (const dir of scanDirs) {
 const videos = [];
 for (const videoId of Object.keys(fileMap)) {
   const f = fileMap[videoId] || { size: 0, subs: [], meta: null };
-  // Skip bogus entries: no metadata title AND no thumbnail = ID-only noise
-  if (!f.meta?.title && !f.meta?.thumbnail) continue;
-  // Sanitize title: strip control chars and escape backslashes that would break JSON
-  const rawTitle = (f.meta?.title || videoId).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\\/g, '\\\\');
-  // Merge tags from base videoId AND karaoke variant (karaoke variant takes priority)
-  const tagEntry = { ...(tagsData[videoId] || {}), ...(tagsData[videoId + '-karaoke'] || {}) };
+  const isKaraokeVariant = videoId.endsWith('-karaoke');
+  const baseVideoId = isKaraokeVariant ? videoId.slice(0, -8) : videoId;
+  // Skip bogus entries: no metadata title AND no thumbnail = ID-only noise.
+  // Karaoke variants without their own info.json borrow the base entry's meta
+  // so older pipeline outputs still appear as distinct rows.
+  let meta = f.meta;
+  if (!meta?.title && isKaraokeVariant && fileMap[baseVideoId]?.meta) {
+    meta = fileMap[baseVideoId].meta;
+  }
+  if (!meta?.title && !meta?.thumbnail) continue;
+  // For BASE rows, karaoke-variant tags may enrich (legacy tags.json keyed
+  // some base metadata under the '-karaoke' key). Variant rows use exact key.
+  const tagEntry = isKaraokeVariant
+    ? { ...(tagsData[baseVideoId] || {}), ...(tagsData[videoId] || {}) }
+    : { ...(tagsData[videoId] || {}), ...(tagsData[videoId + '-karaoke'] || {}) };
+  // Title: info.json → tags.json (exact key, then variant/base keys) — only
+  // ever fall back to the raw video id when no better source exists anywhere.
+  const tagTitle = ((tagsData[videoId] || {}).title
+    || (tagsData[baseVideoId + '-karaoke'] || {}).title
+    || (tagsData[baseVideoId] || {}).title || '').trim();
+  const bestTitle = (meta?.title || '').trim() || tagTitle || videoId;
+  // Sanitize: strip control chars and escape backslashes that would break JSON
+  const rawTitle = bestTitle.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\\/g, '\\\\');
   videos.push({
     videoId,
     title: rawTitle,
-    duration: f.meta?.duration || 0,
+    duration: meta?.duration || 0,
     size: f.size,
     subtitles: f.subs,
-    thumbnail: (f.meta?.thumbnail || '').replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault'),
-    upload_date: f.meta?.upload_date || '',
+    thumbnail: (meta?.thumbnail || '').replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault'),
+    upload_date: meta?.upload_date || '',
     cached: true,
-    tag: tagEntry.tag || 'music',
+    tag: isKaraokeVariant ? 'karaoke' : (tagEntry.tag || 'music'),
     year: tagEntry.year || '',
     artist: tagEntry.artist || '',
-    source: tagEntry.source || '',
+    // '<id>-karaoke' files are only produced by the local karaoke pipeline;
+    // stamp provenance even when tags.json lost it so the Custom filter and
+    // the MySQL catalog sync stay correct across tag rebuilds.
+    source: tagEntry.source || (/^[A-Za-z0-9_-]{11}-karaoke$/.test(videoId) ? 'karaoke-maker' : ''),
+    isKaraokeVariant,
+    baseVideoId,
+    hasKaraoke: !isKaraokeVariant && !!fileMap[videoId + '-karaoke'],
   });
 }
 videos.sort((a, b) => b.size - a.size);
@@ -123,5 +143,21 @@ videos.sort((a, b) => b.size - a.size);
 let archiveMtime = 0;
 try { archiveMtime = fs.statSync(archivePath).mtimeMs; } catch (e) {}
 
-fs.writeFileSync('/tmp/karol-library-cache.json', JSON.stringify({ ok: true, count: videos.length, videos, archiveMtime }));
+const cachePath = '/tmp/karol-library-cache.json';
+// On login, Karol can start before macOS finishes mounting the USB drive.
+// Never replace a healthy catalog with an empty scan from that race.
+if (videos.length === 0) {
+  try {
+    const previous = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    if (previous && previous.ok && previous.count > 0) {
+      console.error('[library-scan] Empty scan; preserving previous cache of ' + previous.count + ' videos');
+      process.exit(2);
+    }
+  } catch (e) {}
+}
+
+// Atomic replacement prevents API/Electron readers from observing partial JSON.
+const tempPath = cachePath + '.' + process.pid + '.tmp';
+fs.writeFileSync(tempPath, JSON.stringify({ ok: true, count: videos.length, videos, archiveMtime }));
+fs.renameSync(tempPath, cachePath);
 process.exit(0);

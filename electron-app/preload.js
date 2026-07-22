@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('karolAPI', {
     get: () => ipcRenderer.invoke('queue-get'),
     playNow: (videoId, title, requester, url) =>
       ipcRenderer.invoke('queue-play-now', { videoId, title, requester, url }),
+    needsMatch: () => ipcRenderer.invoke('queue-needs-match'),
+    fillMatch: (payload) => ipcRenderer.invoke('queue-fill-match', payload),
   },
 
   // ── Player status ──
@@ -51,10 +53,12 @@ contextBridge.exposeInMainWorld('karolAPI', {
     metadata: (videoId) => ipcRenderer.invoke('library-metadata', videoId),
     tags: () => ipcRenderer.invoke('library-tags'),
     setTag: (videoId, tag) => ipcRenderer.invoke('library-set-tag', { videoId, tag }),
+    reclassify: (videoId, tag, source) => ipcRenderer.invoke('library-set-tag', { videoId, tag, source }),
     status: (videoId) => ipcRenderer.invoke('library-status', videoId),
     lyrics: (videoId) => ipcRenderer.invoke('library-lyrics', videoId),
     filePath: (videoId) => ipcRenderer.invoke('library-file-path', videoId),
     scan: () => ipcRenderer.invoke('library-scan'),
+    resolveTitles: (videoIds) => ipcRenderer.invoke('library-resolve-titles', videoIds),
   },
 
   // ── Downloads ──
@@ -71,8 +75,8 @@ contextBridge.exposeInMainWorld('karolAPI', {
 
   // ── Song requests ──
   requests: {
-    add: (videoId, requester, title, url, karaoke) =>
-      ipcRenderer.invoke('request-add', { videoId, requester, title, url, karaoke }),
+    add: (videoId, requester, title, url, karaoke, requestType) =>
+      ipcRenderer.invoke('request-add', { videoId, requester, title, url, karaoke, requestType }),
     list: () => ipcRenderer.invoke('request-list'),
   },
 

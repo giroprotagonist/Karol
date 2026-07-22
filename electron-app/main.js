@@ -63,6 +63,17 @@ try { library = require(path.join(BASE, 'library')); } catch (e) { console.error
 let downloads = null;
 try { downloads = require(path.join(BASE, 'downloads')); } catch (e) { console.error('[karol] downloads FAIL:', e.message); }
 
+// ── MySQL proxy client (durable jobs / request state) ──
+let mysql = null;
+try { mysql = require(path.join(BASE, '..', 'api-server', 'karol-mysql')); }
+catch (e) { console.error('[karol] mysql client FAIL:', e.message); }
+const JOB_OWNER = 'mac-' + os.hostname().split('.')[0];
+const JOB_RECIPE = 'karaoke-v1';
+const JOB_LEASE_SECONDS = 1800;
+// Durable local fallback for karaoke jobs (survives restarts even when the
+// MySQL proxy is unreachable).
+const JOBS_FILE = path.join('/Users/macdonk/Documents/GitHub/Karol', '.karol', 'karaoke-jobs.json');
+
 // ── Processing job tracker ──
 // { videoId: { status: 'downloading'|'processing'|'done'|'error', progress: 0-100, label: string, errorMessage: string } }
 const processingJobs = {};
@@ -71,6 +82,122 @@ const processingJobs = {};
 // Ensures only one karaoke job runs at a time to prevent GPU contention
 const karaokeQueue = [];
 let karaokeRunning = false;
+
+// ── Durable karaoke job registry ──
+// MySQL (karaoke_jobs table) is preferred; a local JSON file is the fallback
+// so restarts can resume in-flight work even when the proxy is unreachable.
+// One generation job per source video + recipe; multiple requests (queue
+// slots / MySQL request rows) attach to the same job.
+let localJobs = { version: 1, jobs: {} };
+
+function loadLocalJobs() {
+  try {
+    const data = JSON.parse(fs.readFileSync(JOBS_FILE, 'utf8'));
+    if (data && data.jobs) localJobs = data;
+  } catch { /* first run or corrupted — start fresh */ }
+}
+
+function persistLocalJobs() {
+  try {
+    fs.mkdirSync(path.dirname(JOBS_FILE), { recursive: true });
+    const temp = JOBS_FILE + '.tmp';
+    fs.writeFileSync(temp, JSON.stringify(localJobs, null, 2));
+    fs.renameSync(temp, JOBS_FILE);
+  } catch (e) { console.error('[karol] Job persist failed:', e.message); }
+}
+
+function upsertLocalJob(videoId, fields) {
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const entry = localJobs.jobs[base] || { videoId: base, requesters: [], mysqlRequestIds: [], createdAt: new Date().toISOString() };
+  Object.assign(entry, fields, { updatedAt: new Date().toISOString() });
+  localJobs.jobs[base] = entry;
+  persistLocalJobs();
+  return entry;
+}
+
+function attachRequestToLocalJob(videoId, requester, mysqlRequestId) {
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const entry = localJobs.jobs[base];
+  if (!entry) return;
+  if (requester && !entry.requesters.includes(requester)) entry.requesters.push(requester);
+  if (mysqlRequestId && !entry.mysqlRequestIds.includes(mysqlRequestId)) entry.mysqlRequestIds.push(mysqlRequestId);
+  persistLocalJobs();
+}
+
+// Fire-and-forget MySQL job status update (jobId resolved from local registry)
+function syncJobToMysql(videoId, fields) {
+  if (!mysql) return;
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const entry = localJobs.jobs[base];
+  if (!entry || !entry.jobId) return;
+  mysql.jobUpdate(entry.jobId, { extend_lease_seconds: JOB_LEASE_SECONDS, ...fields })
+    .catch((e) => console.error('[karol] MySQL job update failed:', base, e.message));
+}
+
+// Create (or attach to) the durable MySQL job row for this generation.
+async function registerDurableJob(videoId, url) {
+  const base = String(videoId).replace(/-karaoke$/, '');
+  upsertLocalJob(base, { url: url || '', status: 'queued' });
+  if (!mysql) return null;
+  try {
+    const result = await mysql.jobUpsert(base, url || '', JOB_RECIPE);
+    if (result && result.ok && result.id) {
+      upsertLocalJob(base, { jobId: Number(result.id) });
+      return Number(result.id);
+    }
+  } catch (e) {
+    console.error('[karol] MySQL job upsert failed (local fallback active):', base, e.message);
+  }
+  return null;
+}
+
+// Startup recovery: reclaim expired MySQL leases, inspect outputs already on
+// disk, and re-enqueue anything unfinished — idempotently.
+async function reclaimKaraokeJobs() {
+  loadLocalJobs();
+  const seen = new Set();
+  const candidates = [];
+
+  if (mysql) {
+    try {
+      await mysql.jobReclaimExpired();
+      const claim = await mysql.jobClaimBatch(JOB_OWNER, JOB_LEASE_SECONDS, 10);
+      for (const row of (claim && claim.rows) || []) {
+        candidates.push({ videoId: row.video_id, url: row.source_url || '', jobId: Number(row.id) });
+        seen.add(String(row.video_id).replace(/-karaoke$/, ''));
+      }
+    } catch (e) {
+      console.error('[karol] MySQL job reclaim failed (using local fallback):', e.message);
+    }
+  }
+  for (const entry of Object.values(localJobs.jobs)) {
+    const base = String(entry.videoId).replace(/-karaoke$/, '');
+    if (seen.has(base)) continue;
+    if (entry.status === 'queued' || entry.status === 'running') {
+      candidates.push({ videoId: base, url: entry.url || '', jobId: entry.jobId || null });
+    }
+  }
+
+  for (const job of candidates) {
+    const base = String(job.videoId).replace(/-karaoke$/, '');
+    if (job.jobId) upsertLocalJob(base, { jobId: job.jobId });
+    let finishedMp4 = null;
+    try {
+      const candidate = path.join(library.LIBRARY_KARAOKE_DIR, base + '-karaoke.mp4');
+      if (fs.existsSync(candidate) && fs.statSync(candidate).size > 10000) finishedMp4 = candidate;
+    } catch {}
+    if (finishedMp4) {
+      console.log('[karol] Reclaim: output already exists for', base, '— marking done');
+      upsertLocalJob(base, { status: 'done' });
+      syncJobToMysql(base, { status: 'done', progress: 100, stage: 'recovered-existing-output' });
+      continue;
+    }
+    console.log('[karol] Reclaim: resuming karaoke job', base);
+    const requesters = (localJobs.jobs[base] && localJobs.jobs[base].requesters) || [];
+    enqueueKaraokeJob(base, job.url || ('https://www.youtube.com/watch?v=' + base), requesters[0] || '');
+  }
+  if (candidates.length) console.log('[karol] Reclaimed', candidates.length, 'karaoke job(s) at startup');
+}
 
 function processNextKaraokeJob() {
   if (karaokeRunning) return;
@@ -85,6 +212,10 @@ function processNextKaraokeJob() {
 
   karaokeRunning = true;
   console.log('[karol] Karaoke queue: starting', videoId, '(remaining:', karaokeQueue.length, ')');
+  if (!isReLyric) {
+    upsertLocalJob(videoId, { status: 'running', stage: 'downloading' });
+    syncJobToMysql(videoId, { status: 'downloading', stage: 'downloading', progress: 0 });
+  }
 
   const startLabel = isReLyric
     ? ('Re-Lyric: ' + videoId + (whisperModel ? ' [' + whisperModel + ']' : '') + (lyricsText ? ' [+lyrics]' : ''))
@@ -113,27 +244,19 @@ function processNextKaraokeJob() {
         const doneLabel = isReLyric ? ('Re-Lyric done: ' + videoId) : videoId;
         processingJobs[videoId] = { status: 'done', progress: 100, label: doneLabel, url: url, karaokify: true, requester: requester, isReLyric: !!isReLyric };
         console.log('[karol] Pipeline complete:', videoId, result.message || '');
-        // Resolve a real title and update / insert into the DJ queue for the singer
-        let resolvedTitle = videoId;
-        try {
-          const karaokeId = videoId.replace(/-karaoke$/, '') + '-karaoke';
-          const meta = library && library.getMetadata
-            ? (library.getMetadata(karaokeId) || library.getMetadata(videoId))
-            : null;
-          if (meta && meta.title) resolvedTitle = meta.title;
-          else if (library && library.TAGS_PATH && fs.existsSync(library.TAGS_PATH)) {
-            const tags = JSON.parse(fs.readFileSync(library.TAGS_PATH, 'utf8'));
-            const t = (tags[karaokeId] || tags[videoId] || {}).title;
-            if (t) resolvedTitle = t;
-          }
-        } catch (e) {}
+        // Resolve a real title (pipeline info.json / tags.json) and update /
+        // insert into the DJ queue for the singer — never a bare video id.
+        let resolvedTitle = resolveTitleLocal(videoId) || TITLE_PLACEHOLDER;
+        if (resolvedTitle === TITLE_PLACEHOLDER) {
+          setTimeout(() => { fixBareIdQueueTitles('karaoke-done:' + videoId).catch(() => {}); }, 500);
+        }
         const playId = resolveVid(videoId);
         if (requester && !isReLyric) {
           const existing = queue.findIndex(item =>
             item.videoId === playId || item.videoId === videoId || item.videoId === videoId + '-karaoke');
           if (existing >= 0) {
             queue[existing].videoId = playId;
-            if (!queue[existing].title || /^https?:\/\//i.test(queue[existing].title) || queue[existing].title === videoId) {
+            if (looksLikeBareIdTitle(queue[existing].title, playId)) {
               queue[existing].title = resolvedTitle;
             }
             queue[existing].singer = queue[existing].singer || requester;
@@ -147,12 +270,19 @@ function processNextKaraokeJob() {
           console.log('[karol] Queue updated after karaoke ready:', playId, resolvedTitle, requester);
         }
         if (library && typeof library.init === 'function') {
-          library.init().then(() => {
+          library.init(true).then(() => {
             notifyCtrl('library-scan-progress', { videoId, status: 'done' });
           });
         }
+        if (!isReLyric) {
+          upsertLocalJob(videoId, { status: 'done', stage: 'done' });
+          syncJobToMysql(videoId, { status: 'done', stage: 'done', progress: 100 });
+          publishKaraokeAssets(videoId).catch((e) =>
+            console.error('[karol] Asset publish failed for', videoId, ':', e.message));
+        }
       } else if (result.karaokeFailed) {
         processingJobs[videoId] = { status: 'error', progress: 50, label: startLabel, errorMessage: result.message || 'Karaoke pipeline failed', url: url, karaokify: true, requester: requester, isReLyric: !!isReLyric };
+        if (!isReLyric) failDurableJob(videoId, result.message || 'Karaoke pipeline failed');
       } else {
         processingJobs[videoId] = { status: 'done', progress: 100, label: videoId, url: url, karaokify: true, requester: requester };
       }
@@ -162,6 +292,7 @@ function processNextKaraokeJob() {
     })
     .catch((err) => {
       processingJobs[videoId] = { status: 'error', progress: 0, label: startLabel, errorMessage: err.message, url: url, karaokify: true, requester: requester, isReLyric: !!isReLyric };
+      if (!isReLyric) failDurableJob(videoId, err.message);
       broadcastJobProgress();
       console.error('[karol] Pipeline error for', videoId, ':', err.message);
       karaokeRunning = false;
@@ -172,16 +303,223 @@ function processNextKaraokeJob() {
   pollDownloadProgress(videoId);
 }
 
-function enqueueKaraokeJob(videoId, url, requester) {
-  // Already in queue or processing
+// Mark a failed generation in both durable stores and propagate the error to
+// every MySQL request row attached to this job.
+function failDurableJob(videoId, message) {
+  upsertLocalJob(videoId, { status: 'error', lastError: String(message || '').slice(0, 500) });
+  syncJobToMysql(videoId, { status: 'error', last_error: String(message || '').slice(0, 1000) });
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const entry = localJobs.jobs[base];
+  for (const requestId of (entry && entry.mysqlRequestIds) || []) {
+    updateMysqlRequestStatus({ mysqlRequestId: requestId }, 'error', message);
+  }
+}
+
+// ── Post-success publish: catalog upsert + asset rows + R2 upload/verify ──
+// Local `ready` comes from the validated bundle on the USB drive (the library
+// rescan makes the song requestable immediately). Cloud durability is a
+// separate, later `uploaded`/`verified` state per asset role.
+const WRANGLER_BIN = path.join('/Users/macdonk/Documents/GitHub/Karol', 'node_modules', '.bin', 'wrangler');
+const R2_BUCKET = process.env.KAROL_R2_BUCKET || 'karol';
+const R2_MANIFEST_FILE = process.env.KAROL_R2_MANIFEST || path.join(os.homedir(), '.karol-r2-upload-manifest.json');
+
+function sha256File(filePath) {
+  const crypto = require('crypto');
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    fs.createReadStream(filePath)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('end', () => resolve(hash.digest('hex')))
+      .on('error', reject);
+  });
+}
+
+function wranglerPut(key, filePath, mime) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(WRANGLER_BIN, [
+      'r2', 'object', 'put', `${R2_BUCKET}/${key}`,
+      '--file', filePath,
+      '--content-type', mime,
+      '--remote', '--force',
+    ], { cwd: '/Users/macdonk/Documents/GitHub/Karol', stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) resolve(key);
+      else reject(new Error(`wrangler put ${key} exited ${code}: ${stderr.slice(-300)}`));
+    });
+  });
+}
+
+function recordUploadInR2Manifest(rel, absPath, key) {
+  try {
+    let manifest = { version: 1, bucket: R2_BUCKET, files: {} };
+    try { manifest = JSON.parse(fs.readFileSync(R2_MANIFEST_FILE, 'utf8')); } catch {}
+    manifest.files = manifest.files || {};
+    const stat = fs.statSync(absPath);
+    manifest.files[rel] = { key, size: stat.size, mtimeMs: Math.trunc(stat.mtimeMs), uploadedAt: new Date().toISOString() };
+    const temp = R2_MANIFEST_FILE + '.tmp';
+    fs.writeFileSync(temp, JSON.stringify(manifest, null, 2));
+    fs.renameSync(temp, R2_MANIFEST_FILE);
+  } catch (e) { console.error('[karol] R2 manifest update failed:', e.message); }
+}
+
+async function publishKaraokeAssets(videoId) {
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const karaokeId = base + '-karaoke';
+  const dir = library.LIBRARY_KARAOKE_DIR;
+  const bundlePath = path.join(dir, karaokeId + '.bundle.json');
+
+  // The bundle manifest is written last by the pipeline; if it is missing,
+  // fall back to hashing whatever required files exist on disk.
+  let bundle = null;
+  try { bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf8')); } catch {}
+  const roleFiles = {
+    media: karaokeId + '.mp4',
+    lyrics: karaokeId + '.lrc.json',
+    metadata: karaokeId + '.info.json',
+  };
+  for (const ext of ['.jpg', '.webp', '.png']) {
+    if (fs.existsSync(path.join(dir, karaokeId + ext))) { roleFiles.thumbnail = karaokeId + ext; break; }
+  }
+
+  const assets = [];
+  for (const [role, filename] of Object.entries(roleFiles)) {
+    const abs = path.join(dir, filename);
+    if (!fs.existsSync(abs)) {
+      console.warn('[karol] Publish: missing', role, 'asset for', karaokeId, '—', filename);
+      continue;
+    }
+    const stat = fs.statSync(abs);
+    const fromBundle = bundle && bundle.files && bundle.files[filename];
+    const sha = (fromBundle && fromBundle.sha256) || await sha256File(abs);
+    assets.push({
+      role,
+      filename,
+      abs,
+      rel: 'karaoke/' + filename,
+      key: 'library/karaoke/' + filename,
+      size: stat.size,
+      sha256: sha,
+    });
+  }
+  if (!assets.some((a) => a.role === 'media')) {
+    throw new Error('No karaoke mp4 on disk for ' + karaokeId);
+  }
+
+  if (!mysql) return;
+
+  // 1) Catalog row for the karaoke VARIANT (distinct from the base row)
+  const media = assets.find((a) => a.role === 'media');
+  const lyrics = assets.find((a) => a.role === 'lyrics');
+  const metadata = assets.find((a) => a.role === 'metadata');
+  const thumb = assets.find((a) => a.role === 'thumbnail');
+  let title = karaokeId;
+  let duration = 0;
+  let thumbnailUrl = '';
+  let artist = '';
+  try {
+    const info = JSON.parse(fs.readFileSync(path.join(dir, roleFiles.metadata), 'utf8'));
+    title = info.title || title;
+    duration = info.duration || 0;
+    thumbnailUrl = (info.thumbnail || '').replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault');
+    artist = info.uploader || '';
+  } catch {}
+  try {
+    await mysql.catalogUpsertBatch([{
+      video_id: karaokeId,
+      title,
+      artist,
+      duration,
+      tag: 'karaoke',
+      source: 'karaoke-maker',
+      thumbnail_url: thumbnailUrl,
+      media_key: media.key,
+      metadata_key: metadata ? metadata.key : '',
+      lyrics_key: lyrics ? lyrics.key : '',
+      local_relpath: media.rel,
+      size_bytes: media.size,
+      sha256: media.sha256,
+      r2_uploaded: false,
+      available_local: true,
+    }]);
+    await mysql.assetUpsertBatch(assets.map((a) => ({
+      video_id: karaokeId,
+      role: a.role,
+      r2_key: a.key,
+      local_relpath: a.rel,
+      size_bytes: a.size,
+      sha256: a.sha256,
+      r2_state: 'pending',
+    })));
+    console.log('[karol] Publish: cataloged', karaokeId, 'with', assets.length, 'assets');
+  } catch (e) {
+    console.error('[karol] Publish: catalog upsert failed for', karaokeId, ':', e.message);
+  }
+
+  // 2) Upload required roles to R2 (cold durability — playback never waits on this)
+  syncJobToMysql(base, { status: 'uploading', stage: 'uploading-r2' });
+  const mimeByExt = { '.mp4': 'video/mp4', '.json': 'application/json', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.png': 'image/png' };
+  const uploadedIds = [];
+  for (const asset of assets) {
+    try {
+      const mime = mimeByExt[path.extname(asset.filename).toLowerCase()] || 'application/octet-stream';
+      await wranglerPut(asset.key, asset.abs, mime);
+      recordUploadInR2Manifest(asset.rel, asset.abs, asset.key);
+      await mysql.assetMarkState(karaokeId, 'uploaded', [asset.role]);
+      // 3) Verify small assets by re-download + sha256 compare; the mp4 stays
+      // `uploaded` until the nightly sync verifies it.
+      if (asset.size < 5 * 1024 * 1024) {
+        const tempFile = path.join(os.tmpdir(), `karol-verify-${Date.now()}-${asset.filename}`);
+        try {
+          await new Promise((resolve, reject) => {
+            const proc = spawn(WRANGLER_BIN, ['r2', 'object', 'get', `${R2_BUCKET}/${asset.key}`, '--file', tempFile, '--remote'],
+              { cwd: '/Users/macdonk/Documents/GitHub/Karol', stdio: 'ignore' });
+            proc.on('error', reject);
+            proc.on('close', (code) => code === 0 ? resolve() : reject(new Error('get exited ' + code)));
+          });
+          const remoteSha = await sha256File(tempFile);
+          if (remoteSha === asset.sha256) {
+            await mysql.assetMarkState(karaokeId, 'verified', [asset.role]);
+          } else {
+            console.warn('[karol] Publish: sha mismatch after upload for', asset.key);
+          }
+        } finally {
+          try { fs.unlinkSync(tempFile); } catch {}
+        }
+      }
+      if (asset.role === 'media') uploadedIds.push(karaokeId);
+      console.log('[karol] Publish: uploaded', asset.key);
+    } catch (e) {
+      console.error('[karol] Publish: R2 upload failed for', asset.key, ':', e.message, '(nightly sync will retry)');
+    }
+  }
+  if (uploadedIds.length) {
+    try { await mysql.catalogMarkR2Batch(uploadedIds); } catch (e) { console.error('[karol] Publish: mark R2 failed:', e.message); }
+  }
+  syncJobToMysql(base, { status: 'done', stage: 'done', progress: 100 });
+}
+
+function enqueueKaraokeJob(videoId, url, requester, mysqlRequestId) {
+  // Already in queue or processing — attach this request to the same job
   if (karaokeQueue.some(e => e.videoId === videoId)) {
     console.log('[karol] Already queued:', videoId);
+    attachRequestToLocalJob(videoId, requester, mysqlRequestId);
     return false;
   }
-  if (processingJobs[videoId] && processingJobs[videoId].status !== 'error') {
+  // A finished plain download of the same id must not block a karaoke
+  // generation request — only live/finished KARAOKE jobs dedupe here.
+  const existingJob = processingJobs[videoId];
+  if (existingJob && existingJob.status !== 'error'
+      && !(existingJob.status === 'done' && existingJob.karaokify === false)) {
     console.log('[karol] Already processing:', videoId);
+    attachRequestToLocalJob(videoId, requester, mysqlRequestId);
     return false;
   }
+  registerDurableJob(videoId, url).then(() => {
+    attachRequestToLocalJob(videoId, requester, mysqlRequestId);
+  });
   karaokeQueue.push({ videoId, url, requester });
   console.log('[karol] Enqueued:', videoId, '(position:', karaokeQueue.length, ')');
   // Update processingJobs to show as queued with accurate positions
@@ -211,12 +549,22 @@ function broadcastJobProgress() {
 function pollDownloadProgress(videoId) {
   let lastProgress = -1;
   let stalledAt = 0;
+  let lastSyncedMysqlStatus = '';
   const STAGE_MAP = {
     'starting': { status: 'downloading', stage: 'Starting pipeline...' },
     'downloading': { status: 'downloading', stage: 'Downloading video' },
     'demucs': { status: 'processing', stage: 'Separating vocals' },
     'whisper': { status: 'processing', stage: 'Transcribing lyrics' },
     'rendering': { status: 'processing', stage: 'Rendering video' },
+  };
+  // Local stage → durable karaoke_jobs.status
+  const MYSQL_STAGE_MAP = {
+    'starting': 'downloading',
+    'downloading': 'downloading',
+    'demucs': 'separating',
+    'whisper': 'transcribing',
+    'lyrics': 'transcribing',
+    'rendering': 'rendering',
   };
   const interval = setInterval(() => {
     if (!processingJobs[videoId] || processingJobs[videoId].status === 'done' || processingJobs[videoId].status === 'error') {
@@ -228,6 +576,21 @@ function pollDownloadProgress(videoId) {
       const mapped = STAGE_MAP[ds.status] || STAGE_MAP['downloading'];
       processingJobs[videoId].status = mapped.status;
       processingJobs[videoId].stage = mapped.stage;
+
+      // Push real stage transitions to the durable MySQL job (throttled:
+      // only when the mapped status changes, also extends the lease).
+      // Only karaoke generations own a durable karaoke_jobs entry — plain
+      // direct downloads must never create phantom job rows here.
+      const mysqlStatus = MYSQL_STAGE_MAP[ds.status];
+      if (mysqlStatus && mysqlStatus !== lastSyncedMysqlStatus && !processingJobs[videoId].isReLyric && processingJobs[videoId].karaokify) {
+        lastSyncedMysqlStatus = mysqlStatus;
+        upsertLocalJob(videoId, { status: 'running', stage: mysqlStatus });
+        syncJobToMysql(videoId, {
+          status: mysqlStatus,
+          stage: mysqlStatus,
+          progress: Math.round(processingJobs[videoId].progress || 0),
+        });
+      }
 
       if (ds.progress !== undefined && ds.progress > 0) {
         // yt-dlp reports 0-100% — Demucs/Whisper don't report percent, so only use it during download
@@ -260,14 +623,14 @@ function pollDownloadProgress(videoId) {
   }, 2000);
 }
 
-function startDirectDownload(videoId, url) {
+function startDirectDownload(videoId, url, tag = 'music') {
   if (processingJobs[videoId] && processingJobs[videoId].status !== 'error') {
     return; // Already processing
   }
 
-  processingJobs[videoId] = { status: 'downloading', progress: 0, label: url || videoId, karaokify: false, url: url };
+  processingJobs[videoId] = { status: 'downloading', progress: 0, label: url || videoId, karaokify: false, url: url, tag: tag };
   broadcastJobProgress();
-  console.log('[karol] Starting direct download for:', videoId);
+  console.log('[karol] Starting direct download for:', videoId, '(tag: ' + tag + ')');
 
   if (!downloads) {
     processingJobs[videoId] = { status: 'error', progress: 0, label: videoId, errorMessage: 'Download module not available', karaokify: false, url: url };
@@ -278,20 +641,21 @@ function startDirectDownload(videoId, url) {
   downloads.start(videoId, false, url)
     .then((result) => {
       if (result.ok) {
-        // Register in tags.json with a default tag so the library picks it up
+        // Register in tags.json with the requested tag so the library picks it
+        // up in the right bucket (yt_karaoke → 'karaoke', jukebox → 'music')
         if (library && typeof library.setTag === 'function') {
-          library.setTag(videoId, 'music');
+          library.setTag(videoId, tag);
         }
         processingJobs[videoId] = { status: 'done', progress: 100, label: videoId, karaokify: false, url: url };
         console.log('[karol] Direct download complete:', videoId);
         // Refresh queue title from metadata if we only had a placeholder
         try {
-          const meta = library && library.getMetadata ? library.getMetadata(videoId) : null;
-          const resolvedTitle = (meta && meta.title) || videoId;
+          const resolvedTitle = resolveTitleLocal(videoId);
           let changed = false;
           for (const item of queue) {
             if (item.videoId === videoId || item.videoId === videoId + '-karaoke') {
-              if (!item.title || item.title === videoId || /^https?:\/\//i.test(item.title)) {
+              if (looksLikeBareIdTitle(item.title, item.videoId)
+                  && resolvedTitle && !looksLikeBareIdTitle(resolvedTitle, item.videoId)) {
                 item.title = resolvedTitle;
                 changed = true;
               }
@@ -301,20 +665,22 @@ function startDirectDownload(videoId, url) {
             saveState();
             notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
             notifyPlayerQueue();
+          } else {
+            setTimeout(() => { fixBareIdQueueTitles('download-done:' + videoId).catch(() => {}); }, 500);
           }
         } catch (e) {}
         if (library && typeof library.init === 'function') {
-          library.init().then(() => {
+          library.init(true).then(() => {
             notifyCtrl('library-scan-progress', { videoId, status: 'done' });
           });
         }
       } else {
-        processingJobs[videoId] = { status: 'error', progress: 50, label: videoId, errorMessage: 'Download failed', karaokify: false, url: url };
+        processingJobs[videoId] = { status: 'error', progress: 50, label: videoId, errorMessage: 'Download failed', karaokify: false, url: url, tag: tag };
       }
       broadcastJobProgress();
     })
     .catch((err) => {
-      processingJobs[videoId] = { status: 'error', progress: 0, label: videoId, errorMessage: err.message, karaokify: false, url: url };
+      processingJobs[videoId] = { status: 'error', progress: 0, label: videoId, errorMessage: err.message, karaokify: false, url: url, tag: tag };
       broadcastJobProgress();
       console.error('[karol] Direct download error for', videoId, ':', err.message);
     });
@@ -491,6 +857,139 @@ function resolveVid(videoId) {
   return baseId;
 }
 
+// ── Queue title hygiene ──
+// A raw YouTube id (11 chars, optionally '-karaoke') must never be shown as a
+// song title. Resolution order: local info.json → tags.json → MySQL catalog →
+// YouTube oEmbed. Until resolved, items display TITLE_PLACEHOLDER.
+const TITLE_PLACEHOLDER = 'Loading title…';
+
+function looksLikeBareIdTitle(title, videoId) {
+  const t = String(title || '').trim();
+  if (!t) return true;
+  if (t === TITLE_PLACEHOLDER) return true;
+  if (/^https?:\/\//i.test(t)) return true;
+  if (/^[A-Za-z0-9_-]{11}(-karaoke)?$/.test(t)) return true;
+  if (/^Karaokifying/i.test(t)) return true;
+  const vid = String(videoId || '');
+  const base = vid.replace(/-karaoke$/, '');
+  return t === vid || t === base;
+}
+
+/** Synchronous local lookup: info.json (base + karaoke variant), then tags.json. */
+function resolveTitleLocal(videoId) {
+  const vid = String(videoId || '');
+  const base = vid.replace(/-karaoke$/, '');
+  try {
+    if (library && library.getMetadata) {
+      const meta = library.getMetadata(base + '-karaoke') || library.getMetadata(base)
+        || (vid !== base && vid !== base + '-karaoke' ? library.getMetadata(vid) : null);
+      const t = meta && meta.title ? String(meta.title).trim() : '';
+      if (t && !looksLikeBareIdTitle(t, vid)) return t;
+    }
+  } catch {}
+  try {
+    if (library && library.TAGS_PATH && fs.existsSync(library.TAGS_PATH)) {
+      const tags = JSON.parse(fs.readFileSync(library.TAGS_PATH, 'utf8'));
+      const entry = tags[base + '-karaoke'] || tags[vid] || tags[base] || {};
+      const t = entry && entry.title ? String(entry.title).trim() : '';
+      if (t && !looksLikeBareIdTitle(t, vid)) return t;
+    }
+  } catch {}
+  return '';
+}
+
+/** oEmbed lookup returning { title, status }. status 4xx = permanently gone. */
+function fetchYoutubeOembedInfo(videoId) {
+  const base = String(videoId || '').replace(/-karaoke$/, '');
+  return new Promise((resolve) => {
+    if (!/^[A-Za-z0-9_-]{11}$/.test(base)) { resolve({ title: '', status: 0 }); return; }
+    const https = require('https');
+    const oembed = 'https://www.youtube.com/oembed?format=json&url=' +
+      encodeURIComponent('https://www.youtube.com/watch?v=' + base);
+    const req = https.get(oembed, { timeout: 8000 }, (res) => {
+      let raw = '';
+      res.on('data', (c) => { raw += c; });
+      res.on('end', () => {
+        try {
+          const t = res.statusCode === 200 ? JSON.parse(raw).title : '';
+          resolve({ title: t ? String(t).trim().substring(0, 160) : '', status: res.statusCode });
+        } catch { resolve({ title: '', status: res.statusCode }); }
+      });
+    });
+    req.on('error', () => resolve({ title: '', status: 0 }));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve({ title: '', status: 0 }); });
+  });
+}
+
+function fetchYoutubeOembedTitle(videoId) {
+  return fetchYoutubeOembedInfo(videoId).then((r) => r.title);
+}
+
+/** Full async chain: local files → MySQL catalog → YouTube oEmbed. */
+async function resolveTitleFull(videoId) {
+  const local = resolveTitleLocal(videoId);
+  if (local) return local;
+  const vid = String(videoId || '');
+  const base = vid.replace(/-karaoke$/, '');
+  if (mysql && mysql.catalogGetPublic) {
+    for (const key of [base + '-karaoke', base]) {
+      try {
+        const row = await mysql.catalogGetPublic(key);
+        const t = row && row.title ? String(row.title).trim() : '';
+        if (t && !looksLikeBareIdTitle(t, vid)) return t;
+      } catch {}
+    }
+  }
+  return fetchYoutubeOembedTitle(vid);
+}
+
+/**
+ * Pick the best immediately-available title for a queue item. When nothing
+ * real is known yet, returns TITLE_PLACEHOLDER and schedules an async pass
+ * that heals the queue in place (never displays a raw video id).
+ */
+function bestTitleFor(videoId, suppliedTitle) {
+  const supplied = String(suppliedTitle || '').trim();
+  if (supplied && !looksLikeBareIdTitle(supplied, videoId)) return supplied;
+  const local = resolveTitleLocal(videoId);
+  if (local) return local;
+  setTimeout(() => { fixBareIdQueueTitles('ingress:' + videoId).catch(() => {}); }, 250);
+  return TITLE_PLACEHOLDER;
+}
+
+/** Display-safe title for player/phone payloads. */
+function displayTitle(item) {
+  if (!item) return '';
+  if (!looksLikeBareIdTitle(item.title, item.videoId)) return item.title;
+  return resolveTitleLocal(item.videoId) || TITLE_PLACEHOLDER;
+}
+
+let titleFixInFlight = false;
+async function fixBareIdQueueTitles(reason) {
+  if (titleFixInFlight) return;
+  titleFixInFlight = true;
+  try {
+    let changed = false;
+    for (const item of queue) {
+      if (!item || !looksLikeBareIdTitle(item.title, item.videoId)) continue;
+      let t = '';
+      try { t = await resolveTitleFull(item.videoId); } catch {}
+      if (t && !looksLikeBareIdTitle(t, item.videoId)) {
+        console.log('[karol] Queue title healed (' + (reason || 'periodic') + '):', item.videoId, '→', t);
+        item.title = t;
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveState();
+      notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+      notifyPlayerQueue();
+    }
+  } finally {
+    titleFixInFlight = false;
+  }
+}
+
 function handlePlayerCrash() {
   const prevPlayWin = playWin;
   playWin = null;
@@ -511,7 +1010,7 @@ function handlePlayerCrash() {
           if (queue.length > 0 && queueIndex >= 0 && queueIndex < queue.length) {
             sendToPlayers('player-event', {
               type: 'play', videoId: queue[queueIndex].videoId,
-              isYouTube: false, title: queue[queueIndex].title,
+              isYouTube: false, title: displayTitle(queue[queueIndex]),
               requester: queue[queueIndex].singer || queue[queueIndex].requester,
               queue: queue, currentIndex: queueIndex,
             });
@@ -606,7 +1105,7 @@ function createMonitor() {
       const resolved = resolveVid(item.videoId);
       monitorWin.webContents.send('player-event', {
         type: 'play', videoId: resolved, isYouTube: false,
-        title: item.title, requester: item.singer || item.requester,
+        title: displayTitle(item), requester: item.singer || item.requester,
         queue, currentIndex: queueIndex,
       });
       if (playback.state === 'paused') {
@@ -721,7 +1220,7 @@ function buildPhoneQueueItem(item, index) {
     id: index + ':' + videoId,
     url: 'https://www.youtube.com/watch?v=' + baseId,
     videoId,
-    title: item.title || videoId,
+    title: displayTitle(item),
     thumbnail: baseId ? ('https://i.ytimg.com/vi/' + baseId + '/hqdefault.jpg') : '',
     status: index === queueIndex
       ? (playback.state === 'playing' ? 'playing' : (playback.state === 'paused' ? 'queued' : 'playing'))
@@ -742,7 +1241,7 @@ function buildPhoneQueueState() {
     currentIndex: queueIndex,
     mode: 'queue',
     isPlaying: playback.state === 'playing',
-    currentTitle: current ? (current.title || current.videoId) : '',
+    currentTitle: current ? displayTitle(current) : '',
     currentThumbnail: baseId ? ('https://i.ytimg.com/vi/' + baseId + '/hqdefault.jpg') : '',
     currentTime: playback.currentTime || 0,
     duration: playback.duration || 0,
@@ -759,7 +1258,7 @@ function buildPhoneNowPlaying() {
   const state = playback.state === 'playing' ? 1 : (playback.state === 'paused' ? 2 : (playback.state === 'ended' ? 0 : 2));
   return {
     ok: true,
-    title: item.title || item.videoId,
+    title: displayTitle(item),
     videoId: item.videoId,
     thumbnail: baseId ? ('https://i.ytimg.com/vi/' + baseId + '/hqdefault.jpg') : '',
     currentTime: playback.currentTime || 0,
@@ -800,7 +1299,7 @@ function handleDjApi(action, payload) {
         captureReady: isKaraokeActive(),
         showActive: isKaraokeActive(),
         queueLength: queue.length,
-        currentTitle: queue[queueIndex]?.title || '',
+        currentTitle: queueIndex >= 0 && queue[queueIndex] ? displayTitle(queue[queueIndex]) : '',
         volumeLevel,
         ...getKaraokePowerStatus(),
       };
@@ -810,7 +1309,6 @@ function handleDjApi(action, payload) {
       return buildPhoneQueueState();
     case 'queue-add': {
       const videoId = payload.videoId || '';
-      const title = payload.title || videoId;
       const requester = payload.requester || payload.singer || '';
       if (!videoId && payload.url) {
         const m = String(payload.url).match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
@@ -818,10 +1316,11 @@ function handleDjApi(action, payload) {
       }
       const vid = resolveVid(payload.videoId || videoId);
       if (!vid) return { ok: false, error: 'No videoId' };
-      queue.push({ videoId: vid, title: title || vid, singer: requester, requester });
+      const title = bestTitleFor(vid, payload.title);
+      queue.push({ videoId: vid, title, singer: requester, requester });
       if (queueIndex < 0) {
         queueIndex = queue.length - 1;
-        sendPlay(vid, title || vid, requester);
+        sendPlay(vid, title, requester);
       }
       saveState();
       notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
@@ -831,11 +1330,15 @@ function handleDjApi(action, payload) {
     case 'play-now': {
       const vid = resolveVid(payload.videoId);
       if (!vid) return { ok: false, error: 'No videoId' };
-      const title = payload.title || vid;
+      const title = bestTitleFor(vid, payload.title);
       const requester = payload.requester || '';
       const existingIdx = queue.findIndex((item) => item.videoId === vid);
-      if (existingIdx >= 0) queue.splice(existingIdx, 1);
-      queue.push({ videoId: vid, title, singer: requester, requester });
+      let carriedMysqlId = null;
+      if (existingIdx >= 0) {
+        carriedMysqlId = queue[existingIdx].mysqlRequestId || null;
+        queue.splice(existingIdx, 1);
+      }
+      queue.push({ videoId: vid, title, singer: requester, requester, mysqlRequestId: carriedMysqlId });
       skipRequested = true;
       clearBetweenSongsTimer();
       queueIndex = queue.length - 1;
@@ -849,6 +1352,8 @@ function handleDjApi(action, payload) {
       let idx = payload.index;
       if (idx == null && payload.id != null) idx = findQueueIndexById(payload.id);
       if (idx == null || idx < 0 || idx >= queue.length) return { ok: false, error: 'Invalid index' };
+      // Close the durable request so lease expiry can't resurrect it
+      updateMysqlRequestStatus(queue[idx], 'ended', 'removed from queue');
       if (idx === queueIndex) {
         queue.splice(idx, 1);
         if (queue.length === 0) {
@@ -869,6 +1374,7 @@ function handleDjApi(action, payload) {
       return { ok: true, state: buildPhoneQueueState() };
     }
     case 'queue-clear':
+      for (const item of queue) updateMysqlRequestStatus(item, 'ended', 'queue cleared');
       queue = [];
       queueIndex = -1;
       playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
@@ -951,6 +1457,20 @@ function handleDjApi(action, payload) {
   }
 }
 
+function updateMysqlRequestStatus(item, status, error) {
+  if (!item || !item.mysqlRequestId || !apiServerProcess || !apiServerProcess.connected) return;
+  try {
+    apiServerProcess.send({
+      type: 'mysql-request-status',
+      id: item.mysqlRequestId,
+      status,
+      error: error ? String(error).slice(0, 500) : '',
+    });
+  } catch (e) {
+    console.error('[karol] MySQL request status IPC failed:', e.message);
+  }
+}
+
 function sendPlay(videoId, title, requester) {
   clearBetweenSongsTimer();
   if (!playWin || playWin.isDestroyed()) {
@@ -970,7 +1490,9 @@ function sendPlay(videoId, title, requester) {
   }
   // Send play + full queue snapshot so player + monitor can render immediately
   sendToPlayers('player-event', {
-    type: 'play', videoId: resolved, isYouTube: false, title: title || videoId, requester: requester || '',
+    type: 'play', videoId: resolved, isYouTube: false,
+    title: displayTitle({ title, videoId: resolved }),
+    requester: requester || '',
     queue: queue, currentIndex: queueIndex,
   });
 }
@@ -993,12 +1515,12 @@ function buildPauseInterstitialPayload() {
   if (queue.length > 1 && queueIndex >= 0) {
     const next = queue[(queueIndex + 1) % queue.length];
     singer = String(next.singer || next.requester || '').trim();
-    title = String(next.title || next.videoId || '').trim();
+    title = displayTitle(next);
     label = 'Up next';
   } else if (queueIndex >= 0 && queueIndex < queue.length) {
     const cur = queue[queueIndex];
     singer = String(cur.singer || cur.requester || '').trim() || 'Paused';
-    title = String(cur.title || cur.videoId || '').trim();
+    title = displayTitle(cur);
     label = 'Paused';
   } else {
     singer = 'Paused';
@@ -1052,7 +1574,7 @@ function playAfterBetweenSongs(item) {
   if (!item) return;
   clearBetweenSongsTimer();
   const singer = String(item.singer || item.requester || '').trim();
-  const title = String(item.title || item.videoId || '').trim();
+  const title = displayTitle(item);
   sendToPlayers('player-event', {
     type: 'between-songs',
     singer: singer || 'Next up',
@@ -1134,6 +1656,18 @@ app.whenReady().then(async () => {
 
   // Restore persistent state
   loadState();
+
+  // Heal any queue entries persisted with bare-id titles (older sessions):
+  // resolve from library / MySQL catalog / oEmbed and notify all surfaces.
+  setTimeout(() => {
+    fixBareIdQueueTitles('startup').catch((e) => console.error('[karol] Title heal failed:', e.message));
+  }, 4000);
+
+  // Reclaim durable karaoke jobs from MySQL / local fallback: resume or
+  // retry anything unfinished, mark jobs whose outputs already exist as done.
+  setTimeout(() => {
+    reclaimKaraokeJobs().catch((e) => console.error('[karol] Job reclaim failed:', e.message));
+  }, 8000);
 
   // Run health check
   const health = await runHealthCheck();
@@ -1223,51 +1757,54 @@ function startApiServer() {
       }
     }
     if (msg && msg.type === 'web-karaoke-request') {
-      const { videoId, url, requester, title } = msg;
+      const { videoId, url, requester, title, mysqlRequestId } = msg;
       console.log('[karol] Web karaoke request:', videoId, requester);
-      // Also reserve a queue slot so the singer sees their place while it processes
+      // Also reserve a queue slot so the singer sees their place while it processes.
+      // Each MySQL request id gets its own playback slot — several people may
+      // request the same song; generation is deduped, slots are not.
       const baseId = String(videoId || '').replace(/-karaoke$/, '');
-      const placeholderTitle = (title && !/^https?:\/\//i.test(title)) ? title : ('Karaokifying… ' + baseId);
-      const alreadyInQueue = queue.find(item =>
-        item.videoId === baseId || item.videoId === baseId + '-karaoke' || item.videoId === resolveVid(baseId));
-      if (!alreadyInQueue && requester) {
+      const placeholderTitle = bestTitleFor(videoId, title);
+      const slotForThisRequest = mysqlRequestId
+        ? queue.find(item => item.mysqlRequestId === mysqlRequestId)
+        : queue.find(item =>
+            item.videoId === baseId || item.videoId === baseId + '-karaoke' || item.videoId === resolveVid(baseId));
+      if (!slotForThisRequest && requester) {
         queue.push({
           videoId: baseId,
           title: placeholderTitle,
           singer: requester,
           requester,
           pendingKaraoke: true,
+          mysqlRequestId: mysqlRequestId || null,
         });
         saveState();
         notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
         notifyPlayerQueue();
       }
-      enqueueKaraokeJob(videoId, url, requester);
+      // ACK: durably accepted — MySQL row moves claimed → preparing
+      if (mysqlRequestId) updateMysqlRequestStatus({ mysqlRequestId }, 'preparing');
+      enqueueKaraokeJob(videoId, url, requester, mysqlRequestId || null);
     }
     if (msg && msg.type === 'web-queue-request') {
-      const { videoId, title, requester, url, karaokeify } = msg;
+      const { videoId, title, requester, url, karaokeify, requestType, mysqlRequestId } = msg;
       const baseId = String(videoId || '').replace(/-karaoke$/, '');
       const vid = resolveVid(videoId);
-      // Prefer a real title over raw YouTube URLs
-      let cleanTitle = title || '';
-      if (!cleanTitle || /^https?:\/\//i.test(cleanTitle) || cleanTitle === baseId || cleanTitle === videoId) {
-        try {
-          const meta = library && library.getMetadata
-            ? (library.getMetadata(vid) || library.getMetadata(baseId) || library.getMetadata(baseId + '-karaoke'))
-            : null;
-          if (meta && meta.title) cleanTitle = meta.title;
-        } catch (e) {}
-      }
-      if (!cleanTitle) cleanTitle = baseId;
+      // Real title (never URL / bare id): supplied → info.json/tags → async heal
+      const cleanTitle = bestTitleFor(vid, title);
 
-      const alreadyInQueue = queue.find(item =>
-        item.videoId === vid || item.videoId === baseId || item.videoId === baseId + '-karaoke');
-      if (!alreadyInQueue) {
+      // A MySQL-backed request gets its own playback slot (multiple singers may
+      // request the same song). Requests without a MySQL id dedupe by videoId.
+      const slotForThisRequest = mysqlRequestId
+        ? queue.find(item => item.mysqlRequestId === mysqlRequestId)
+        : queue.find(item =>
+            item.videoId === vid || item.videoId === baseId || item.videoId === baseId + '-karaoke');
+      if (!slotForThisRequest) {
         queue.push({
           videoId: vid,
           title: cleanTitle,
           singer: requester || '',
           requester: requester || '',
+          mysqlRequestId: mysqlRequestId || null,
         });
         saveState();
         if (queueIndex < 0) { queueIndex = queue.length - 1; sendPlay(vid, cleanTitle, requester); }
@@ -1275,9 +1812,10 @@ function startApiServer() {
         notifyPlayerQueue();
         console.log('[karol] Web request queued:', vid, cleanTitle, requester);
       } else {
-        // Fix title if queue still has a URL placeholder
-        const item = alreadyInQueue;
-        if (item && (!item.title || /^https?:\/\//i.test(item.title))) {
+        // Fix title if queue still has a URL / bare-id placeholder
+        const item = slotForThisRequest;
+        if (item && looksLikeBareIdTitle(item.title, item.videoId)
+            && !looksLikeBareIdTitle(cleanTitle, item.videoId)) {
           item.title = cleanTitle;
           item.videoId = resolveVid(item.videoId);
           saveState();
@@ -1285,6 +1823,8 @@ function startApiServer() {
           notifyPlayerQueue();
         }
       }
+      // ACK: durably accepted — MySQL row moves claimed → preparing
+      if (mysqlRequestId) updateMysqlRequestStatus({ mysqlRequestId }, 'preparing');
 
       // Missing local file: karaoke only if the requester opted in; otherwise plain download.
       // Library picks that already exist never hit this branch (zero processing).
@@ -1296,32 +1836,48 @@ function startApiServer() {
         : null;
       if (!filePath && !basePath) {
         const ytUrl = url || ('https://www.youtube.com/watch?v=' + baseId);
-        if (karaokeify) {
-          console.log('[karol] Web request missing local file — karaoke pipeline (checkbox on):', baseId);
-          enqueueKaraokeJob(baseId, ytUrl, requester || '');
-        } else {
-          console.log('[karol] Web request missing local file — direct download (no karaoke):', baseId);
-          startDirectDownload(baseId, ytUrl);
-        }
+        const cloudResolve = library && typeof library.resolveFilePath === 'function'
+          ? library.resolveFilePath(vid).then((p) => p || library.resolveFilePath(baseId))
+          : Promise.resolve(null);
+        cloudResolve.then((resolvedPath) => {
+          if (resolvedPath) return;
+          if (karaokeify || requestType === 'karaokify') {
+            console.log('[karol] Web request missing cached media — karaoke pipeline (karaokify):', baseId);
+            enqueueKaraokeJob(baseId, ytUrl, requester || '');
+          } else if (requestType === 'yt_karaoke') {
+            // Already a karaoke video on YouTube — direct download, tagged karaoke
+            console.log('[karol] Web request missing cached media — direct download (yt_karaoke):', baseId);
+            startDirectDownload(baseId, ytUrl, 'karaoke');
+          } else {
+            // jukebox (or legacy non-karaokeify): play-as-is music video
+            console.log('[karol] Web request missing cached media — direct download (jukebox):', baseId);
+            startDirectDownload(baseId, ytUrl, 'music');
+          }
+        }).catch((e) => console.error('[media-cache] playback resolve failed:', e.message));
       }
     }
     if (msg && msg.type === 'web-play-now') {
       const { videoId, title, requester } = msg;
       const vid = resolveVid(videoId);
+      const cleanTitle = bestTitleFor(vid, title);
       const existingIdx = queue.findIndex(item => item.videoId === vid);
-      if (existingIdx >= 0) queue.splice(existingIdx, 1);
-      queue.push({ videoId: vid, title: title || vid, singer: requester || '', requester: requester || '' });
+      let carriedMysqlId = null;
+      if (existingIdx >= 0) {
+        carriedMysqlId = queue[existingIdx].mysqlRequestId || null;
+        queue.splice(existingIdx, 1);
+      }
+      queue.push({ videoId: vid, title: cleanTitle, singer: requester || '', requester: requester || '', mysqlRequestId: carriedMysqlId });
       saveState();
       skipRequested = true;
       queueIndex = queue.length - 1;
-      sendPlay(vid, title || vid, requester);
+      sendPlay(vid, cleanTitle, requester);
       notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
       notifyPlayerQueue();
     }
     if (msg && msg.type === 'library-rescan') {
       console.log('[karol] Web-triggered library rescan:', msg.videoId);
       if (library && typeof library.init === 'function') {
-        library.init().then(() => {
+        library.init(true).then(() => {
           notifyCtrl('library-scan-progress', { videoId: msg.videoId, status: 'done' });
         });
       }
@@ -1406,6 +1962,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
         skipRequested = false;
       } else {
         if (queue.length > 0) {
+          updateMysqlRequestStatus(queue[queueIndex], 'ended');
           queueIndex = (queueIndex + 1) % queue.length;
           // Guard: if queue was modified and index is now invalid, clamp
           if (queueIndex < 0 || queueIndex >= queue.length) queueIndex = 0;
@@ -1415,6 +1972,19 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
             playAfterBetweenSongs(item);
           }
         }
+      }
+    }
+    if (s.state === 'error') {
+      updateMysqlRequestStatus(queue[queueIndex], 'error', 'player reported error');
+    }
+    if (s.state === 'playing') {
+      // The player ACTUALLY started — this is the only place a request is
+      // marked `playing` in MySQL (never on IPC handoff).
+      const current = queue[queueIndex];
+      if (current && current.mysqlRequestId && !current.mysqlMarkedPlaying) {
+        current.mysqlMarkedPlaying = true;
+        updateMysqlRequestStatus(current, 'playing');
+        saveState();
       }
     }
     if (s.state === 'playing' || s.state === 'error') {
@@ -1427,11 +1997,67 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.handle('library-list', (_e, opts) => library ? library.list(opts || {}) : { ok: false });
   ipcMain.handle('library-metadata', (_e, vid) => library ? library.getMetadata(vid) : null);
   ipcMain.handle('library-tags', () => library ? library.getTags() : {});
-  ipcMain.handle('library-set-tag', (_e, { videoId, tag }) => { if (library) library.setTag(videoId, tag); return { ok: true }; });
+  // Resolve display titles for remote-only library entries and persist them
+  // into tags.json so each id is resolved only once. Local lookup first, then
+  // concurrent oEmbed (no per-id MySQL round-trips — those made the original
+  // sequential version take 30s+ per batch and the UI never caught up).
+  ipcMain.handle('library-resolve-titles', async (_e, videoIds) => {
+    const titles = {};
+    const unavailable = [];
+    const persist = {};
+    const ids = (Array.isArray(videoIds) ? videoIds.slice(0, 25) : [])
+      .filter((id) => /^[A-Za-z0-9_-]{11}(-karaoke)?$/.test(String(id || '')));
+    const needNet = [];
+    for (const id of ids) {
+      const local = resolveTitleLocal(id);
+      if (local) { titles[id] = local; persist[id] = { title: local }; }
+      else needNet.push(id);
+    }
+    const CONC = 8;
+    for (let i = 0; i < needNet.length; i += CONC) {
+      const batch = needNet.slice(i, i + CONC);
+      const results = await Promise.all(batch.map((id) =>
+        fetchYoutubeOembedInfo(id).then((r) => ({ id, ...r })).catch(() => ({ id, title: '', status: 0 }))));
+      for (const r of results) {
+        if (r.title && !looksLikeBareIdTitle(r.title, r.id)) {
+          titles[r.id] = r.title;
+          persist[r.id] = { title: r.title };
+        } else if (r.status >= 400 && r.status < 500) {
+          // Deleted/private video — remember so we never retry.
+          unavailable.push(r.id);
+          persist[r.id] = { title_unavailable: true };
+        }
+      }
+    }
+    try {
+      if (library && typeof library.mergeTagMetaBatch === 'function' && Object.keys(persist).length) {
+        library.mergeTagMetaBatch(persist);
+      }
+    } catch {}
+    return { titles, unavailable };
+  });
+  ipcMain.handle('library-set-tag', (_e, { videoId, tag, source }) => {
+    if (!library) return { ok: false, error: 'library unavailable' };
+    // Reclassify (tag AND source overwritten) when source is provided;
+    // plain tag-only calls keep the legacy merge-preserving behavior.
+    if (source !== undefined && typeof library.reclassify === 'function') {
+      return library.reclassify(videoId, { tag, source });
+    }
+    library.setTag(videoId, tag);
+    return { ok: true };
+  });
   ipcMain.handle('library-status', (_e, vid) => library ? library.getStatus(vid) : { exists: false });
   ipcMain.handle('library-lyrics', (_e, vid) => library ? library.getLyrics(vid) : null);
-  ipcMain.handle('library-file-path', (_e, vid) => library ? library.getFilePath(vid) : null);
-  ipcMain.handle('library-scan', () => { if (library) library.init(); return { ok: true }; });
+  ipcMain.handle('library-file-path', async (_e, vid) => {
+    if (!library) return null;
+    return typeof library.resolveFilePath === 'function'
+      ? library.resolveFilePath(vid)
+      : library.getFilePath(vid);
+  });
+  ipcMain.handle('library-scan', async () => {
+    if (library) await library.init(true);
+    return { ok: true };
+  });
 
   ipcMain.handle('queue-get', () => {
     var taggedQueue = queue.map(function(item) {
@@ -1472,8 +2098,9 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('queue-add', (_e, { videoId, title, requester }) => {
     const vid = resolveVid(videoId);
-    queue.push({ videoId: vid, title: title || vid, singer: requester || '', requester: requester || '' });
-    if (queueIndex < 0) { queueIndex = queue.length - 1; sendPlay(vid, title || vid, requester); }
+    const cleanTitle = bestTitleFor(vid, title);
+    queue.push({ videoId: vid, title: cleanTitle, singer: requester || '', requester: requester || '' });
+    if (queueIndex < 0) { queueIndex = queue.length - 1; sendPlay(vid, cleanTitle, requester); }
     saveState();
     notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
     notifyPlayerQueue();
@@ -1482,15 +2109,16 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('queue-play-now', (_e, { videoId, title, requester }) => {
     const vid = resolveVid(videoId);
+    const cleanTitle = bestTitleFor(vid, title);
     const existingIdx = queue.findIndex(item => item.videoId === vid);
     if (existingIdx >= 0) {
       queue.splice(existingIdx, 1);
     }
-    queue.push({ videoId: vid, title: title || vid, singer: requester || '', requester: requester || '' });
+    queue.push({ videoId: vid, title: cleanTitle, singer: requester || '', requester: requester || '' });
     skipRequested = true;
     queueIndex = queue.length - 1;
     saveState();
-    sendPlay(vid, title || vid, requester);
+    sendPlay(vid, cleanTitle, requester);
     notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
     notifyPlayerQueue();
     return { ok: true };
@@ -1498,6 +2126,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('queue-remove', (_e, index) => {
     if (index < 0 || index >= queue.length) return { ok: false };
+    updateMysqlRequestStatus(queue[index], 'ended', 'removed from queue');
     if (index === queueIndex) {
       queue.splice(index, 1);
       if (queue.length === 0) { queueIndex = -1; notifyPlayer({ type: 'stop' }); notifyPlayerQueue(); saveState(); }
@@ -1513,6 +2142,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   });
 
   ipcMain.handle('queue-clear', () => {
+    for (const item of queue) updateMysqlRequestStatus(item, 'ended', 'queue cleared');
     queue = []; queueIndex = -1;
     playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
     saveState();
@@ -1554,7 +2184,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.handle('now-playing', () => {
     if (queueIndex >= 0 && queueIndex < queue.length) {
       const item = queue[queueIndex];
-      return { title: item.title, videoId: item.videoId, requester: item.singer, currentTime: playback.currentTime, duration: playback.duration, state: playback.state === 'playing' ? 1 : 2 };
+      return { title: displayTitle(item), videoId: item.videoId, requester: item.singer, currentTime: playback.currentTime, duration: playback.duration, state: playback.state === 'playing' ? 1 : 2 };
     }
     return { title: '', state: -2 };
   });
@@ -1578,14 +2208,8 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
       var karaokeId = (videoId || '').replace(/-karaoke$/, '') + '-karaoke';
       var lyricsData = library ? library.getLyrics(karaokeId) : null;
       var lines = lyricsData && lyricsData.lines ? lyricsData.lines : [];
-      var title = '';
-      if (library) {
-        try {
-          var meta = library.getMetadata(videoId);
-          title = meta ? (meta.title || videoId) : (videoId || '');
-        } catch(e) { title = videoId || ''; }
-      }
-      notifyPlayer({ type: 'toggle-full-lyrics', active: true, lines: lines, title: title || videoId || '' });
+      var title = resolveTitleLocal(videoId) || '';
+      notifyPlayer({ type: 'toggle-full-lyrics', active: true, lines: lines, title: title || 'Full Lyrics' });
     } catch(e) {
       console.error('[karol] toggle-full-lyrics error:', e.message);
       notifyPlayer({ type: 'toggle-full-lyrics', active: true, lines: [], title: 'Error loading lyrics' });
@@ -1619,13 +2243,15 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.handle('karaoke-power-status', () => ({ ok: true, ...getKaraokePowerStatus() }));
 
   // ── Download / Request handlers ──
-  ipcMain.handle('download-start', (_e, { videoId, karaoke, url }) => {
+  ipcMain.handle('download-start', (_e, { videoId, karaoke, url, requestType }) => {
     if (processingJobs[videoId] && processingJobs[videoId].status !== 'error') {
       return { ok: false, error: 'Already processing' };
     }
     const ytUrl = url || 'https://www.youtube.com/watch?v=' + videoId;
-    if (karaoke === false) {
-      startDirectDownload(videoId, ytUrl);
+    if (requestType === 'yt_karaoke') {
+      startDirectDownload(videoId, ytUrl, 'karaoke');
+    } else if (requestType === 'jukebox' || karaoke === false) {
+      startDirectDownload(videoId, ytUrl, 'music');
     } else {
       startKaraokePipeline(videoId, ytUrl);
     }
@@ -1643,13 +2269,17 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('jobs-list', () => JSON.parse(JSON.stringify(processingJobs)));
 
-  ipcMain.handle('request-add', (_e, { videoId, requester, title, url, karaoke }) => {
+  ipcMain.handle('request-add', (_e, { videoId, requester, title, url, karaoke, requestType }) => {
     if (!videoId) return { ok: false, error: 'No video ID' };
     const ytUrl = url || 'https://www.youtube.com/watch?v=' + videoId;
-    // If karaoke is explicitly false, do a direct download (no demucs/lyrics/re-encode)
-    // Default to karaoke pipeline for backward compatibility
-    if (karaoke === false) {
-      startDirectDownload(videoId, ytUrl);
+    // request_type wins when present; legacy boolean keeps old behavior
+    // (karaoke === false → direct download, default → karaoke pipeline)
+    if (requestType === 'yt_karaoke') {
+      startDirectDownload(videoId, ytUrl, 'karaoke');
+      return { ok: true, message: 'Direct download started — karaoke video will appear in library when ready' };
+    }
+    if (requestType === 'jukebox' || karaoke === false) {
+      startDirectDownload(videoId, ytUrl, 'music');
       return { ok: true, message: 'Direct download started — video will appear in library when ready' };
     }
     startKaraokePipeline(videoId, ytUrl, requester || '');
@@ -1658,6 +2288,40 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('request-list', () => {
     return [];
+  });
+
+  // ── By-name request matching (DJ attaches a video to a needs_match row) ──
+  ipcMain.handle('queue-needs-match', async () => {
+    if (!mysql) return { ok: false, error: 'MySQL unavailable', rows: [] };
+    try {
+      const rows = await mysql.requestListNeedsMatch(100);
+      return { ok: true, rows: rows || [] };
+    } catch (e) {
+      return { ok: false, error: e.message, rows: [] };
+    }
+  });
+
+  ipcMain.handle('queue-fill-match', async (_e, { id, videoId, url, requestType, title }) => {
+    if (!mysql) return { ok: false, error: 'MySQL unavailable' };
+    try {
+      const result = await mysql.requestFillMatch(Number(id), {
+        videoId: videoId || '',
+        url: url || '',
+        requestType: requestType || 'karaokify',
+        title: title || '',
+      });
+      if (!result || result.ok === false) {
+        return { ok: false, error: result?.error || 'fill_match failed' };
+      }
+      // Nudge the api-server claim loop so the matched request is picked up
+      // immediately instead of waiting for the next 10s poll.
+      if (apiServerProcess) {
+        try { apiServerProcess.send({ type: 'trigger-request-sync' }); } catch {}
+      }
+      return { ok: true, id: Number(id), videoId: result.videoId || videoId || '', request_type: result.request_type || requestType };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
   });
 
   // ── Health ──
@@ -1671,9 +2335,10 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     const url = processingJobs[videoId].url || 'https://www.youtube.com/watch?v=' + videoId;
     const karaokify = processingJobs[videoId].karaokify !== false;
     const requester = processingJobs[videoId].requester || '';
+    const retryTag = processingJobs[videoId].tag || 'music';
     delete processingJobs[videoId];
     if (karaokify === false) {
-      startDirectDownload(videoId, url);
+      startDirectDownload(videoId, url, retryTag);
     } else {
       enqueueKaraokeJob(videoId, url, requester);
     }
@@ -1700,7 +2365,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     if (library && typeof library.init === 'function') {
       // Delete the disk cache so init() rebuilds from scratch
       try { require('fs').unlinkSync('/tmp/karol-library-cache.json'); } catch(e) {}
-      await library.init();
+      await library.init(true);
     }
     return { ok: true };
   });
