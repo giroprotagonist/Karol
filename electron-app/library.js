@@ -382,6 +382,8 @@ function rebuildTagsFromDisk() {
               tags[videoId] = {
                 tag: autoTag,
                 year: (info.upload_date || '').slice(0, 4),
+                upload_date: info.upload_date || '',
+                title: info.title || '',
                 artist: info.uploader || '',
                 source: isPipelineOutput ? 'karaoke-maker' : 'rebuilt-from-info.json'
               };
@@ -417,17 +419,24 @@ function _findInLibraryDirs(predicate) {
 }
 
 function getVideoPath(videoId) {
+  const MIN_BYTES = 50_000; // skip 0-byte / truncated ghosts that poison USB root
   const found = _findInLibraryDirs((dir) => {
     for (const ext of VIDEO_EXTS) {
       const exact = path.join(dir, videoId + ext);
-      if (fs.existsSync(exact)) return exact;
+      try {
+        if (fs.existsSync(exact) && fs.statSync(exact).size >= MIN_BYTES) return exact;
+      } catch (_) { /* ignore */ }
     }
     // Exact stem only — do NOT prefix-match (id must not resolve to id-karaoke.mp4)
     try {
       const files = fs.readdirSync(dir);
       for (const ext of VIDEO_EXTS) {
         const want = videoId + ext;
-        if (files.includes(want)) return path.join(dir, want);
+        if (!files.includes(want)) continue;
+        const full = path.join(dir, want);
+        try {
+          if (fs.statSync(full).size >= MIN_BYTES) return full;
+        } catch (_) { /* ignore */ }
       }
     } catch (e) { /* ignore */ }
     return null;

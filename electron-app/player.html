@@ -3048,6 +3048,8 @@ function renderMarquee() {
   var items = [];
   for (var i = 0; i < queue.length; i++) { if (i === currentIndex) continue; if (i > currentIndex) items.push(queue[i]); }
   for (var j = 0; j < queue.length; j++) { if (j >= currentIndex) break; items.push(queue[j]); }
+  // Cap ticker length — a 600-item marquee DOM is a memory/CPU bomb
+  if (items.length > 20) items = items.slice(0, 20);
   var html = '';
   for (var dup = 0; dup < 2; dup++) {
     for (var k = 0; k < items.length; k++) {

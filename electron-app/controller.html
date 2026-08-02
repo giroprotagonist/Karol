@@ -19,14 +19,29 @@ input,select{font-family:inherit}
 #search-box{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin:12px 20px 0}
 #search-box:focus{outline:none;border-color:var(--accent)}
 
-#library-list{flex:1;overflow-y:auto;padding:8px 12px}
+#library-list{flex:1;overflow-y:auto;padding:0 12px 8px}
+.lib-cols{
+  display:flex;align-items:center;gap:10px;padding:6px 10px 4px;
+  position:sticky;top:0;z-index:2;background:var(--surface);
+  border-bottom:1px solid var(--border);font-size:10px;font-weight:700;
+  letter-spacing:0.6px;text-transform:uppercase;color:var(--textDim);user-select:none;
+}
+.lib-cols .lib-col{background:none;border:none;color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit;padding:0;cursor:pointer;display:inline-flex;align-items:center;gap:3px}
+.lib-cols .lib-col:hover{color:var(--text)}
+.lib-cols .lib-col.active{color:var(--accent)}
+.lib-cols .lib-col .arrow{font-size:9px;opacity:0.85}
+.lib-cols .lib-col-spacer{width:22px;flex:0 0 auto} /* tag chip */
+.lib-cols .lib-col-title{flex:1;text-align:left;min-width:0}
+.lib-cols .lib-col-artist{max-width:140px;width:140px;text-align:left}
+.lib-cols .lib-col-year{min-width:44px;justify-content:flex-end}
+.lib-cols .lib-col-actions{width:118px;flex:0 0 auto}
 .lib-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;transition:background 0.15s;font-size:12px;border-bottom:1px solid rgba(30,30,56,0.3)}
 .lib-item:hover{background:rgba(139,92,246,0.08)}
 .lib-item:active{background:rgba(139,92,246,0.15)}
-.lib-item .lib-title{flex:1;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lib-item .lib-artist{color:var(--textDim);font-size:11px;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lib-item .lib-year{color:var(--textDim);font-size:11px;min-width:36px;text-align:right}
-.lib-item .lib-tag{font-size:9px;padding:1px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:1px}
+.lib-item .lib-title{flex:1;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.lib-item .lib-artist{color:var(--textDim);font-size:11px;max-width:140px;width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib-item .lib-year{color:var(--textDim);font-size:11px;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.lib-item .lib-tag{font-size:9px;padding:1px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:1px;flex:0 0 auto}
 .lib-tag.karaoke{background:rgba(139,92,246,0.2);color:var(--accent)}
 .lib-tag.music{background:rgba(240,192,64,0.15);color:var(--gold)}
 .lib-tag.song{background:rgba(16,185,129,0.15);color:var(--success)}
@@ -127,6 +142,10 @@ input,select{font-family:inherit}
 body.dragging{cursor:col-resize;user-select:none}
 #queue-header{padding:14px 20px;border-bottom:1px solid var(--border);font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:space-between}
 #queue-header button{font-size:11px;padding:4px 10px;border-radius:4px;background:rgba(239,68,68,0.15);color:var(--danger);font-weight:600}
+#queue-header .shuffle-btn{background:rgba(139,92,246,0.15);color:var(--accent)}
+#queue-header .shuffle-btn:hover{background:rgba(139,92,246,0.28)}
+#queue-header .shuffle-btn.active{background:rgba(139,92,246,0.4);color:#fff;box-shadow:0 0 10px rgba(139,92,246,0.35)}
+#queue-header .queue-mv-btn{margin-right:0}
 #queue-list{flex:1;overflow-y:auto;padding:8px}
 .queue-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;margin-bottom:4px;background:var(--surface);border:1px solid transparent;transition:all 0.15s;cursor:pointer}
 .queue-item.active{border-color:var(--accent);background:rgba(139,92,246,0.08)}
@@ -180,6 +199,15 @@ body.dragging{cursor:col-resize;user-select:none}
 #filter-bar .filter-tab[data-filter="custom"] .tab-count{background:rgba(236,72,153,0.2);color:#ec4899}
 #filter-bar .filter-tab[data-filter="custom"].active .tab-count{background:rgba(236,72,153,0.35);color:#f9a8d4}
 #filter-bar .filter-tab[data-filter="musicvideo"] .tab-count{background:rgba(240,192,64,0.18);color:var(--gold)}
+#filter-bar .filter-tab[data-filter="musicvideo"].active .tab-count{background:rgba(240,192,64,0.35);color:var(--gold)}
+.queue-mv-btn{
+  flex:0 0 auto;padding:6px 10px;border-radius:6px;
+  background:rgba(240,192,64,0.14);border:1px solid rgba(240,192,64,0.4);
+  color:var(--gold);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;transition:all .15s;
+}
+.queue-mv-btn:hover{background:rgba(240,192,64,0.28);color:#fff;border-color:var(--gold)}
+.queue-mv-btn:disabled{opacity:0.45;cursor:wait}
+#queue-header .queue-mv-btn{margin-right:8px}
 #reclass-menu .rc-hint{display:block;font-size:10px;color:var(--textDim);font-weight:500;margin-top:2px;line-height:1.3}
 .rescan-btn{flex:0 0 auto;padding:6px 10px;border-radius:6px;background:rgba(236,72,153,0.12);border:1px solid var(--border);color:var(--textDim);font-size:10px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .rescan-btn:hover{background:rgba(236,72,153,0.25);color:var(--text);border-color:#ec4899}
@@ -325,6 +353,7 @@ body.dragging{cursor:col-resize;user-select:none}
     <button class="filter-tab" data-filter="karaoke" onclick="setLibraryFilter('karaoke')" title="Standard karaoke tracks">Karaoke <span class="tab-count" id="count-karaoke">0</span></button>
     <button class="filter-tab" data-filter="custom" onclick="setLibraryFilter('custom')" title="Custom karaoke-maker tracks (your pipeline)">Custom <span class="tab-count" id="count-custom">0</span></button>
     <button class="filter-tab" data-filter="musicvideo" onclick="setLibraryFilter('musicvideo')" title="Music videos for interstitial B-roll + jukebox">Music Videos <span class="tab-count" id="count-music">0</span></button>
+    <button class="queue-mv-btn" id="btn-queue-all-mv" onclick="queueAllMusicVideos()" title="Add every Music Video to the queue (skips ones already queued)">+ Queue all MVs</button>
     <button class="rescan-btn" onclick="rescanLibrary()" title="Rescan library">Rescan</button>
   </div>
   <div id="library-status" class="scanning">
@@ -334,6 +363,13 @@ body.dragging{cursor:col-resize;user-select:none}
     <div class="ls-folders" id="ls-folders"></div>
   </div>
   <div id="library-list">
+    <div class="lib-cols" id="lib-cols">
+      <span class="lib-col-spacer"></span>
+      <button type="button" class="lib-col lib-col-title active" data-sort="title" onclick="setLibrarySort('title')" title="Sort by song name">Song <span class="arrow" id="sort-arrow-title">▲</span></button>
+      <button type="button" class="lib-col lib-col-artist" data-sort="artist" onclick="setLibrarySort('artist')" title="Sort by artist">Artist <span class="arrow" id="sort-arrow-artist"></span></button>
+      <button type="button" class="lib-col lib-col-year" data-sort="year" onclick="setLibrarySort('year')" title="Sort by publish year">Year <span class="arrow" id="sort-arrow-year"></span></button>
+      <span class="lib-col-actions"></span>
+    </div>
     <div id="loading-state"><div class="spinner"></div>Loading library...</div>
   </div>
   <div id="request-form">
@@ -403,8 +439,12 @@ body.dragging{cursor:col-resize;user-select:none}
   </div>
 
   <div id="queue-header">
-    Queue (<span id="queue-count">0</span>)
-    <button onclick="api.queue.clear().then(refreshQueue)">Clear All</button>
+    Queue (<span id="queue-count">0</span>)<span id="shuffle-badge" style="display:none;margin-left:8px;font-size:11px;font-weight:700;color:var(--accent)">· shuffle</span>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button class="shuffle-btn" id="btn-shuffle" onclick="toggleQueueShuffle()" title="Shuffle mode — next track is random (no repeats until the full cycle)">Shuffle</button>
+      <button class="queue-mv-btn" onclick="queueAllMusicVideos()" title="Add every Music Video to the queue (shuffled)">+ All Music Videos</button>
+      <button onclick="api.queue.clear().then(refreshQueue)">Clear All</button>
+    </div>
   </div>
   <div id="queue-list">
     <div style="color:var(--textDim);text-align:center;padding:40px">Queue is empty.<br>Add songs from the library or use the request form.</div>
@@ -444,6 +484,7 @@ let musicVideoIds = new Set();   // Base ids of regular (non-karaoke) music vide
 let musicVideoMeta = {};         // id -> {title, artist, year} from tags.json for remote-only rows
 let tagMetaById = {};            // id -> {tag, source} live from tags.json (wins over stale scan rows)
 let libraryFilter = 'all';       // 'all' | 'karaoke' | 'custom' | 'musicvideo'
+let librarySort = { key: 'title', dir: 1 }; // 1 = A→Z / old→new, -1 = reverse
 let queue = [];
 let currentIndex = -1;
 let nowPlaying = null;
@@ -532,6 +573,7 @@ async function refreshCustomVideoIds() {
         // pipeline '-karaoke' variant, never a karaoke-maker product.
         mvNext.add(key);
         mvMeta[key] = { title: entry.title || '', artist: entry.artist || '', year: entry.year || '',
+                        upload_date: entry.upload_date || '',
                         unavailable: !!entry.title_unavailable };
       }
     }
@@ -609,10 +651,7 @@ function buildMusicVideoRows() {
     if (localIds.has(id)) return;
     var m = musicVideoMeta[id] || {};
     remote.push({ videoId: id, title: m.title || '', artist: m.artist || '', year: m.year || '',
-                  tag: 'music', remote: true, unavailable: !!m.unavailable });
-  });
-  remote.sort(function(a, b) {
-    return (a.artist || '\uffff').localeCompare(b.artist || '\uffff') || (a.title || '').localeCompare(b.title || '');
+                  upload_date: m.upload_date || '', tag: 'music', remote: true, unavailable: !!m.unavailable });
   });
   return rows.concat(remote);
 }
@@ -901,8 +940,63 @@ function startPolling() {
 
 // ── Library ──
 
+function setLibrarySort(key) {
+  if (!key) return;
+  if (librarySort.key === key) {
+    librarySort.dir = librarySort.dir === 1 ? -1 : 1;
+  } else {
+    librarySort.key = key;
+    // Year defaults to newest-first; name/artist to A→Z
+    librarySort.dir = key === 'year' ? -1 : 1;
+  }
+  updateSortHeaderUI();
+  applyFilterAndRender();
+}
+
+function updateSortHeaderUI() {
+  var cols = document.querySelectorAll('#lib-cols .lib-col');
+  for (var i = 0; i < cols.length; i++) {
+    var btn = cols[i];
+    var key = btn.getAttribute('data-sort');
+    var active = key === librarySort.key;
+    btn.classList.toggle('active', active);
+    var arrow = document.getElementById('sort-arrow-' + key);
+    if (arrow) arrow.textContent = active ? (librarySort.dir === 1 ? '▲' : '▼') : '';
+  }
+}
+
+function libSortYearValue(v) {
+  var ud = String(v.upload_date || '').replace(/\D/g, '');
+  if (ud.length >= 8) return parseInt(ud.slice(0, 8), 10) || 0;
+  var y = parseInt(v.year, 10);
+  return y ? y * 10000 : 0;
+}
+
+function sortLibraryVideos(videos) {
+  var key = librarySort.key;
+  var dir = librarySort.dir;
+  var copy = videos.slice();
+  copy.sort(function(a, b) {
+    var cmp = 0;
+    if (key === 'year') {
+      cmp = libSortYearValue(a) - libSortYearValue(b);
+    } else if (key === 'artist') {
+      cmp = (a.artist || '').localeCompare(b.artist || '', undefined, { sensitivity: 'base' });
+      if (!cmp) cmp = (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+    } else {
+      // title / song name
+      cmp = (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+      if (!cmp) cmp = (a.artist || '').localeCompare(b.artist || '', undefined, { sensitivity: 'base' });
+    }
+    if (!cmp) cmp = String(a.videoId || '').localeCompare(String(b.videoId || ''));
+    return cmp * dir;
+  });
+  return copy;
+}
+
 function renderLibrary(videos) {
   var list = document.getElementById('library-list');
+  var cols = document.getElementById('lib-cols');
   var html = '';
   for (var i = 0; i < Math.min(videos.length, 200); i++) {
     var v = videos[i];
@@ -930,13 +1024,14 @@ function renderLibrary(videos) {
     var shownTitle = v.title ||
       (v.unavailable ? ((v.artist ? v.artist + ' ' : '') + '(unavailable)')
         : (v.remote ? safeDisplayTitle('', v.videoId) : v.videoId));
+    var yearLabel = v.year || (String(v.upload_date || '').slice(0, 4)) || '';
     html += '<div class="' + itemClass + '">' +
       '<span class="lib-tag ' + tagClass + '">' + tagLabel + '</span>' +
       (customVideoIds.has(v.videoId) ? '<span class="lib-tag custom-tag">C</span>' : '') +
       (v.remote ? '<span class="lib-tag yt-tag" title="Not on local drive — plays from YouTube">YT</span>' : '') +
       '<span class="lib-title" title="' + escapeHtml(v.title||'') + '">' + escapeHtml(shownTitle) + '</span>' +
       '<span class="lib-artist">' + escapeHtml(v.artist||'') + '</span>' +
-      '<span class="lib-year">' + (v.year||'') + '</span>' +
+      '<span class="lib-year" title="' + escapeHtml(v.upload_date || yearLabel) + '">' + escapeHtml(yearLabel) + '</span>' +
       actionsHtml +
     '</div>';
   }
@@ -946,7 +1041,10 @@ function renderLibrary(videos) {
   if (videos.length === 0) {
     html = '<div style="color:var(--textDim);text-align:center;padding:40px">No results found</div>';
   }
-  list.innerHTML = html;
+  // Keep sticky column headers; replace only the rows below
+  var keep = cols ? cols.outerHTML : '';
+  list.innerHTML = keep + html;
+  updateSortHeaderUI();
 }
 
 function applyFilterAndRender() {
@@ -965,9 +1063,11 @@ function applyFilterAndRender() {
   // Apply search filter
   if (q) {
     videos = videos.filter(function(v) {
-      return (v.title||'').toLowerCase().includes(q) || (v.artist||'').toLowerCase().includes(q) || String(v.year||'').includes(q);
+      return (v.title||'').toLowerCase().includes(q) || (v.artist||'').toLowerCase().includes(q) || String(v.year||'').includes(q) || String(v.upload_date||'').includes(q);
     });
   }
+
+  videos = sortLibraryVideos(videos);
 
   renderLibrary(videos.slice(0, 200));
   if (libraryFilter === 'musicvideo') resolveVisibleMusicVideoTitles(videos.slice(0, 200));
@@ -1028,6 +1128,103 @@ function setLibraryFilter(filter) {
     tabs[i].classList.toggle('active', tabs[i].getAttribute('data-filter') === filter);
   }
   applyFilterAndRender();
+}
+
+async function queueAllMusicVideos() {
+  var rows = buildMusicVideoRows();
+  if (!rows.length) {
+    alert('No music videos found. Open Music Videos or Rescan first.');
+    return;
+  }
+  var msg = 'Add ' + rows.length + ' music videos to the queue on shuffle?\n\n'
+    + 'Missing/unplayable files are skipped. The list stays windowed so it won’t freeze the UI.';
+  if (!confirm(msg)) return;
+
+  var btns = document.querySelectorAll('.queue-mv-btn');
+  for (var b = 0; b < btns.length; b++) {
+    btns[b].disabled = true;
+    btns[b].textContent = 'Queuing…';
+  }
+  try {
+    // Replace any previous dump / jukebox with a fresh shuffled playlist
+    try { await api.queue.clear(); } catch (_) {}
+    var singer = currentSingerOrDj();
+    var items = rows.map(function(v) {
+      return { videoId: v.videoId, title: v.title || '' };
+    });
+    var r = await api.queue.addMany(items, singer, {
+      playIfIdle: true,
+      shuffle: true,
+      asJukebox: false, // full queue — user wants every track listed
+    });
+    queueShuffleEnabled = !!(r && r.shuffleEnabled);
+    jukeboxState = null;
+    updateShuffleBtnUI();
+    await refreshQueue();
+    var added = (r && r.added) || 0;
+    var skipped = (r && r.skipped) || 0;
+    var status = document.getElementById('request-status');
+    if (status) {
+      status.textContent = 'Queued ' + added + ' music videos'
+        + (skipped ? ' (' + skipped + ' skipped)' : '')
+        + (queueShuffleEnabled ? ' · shuffle on' : '');
+    }
+  } catch (e) {
+    console.error('queueAllMusicVideos:', e);
+    alert('Failed to queue music videos: ' + (e && e.message ? e.message : e));
+  } finally {
+    for (var c = 0; c < btns.length; c++) {
+      btns[c].disabled = false;
+    }
+    var side = document.getElementById('btn-queue-all-mv');
+    if (side) side.textContent = '+ Queue all MVs';
+    var headerBtns = document.querySelectorAll('#queue-header .queue-mv-btn');
+    for (var h = 0; h < headerBtns.length; h++) headerBtns[h].textContent = '+ All Music Videos';
+  }
+}
+
+let queueShuffleEnabled = false;
+let jukeboxState = null;
+
+function updateShuffleBtnUI() {
+  var btn = document.getElementById('btn-shuffle');
+  var badge = document.getElementById('shuffle-badge');
+  if (btn) {
+    btn.classList.toggle('active', !!queueShuffleEnabled);
+    btn.textContent = queueShuffleEnabled ? 'Shuffle On' : 'Shuffle';
+    btn.title = queueShuffleEnabled
+      ? 'Shuffle on — skip picks a random unplayed track. Click to turn off.'
+      : 'Turn on shuffle — next track is random (no repeats until a full cycle)';
+  }
+  if (badge) {
+    if (jukeboxState && jukeboxState.active) {
+      badge.style.display = 'inline';
+      badge.textContent = '· jukebox ' + (jukeboxState.count || 0)
+        + (queueShuffleEnabled ? ' · shuffle' : '');
+    } else {
+      badge.style.display = queueShuffleEnabled ? 'inline' : 'none';
+      badge.textContent = '· shuffle';
+    }
+  }
+}
+
+async function toggleQueueShuffle() {
+  if (!api.queue || !api.queue.setShuffle) return;
+  try {
+    var next = !queueShuffleEnabled;
+    var r = await api.queue.setShuffle(next, { reshuffleUpcoming: next });
+    queueShuffleEnabled = !!(r && r.shuffleEnabled);
+    if (r && r.queue) {
+      queue = r.queue;
+      currentIndex = r.currentIndex;
+      renderQueue();
+    } else {
+      await refreshQueue();
+    }
+    updateShuffleBtnUI();
+  } catch (e) {
+    console.error('toggleQueueShuffle:', e);
+  }
 }
 
 // ── Per-track reclassify: Karaoke / Custom / Music Video ──
@@ -1548,21 +1745,45 @@ async function refreshQueue() {
     var q = await api.queue.get();
     queue = q.queue || [];
     currentIndex = q.currentIndex;
+    if (typeof q.shuffleEnabled === 'boolean') {
+      queueShuffleEnabled = q.shuffleEnabled;
+    }
+    jukeboxState = q.jukebox || null;
+    updateShuffleBtnUI();
     renderQueue();
   } catch(e) { console.error('Queue fetch error:', e); }
 }
 
 function renderQueue() {
   var list = document.getElementById('queue-list');
-  document.getElementById('queue-count').textContent = queue.length;
+  document.getElementById('queue-count').textContent = String(queue.length);
 
   if (queue.length === 0) {
     list.innerHTML = '<div style="color:var(--textDim);text-align:center;padding:40px">Queue is empty.</div>';
     return;
   }
 
+  // Window the DOM — never paint 600+ heavy rows at once
+  var WINDOW_BEFORE = 8;
+  var WINDOW_AFTER = 40;
+  var start = 0;
+  var end = queue.length;
+  if (queue.length > 60 && currentIndex >= 0) {
+    start = Math.max(0, currentIndex - WINDOW_BEFORE);
+    end = Math.min(queue.length, currentIndex + WINDOW_AFTER);
+  }
+
   var html = '';
-  for (var i = 0; i < queue.length; i++) {
+  if (queue.length > 60) {
+    html += '<div style="padding:6px 12px;margin:2px 0 6px;font-size:11px;color:var(--textDim)">'
+      + 'Showing ' + (start + 1) + '–' + end + ' of ' + queue.length
+      + (queueShuffleEnabled ? ' · shuffle on' : '')
+      + '</div>';
+  }
+  if (start > 0) {
+    html += '<div style="color:var(--textDim);padding:6px 10px;font-size:11px">… ' + start + ' earlier tracks</div>';
+  }
+  for (var i = start; i < end; i++) {
     var item = queue[i];
     var isActive = i === currentIndex;
     var isCustom = item.isCustom === true;
@@ -1591,6 +1812,9 @@ function renderQueue() {
     }
     html += '<button class="q-remove" onclick="event.stopPropagation();removeQueueItem(' + i + ')" title="Remove">\u00d7</button>' +
     '</div>';
+  }
+  if (end < queue.length) {
+    html += '<div style="color:var(--textDim);padding:6px 10px;font-size:11px">… ' + (queue.length - end) + ' later tracks</div>';
   }
   list.innerHTML = html;
 }

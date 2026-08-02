@@ -31,6 +31,27 @@ contextBridge.exposeInMainWorld('karolAPI', {
   queue: {
     add: (videoId, title, requester, url) =>
       ipcRenderer.invoke('queue-add', { videoId, title, requester, url }),
+    addMany: (items, requester, opts) =>
+      ipcRenderer.invoke('queue-add-many', {
+        items,
+        requester,
+        playIfIdle: opts && opts.playIfIdle,
+        shuffle: opts && opts.shuffle,
+        asJukebox: opts && opts.asJukebox,
+      }),
+    setShuffle: (enabled, opts) =>
+      ipcRenderer.invoke('queue-shuffle-set', {
+        enabled,
+        reshuffleUpcoming: opts && opts.reshuffleUpcoming,
+      }),
+    getShuffle: () => ipcRenderer.invoke('queue-shuffle-get'),
+    startJukebox: (items, opts) =>
+      ipcRenderer.invoke('jukebox-start', {
+        items,
+        shuffle: !opts || opts.shuffle !== false,
+        requester: opts && opts.requester,
+      }),
+    stopJukebox: () => ipcRenderer.invoke('jukebox-stop'),
     remove: (index) => ipcRenderer.invoke('queue-remove', index),
     reorder: (from, to) => ipcRenderer.invoke('queue-reorder', { from, to }),
     clear: () => ipcRenderer.invoke('queue-clear'),

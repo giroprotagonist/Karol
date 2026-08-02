@@ -712,6 +712,11 @@ function startDirectDownload(videoId, url, tag = 'music') {
 // ── State ──
 let queue = [];
 let queueIndex = -1;
+let queueShuffle = false;
+let shufflePlayedIds = new Set(); // no-repeat within a shuffle cycle
+/** Lightweight music-video radio — ids/titles only. Keeps the interactive karaoke
+ *  queue small so 600+ MVs don't blow up IPC/DOM/lyric scans. */
+let jukebox = null; // { items: [{videoId,title}], index, shuffle }
 let playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
 const DEFAULT_VOLUME = 0.55;
 let volumeLevel = DEFAULT_VOLUME;
@@ -771,6 +776,7 @@ function loadState() {
       if (typeof state.queueIndex === 'number') queueIndex = state.queueIndex;
       if (healQueueSingerNames()) saveState();
       console.log('[karol] Loaded state: ' + queue.length + ' queued, index ' + queueIndex);
+      // Don't auto-collapse large queues anymore — Queue All uses a real playlist.
       // Don't reload processingJobs from old session — they may not be running
     }
   } catch (e) { console.error('[karol] State load failed:', e.message); }
@@ -1477,6 +1483,7 @@ function buildPhoneQueueState() {
     currentThumbnail: baseId ? ('https://i.ytimg.com/vi/' + baseId + '/hqdefault.jpg') : '',
     currentTime: playback.currentTime || 0,
     duration: playback.duration || 0,
+    shuffleEnabled: !!queueShuffle,
     ...getKaraokePowerStatus(),
   };
 }
@@ -1608,13 +1615,15 @@ function handleDjApi(action, payload) {
     }
     case 'queue-clear':
       for (const item of queue) updateMysqlRequestStatus(item, 'ended', 'queue cleared');
+      stopJukebox();
       queue = [];
       queueIndex = -1;
+      shufflePlayedIds.clear();
       playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
       clearBetweenSongsTimer();
       saveState();
       notifyPlayer({ type: 'stop' });
-      notifyCtrl('queue-update', { queue: [], currentIndex: -1 });
+      notifyCtrl('queue-update', { queue: [], currentIndex: -1, shuffleEnabled: !!queueShuffle, jukebox: null });
       notifyPlayerQueue();
       return { ok: true, state: buildPhoneQueueState() };
     case 'queue-reorder': {
@@ -1656,6 +1665,15 @@ function handleDjApi(action, payload) {
     case 'transport-prev':
       advanceQueue(-1);
       return { ok: true, nowPlaying: buildPhoneNowPlaying(), state: buildPhoneQueueState() };
+    case 'queue-shuffle-set': {
+      const enabled = payload.enabled != null ? !!payload.enabled : true;
+      setQueueShuffle(enabled, { reshuffleUpcoming: payload.reshuffleUpcoming !== false });
+      return { ok: true, state: buildPhoneQueueState(), shuffleEnabled: !!queueShuffle };
+    }
+    case 'queue-shuffle-upcoming': {
+      setQueueShuffle(true, { reshuffleUpcoming: true });
+      return { ok: true, state: buildPhoneQueueState(), shuffleEnabled: true };
+    }
     case 'transport-seek': {
       const seconds = Number(payload.seconds ?? payload.time ?? 0);
       notifyPlayer({ type: 'seek', time: seconds });
@@ -1764,6 +1782,9 @@ function loadSettings() {
       if (typeof s.volumeLevel === 'number' && isFinite(s.volumeLevel)) {
         volumeLevel = Math.max(0, Math.min(1, s.volumeLevel));
       }
+      if (typeof s.queueShuffle === 'boolean') {
+        queueShuffle = s.queueShuffle;
+      }
     }
   } catch (e) {
     console.warn('[karol] settings load failed:', e.message);
@@ -1775,6 +1796,7 @@ function saveSettings() {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
       betweenSongsMs: getBetweenSongsMs(),
       volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
+      queueShuffle: !!queueShuffle,
     }, null, 2));
   } catch (e) {
     console.warn('[karol] settings save failed:', e.message);
@@ -2213,18 +2235,256 @@ function playAfterBetweenSongs(item) {
 }
 
 function advanceQueue(direction) {
+  if (jukeboxActive()) {
+    advanceJukebox(direction);
+    return;
+  }
   if (queue.length === 0) return;
   skipRequested = true;
-  queueIndex = (queueIndex + direction + queue.length) % queue.length;
+  if (queueShuffle && direction === 1 && queue.length > 1) {
+    const cur = queue[queueIndex];
+    if (cur && cur.videoId) shufflePlayedIds.add(String(cur.videoId));
+    let candidates = [];
+    for (let i = 0; i < queue.length; i++) {
+      if (i === queueIndex) continue;
+      const id = String((queue[i] && queue[i].videoId) || '');
+      if (!shufflePlayedIds.has(id)) candidates.push(i);
+    }
+    if (candidates.length === 0) {
+      // Full cycle done — reshuffle from the top (exclude current so we don't repeat immediately)
+      shufflePlayedIds.clear();
+      if (cur && cur.videoId) shufflePlayedIds.add(String(cur.videoId));
+      for (let i = 0; i < queue.length; i++) {
+        if (i !== queueIndex) candidates.push(i);
+      }
+    }
+    queueIndex = candidates[Math.floor(Math.random() * candidates.length)];
+  } else {
+    queueIndex = (queueIndex + direction + queue.length) % queue.length;
+  }
   const item = queue[queueIndex];
   saveState();
   playAfterBetweenSongs(item);
 }
 
-// Send queue state to player window whenever it changes
+function jukeboxActive() {
+  return !!(jukebox && Array.isArray(jukebox.items) && jukebox.items.length);
+}
+
+function jukeboxSummary() {
+  if (!jukeboxActive()) return null;
+  return {
+    active: true,
+    count: jukebox.items.length,
+    index: jukebox.index,
+    shuffle: !!jukebox.shuffle,
+    current: jukebox.items[jukebox.index] || null,
+  };
+}
+
+/** Build a playable jukebox from music-video rows — skips missing/tiny files. */
+function startJukebox(rawItems, { shuffle = true, play = true, requester } = {}) {
+  const who = normalizeQueueSinger(requester);
+  const cleaned = [];
+  const seen = new Set();
+  for (const raw of rawItems || []) {
+    if (!raw) continue;
+    const vid = resolveVid(raw.videoId || raw.id || '');
+    if (!vid || seen.has(vid)) continue;
+    let playable = false;
+    try {
+      const p = library && typeof library.getVideoPath === 'function' ? library.getVideoPath(vid) : null;
+      if (p && fs.existsSync(p) && fs.statSync(p).size >= 50_000) playable = true;
+    } catch (_) { /* ignore */ }
+    if (!playable) continue;
+    seen.add(vid);
+    cleaned.push({
+      videoId: vid,
+      title: bestTitleFor(vid, raw.title || ''),
+    });
+  }
+  if (!cleaned.length) {
+    return { ok: false, error: 'No playable local music videos found', added: 0 };
+  }
+  if (shuffle) shuffleInPlace(cleaned);
+  jukebox = { items: cleaned, index: 0, shuffle: !!shuffle };
+  queueShuffle = !!shuffle;
+  shufflePlayedIds.clear();
+  // Interactive queue stays tiny — only the currently playing jukebox track.
+  const first = cleaned[0];
+  queue = [{
+    videoId: first.videoId,
+    title: first.title,
+    singer: who,
+    requester: who,
+    fromJukebox: true,
+  }];
+  queueIndex = 0;
+  saveSettings();
+  saveState();
+  if (play) {
+    skipRequested = true;
+    sendPlay(first.videoId, first.title, who);
+  }
+  notifyCtrl('queue-update', {
+    queue,
+    currentIndex: queueIndex,
+    shuffleEnabled: !!queueShuffle,
+    jukebox: jukeboxSummary(),
+  });
+  notifyPlayerQueue();
+  console.log('[karol] Jukebox started:', cleaned.length, 'tracks, shuffle=', !!shuffle);
+  return {
+    ok: true,
+    added: cleaned.length,
+    skipped: (rawItems || []).length - cleaned.length,
+    jukebox: jukeboxSummary(),
+    shuffleEnabled: !!queueShuffle,
+    queueLength: queue.length,
+    currentIndex: queueIndex,
+  };
+}
+
+function stopJukebox() {
+  jukebox = null;
+}
+
+function advanceJukebox(direction) {
+  if (!jukeboxActive()) return;
+  skipRequested = true;
+  const n = jukebox.items.length;
+  if (n === 0) return;
+  if (jukebox.shuffle && direction === 1 && n > 1) {
+    // No-repeat random among not-yet-played this cycle
+    const curId = String((jukebox.items[jukebox.index] && jukebox.items[jukebox.index].videoId) || '');
+    if (curId) shufflePlayedIds.add(curId);
+    let candidates = [];
+    for (let i = 0; i < n; i++) {
+      if (i === jukebox.index) continue;
+      const id = String(jukebox.items[i].videoId || '');
+      if (!shufflePlayedIds.has(id)) candidates.push(i);
+    }
+    if (!candidates.length) {
+      shufflePlayedIds.clear();
+      if (curId) shufflePlayedIds.add(curId);
+      for (let i = 0; i < n; i++) if (i !== jukebox.index) candidates.push(i);
+    }
+    jukebox.index = candidates[Math.floor(Math.random() * candidates.length)];
+  } else {
+    jukebox.index = (jukebox.index + direction + n) % n;
+  }
+  const item = jukebox.items[jukebox.index];
+  const who = DEFAULT_DJ_NAME;
+  queue = [{
+    videoId: item.videoId,
+    title: item.title,
+    singer: who,
+    requester: who,
+    fromJukebox: true,
+  }];
+  queueIndex = 0;
+  saveState();
+  playAfterBetweenSongs({
+    videoId: item.videoId,
+    title: item.title,
+    singer: who,
+    requester: who,
+  });
+  notifyCtrl('queue-update', {
+    queue,
+    currentIndex: 0,
+    shuffleEnabled: !!queueShuffle,
+    jukebox: jukeboxSummary(),
+  });
+  notifyPlayerQueue();
+}
+
+function setQueueShuffle(enabled, { reshuffleUpcoming } = {}) {
+  queueShuffle = !!enabled;
+  if (!queueShuffle) {
+    shufflePlayedIds.clear();
+  } else if (jukeboxActive()) {
+    jukebox.shuffle = true;
+    if (reshuffleUpcoming) {
+      const cur = jukebox.items[jukebox.index];
+      const rest = jukebox.items.filter((_, i) => i !== jukebox.index);
+      shuffleInPlace(rest);
+      jukebox.items = cur ? [cur, ...rest] : rest;
+      jukebox.index = 0;
+      shufflePlayedIds.clear();
+      if (cur && cur.videoId) shufflePlayedIds.add(String(cur.videoId));
+    }
+  } else if (reshuffleUpcoming && queue.length > 1 && queueIndex >= 0) {
+    // Physically shuffle items after the current track so the list UI matches
+    const head = queue.slice(0, queueIndex + 1);
+    const rest = queue.slice(queueIndex + 1);
+    shuffleInPlace(rest);
+    queue = head.concat(rest);
+    shufflePlayedIds.clear();
+    if (queue[queueIndex] && queue[queueIndex].videoId) {
+      shufflePlayedIds.add(String(queue[queueIndex].videoId));
+    }
+  }
+  saveSettings();
+  saveState();
+  notifyCtrl('queue-update', {
+    queue,
+    currentIndex: queueIndex,
+    shuffleEnabled: queueShuffle,
+    jukebox: jukeboxSummary(),
+  });
+  notifyPlayerQueue();
+  return {
+    ok: true,
+    shuffleEnabled: queueShuffle,
+    queue,
+    currentIndex: queueIndex,
+    jukebox: jukeboxSummary(),
+  };
+}
+
+// Send a SLIM upcoming window to the player (marquee). Never ship 600+ full rows.
 function notifyPlayerQueue() {
+  let slim = queue;
+  let idx = queueIndex;
+  if (jukeboxActive()) {
+    // Synthesize a short upcoming list from the jukebox deck for the marquee
+    const items = jukebox.items;
+    const cur = jukebox.index;
+    const upcoming = [];
+    for (let step = 1; step <= 12 && step < items.length; step++) {
+      const i = (cur + step) % items.length;
+      upcoming.push({
+        videoId: items[i].videoId,
+        title: items[i].title,
+        requester: DEFAULT_DJ_NAME,
+      });
+    }
+    slim = [
+      {
+        videoId: items[cur].videoId,
+        title: items[cur].title,
+        requester: DEFAULT_DJ_NAME,
+      },
+      ...upcoming,
+    ];
+    idx = 0;
+  } else if (queue.length > 40) {
+    const start = Math.max(0, queueIndex - 2);
+    const end = Math.min(queue.length, start + 25);
+    slim = queue.slice(start, end).map((item) => ({
+      videoId: item.videoId,
+      title: item.title,
+      requester: item.requester || item.singer || '',
+    }));
+    idx = Math.max(0, queueIndex - start);
+  }
   sendToPlayers('player-event', {
-    type: 'queue-update', queue: queue, currentIndex: queueIndex,
+    type: 'queue-update',
+    queue: slim,
+    currentIndex: idx,
+    queueTotal: jukeboxActive() ? jukebox.items.length : queue.length,
+    jukebox: jukeboxSummary(),
   });
 }
 
@@ -2770,53 +3030,169 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   });
 
   ipcMain.handle('queue-get', () => {
-    var taggedQueue = queue.map(function(item) {
-      var karaoke = false;
-      var isCustom = false;
+    // Load tags once — never N× disk hits for lyric provenance on a 600-track queue.
+    let tags = {};
+    try { tags = (library && library.getTags && library.getTags()) || {}; } catch (_) {}
+    const total = queue.length;
+    const enrichLo = total > 50 && queueIndex >= 0 ? Math.max(0, queueIndex - 12) : 0;
+    const enrichHi = total > 50 && queueIndex >= 0 ? Math.min(total, queueIndex + 28) : total;
+
+    const taggedQueue = queue.map(function(item, i) {
+      var vid = item.videoId;
+      var lookupId = String(vid || '').replace(/-karaoke$/, '');
+      var karaoke = tags[lookupId]?.tag === 'karaoke' || tags[lookupId + '-karaoke']?.tag === 'karaoke';
+      var isCustom = tags[lookupId]?.source === 'karaoke-maker' || tags[lookupId + '-karaoke']?.source === 'karaoke-maker';
       var lyricSource = '';
       var lyricLabel = '';
       var hasLyrics = false;
-      var vid = item.videoId;
-      var lookupId = String(vid || '').replace(/-karaoke$/, '');
-      try {
-        var tags = library.getTags();
-        karaoke = tags[lookupId]?.tag === 'karaoke' || tags[lookupId + '-karaoke']?.tag === 'karaoke';
-        isCustom = tags[lookupId]?.source === 'karaoke-maker' || tags[lookupId + '-karaoke']?.source === 'karaoke-maker';
-      } catch(e) { /* ignore */ }
-      try {
-        if (library && typeof library.getLyricProvenance === 'function') {
-          var prov = library.getLyricProvenance(vid);
-          if (!prov || !prov.hasLyrics) prov = library.getLyricProvenance(lookupId + '-karaoke');
-          if (!prov || !prov.hasLyrics) prov = library.getLyricProvenance(lookupId);
-          if (prov) {
-            hasLyrics = !!prov.hasLyrics;
-            lyricSource = prov.source || '';
-            lyricLabel = prov.label || '';
+      // Only enrich the visible window — lyric provenance is expensive on USB.
+      if (i >= enrichLo && i < enrichHi) {
+        try {
+          if (library && typeof library.getLyricProvenance === 'function') {
+            var prov = library.getLyricProvenance(vid);
+            if (!prov || !prov.hasLyrics) prov = library.getLyricProvenance(lookupId + '-karaoke');
+            if (!prov || !prov.hasLyrics) prov = library.getLyricProvenance(lookupId);
+            if (prov) {
+              hasLyrics = !!prov.hasLyrics;
+              lyricSource = prov.source || '';
+              lyricLabel = prov.label || '';
+            }
           }
-        }
-      } catch(e) { /* ignore */ }
+        } catch (e) { /* ignore */ }
+      }
       return Object.assign({}, item, {
-        karaoke: karaoke,
-        isCustom: isCustom,
+        karaoke: !!karaoke,
+        isCustom: !!isCustom,
         hasLyrics: hasLyrics,
         lyricSource: lyricSource,
         lyricLabel: lyricLabel,
       });
     });
-    return { ok: true, queue: taggedQueue, currentIndex: queueIndex };
+    return {
+      ok: true,
+      queue: taggedQueue,
+      currentIndex: queueIndex,
+      shuffleEnabled: !!queueShuffle,
+      jukebox: jukeboxSummary(),
+    };
   });
 
   ipcMain.handle('queue-add', (_e, { videoId, title, requester }) => {
+    // Manual adds join the interactive queue (and pause jukebox ownership of the queue slot)
+    if (jukeboxActive() && queue.length === 1 && queue[0] && queue[0].fromJukebox) {
+      // Keep jukebox running in background; append request after current
+    }
     const vid = resolveVid(videoId);
     const cleanTitle = bestTitleFor(vid, title);
     const who = normalizeQueueSinger(requester);
     queue.push({ videoId: vid, title: cleanTitle, singer: who, requester: who });
     if (queueIndex < 0) { queueIndex = queue.length - 1; sendPlay(vid, cleanTitle, who); }
     saveState();
-    notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+    notifyCtrl('queue-update', { queue, currentIndex: queueIndex, shuffleEnabled: !!queueShuffle, jukebox: jukeboxSummary() });
     notifyPlayerQueue();
     return { ok: true };
   });
+
+  /** Batch-append music videos (or other dumps). Large lists stay in the real queue
+   *  as slim rows; UI/player only render a window so memory stays stable. */
+  ipcMain.handle('queue-add-many', (_e, { items, requester, playIfIdle, shuffle, asJukebox } = {}) => {
+    const list = Array.isArray(items) ? items.slice() : [];
+    // asJukebox only when explicitly requested — Queue All uses the full queue.
+    if (asJukebox === true && list.length >= 40) {
+      return startJukebox(list, { shuffle: shuffle !== false, play: playIfIdle !== false, requester });
+    }
+
+    if (shuffle && list.length > 1) shuffleInPlace(list);
+    stopJukebox();
+    const who = normalizeQueueSinger(requester);
+    const existing = new Set(queue.map((q) => String(q.videoId || '')));
+    let added = 0;
+    let skipped = 0;
+    const wasIdle = queueIndex < 0 || queue.length === 0;
+    let firstAdded = null;
+    const startLen = queue.length;
+    // Resolve playability with a fast path cache — don't thrash USB for every id
+    for (const raw of list) {
+      if (!raw) continue;
+      const vid = resolveVid(raw.videoId || raw.id || '');
+      if (!vid) { skipped++; continue; }
+      if (existing.has(vid)) { skipped++; continue; }
+      try {
+        const p = library && library.getVideoPath ? library.getVideoPath(vid) : null;
+        if (!p || !fs.existsSync(p) || fs.statSync(p).size < 50_000) { skipped++; continue; }
+      } catch (_) { skipped++; continue; }
+      const cleanTitle = (raw.title && String(raw.title).trim()) || bestTitleFor(vid, '');
+      const item = { videoId: vid, title: cleanTitle, singer: who, requester: who };
+      queue.push(item);
+      existing.add(vid);
+      if (!firstAdded) firstAdded = item;
+      added++;
+    }
+    if (shuffle) {
+      queueShuffle = true;
+      shufflePlayedIds.clear();
+      saveSettings();
+    }
+    if (added > 0) {
+      if (wasIdle && playIfIdle !== false && firstAdded) {
+        if (shuffle && added > 1) {
+          const pick = startLen + Math.floor(Math.random() * added);
+          queueIndex = pick;
+          firstAdded = queue[pick];
+        } else {
+          queueIndex = startLen;
+        }
+        if (firstAdded && firstAdded.videoId) shufflePlayedIds.add(String(firstAdded.videoId));
+        sendPlay(firstAdded.videoId, firstAdded.title, firstAdded.singer);
+      }
+      saveState();
+      notifyCtrl('queue-update', {
+        queue,
+        currentIndex: queueIndex,
+        shuffleEnabled: !!queueShuffle,
+        jukebox: jukeboxSummary(),
+      });
+      notifyPlayerQueue();
+    }
+    console.log('[karol] queue-add-many: added', added, 'skipped', skipped, 'shuffle', !!shuffle, 'queue now', queue.length);
+    return {
+      ok: true,
+      added,
+      skipped,
+      queueLength: queue.length,
+      currentIndex: queueIndex,
+      shuffleEnabled: !!queueShuffle,
+      jukebox: jukeboxSummary(),
+    };
+  });
+
+  ipcMain.handle('jukebox-start', (_e, { items, shuffle, requester } = {}) => {
+    return startJukebox(items || [], {
+      shuffle: shuffle !== false,
+      play: true,
+      requester,
+    });
+  });
+
+  ipcMain.handle('jukebox-stop', () => {
+    stopJukebox();
+    notifyCtrl('queue-update', {
+      queue,
+      currentIndex: queueIndex,
+      shuffleEnabled: !!queueShuffle,
+      jukebox: null,
+    });
+    return { ok: true };
+  });
+
+  ipcMain.handle('queue-shuffle-set', (_e, { enabled, reshuffleUpcoming } = {}) => {
+    return setQueueShuffle(!!enabled, { reshuffleUpcoming: reshuffleUpcoming !== false });
+  });
+
+  ipcMain.handle('queue-shuffle-get', () => ({ ok: true, shuffleEnabled: !!queueShuffle }));
+
+  // Phone DJ API stubs that previously no-oped
+  ipcMain.handle('queue-shuffle-upcoming', () => setQueueShuffle(true, { reshuffleUpcoming: true }));
 
   ipcMain.handle('queue-play-now', (_e, { videoId, title, requester }) => {
     const vid = resolveVid(videoId);
@@ -2855,11 +3231,13 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('queue-clear', () => {
     for (const item of queue) updateMysqlRequestStatus(item, 'ended', 'queue cleared');
+    stopJukebox();
     queue = []; queueIndex = -1;
+    shufflePlayedIds.clear();
     playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
     saveState();
     notifyPlayer({ type: 'stop' });
-    notifyCtrl('queue-update', { queue: [], currentIndex: -1 });
+    notifyCtrl('queue-update', { queue: [], currentIndex: -1, shuffleEnabled: !!queueShuffle, jukebox: null });
     notifyPlayerQueue();
     return { ok: true };
   });

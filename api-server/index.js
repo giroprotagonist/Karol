@@ -210,7 +210,7 @@ app.use(async (ctx, next) => {
   }
 
   const method = ctx.method.toUpperCase();
-  const body = (method === 'POST' || method === 'PUT' || method === 'DELETE') ? (ctx.request.body || {}) : {};
+  const body = (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') ? (ctx.request.body || {}) : {};
   const p = ctx.path;
 
   try {
@@ -280,9 +280,17 @@ app.use(async (ctx, next) => {
       ctx.body = await askElectron('queue-skip-to', body);
       return;
     }
-    if (p === '/api/youtube-dj/queue/sort' || p === '/api/youtube-dj/queue/shuffle-upcoming') {
-      // Not implemented in Electron queue yet — return current state
+    if (p === '/api/youtube-dj/queue/shuffle-upcoming') {
+      ctx.body = await askElectron('queue-shuffle-upcoming', body);
+      return;
+    }
+    if (p === '/api/youtube-dj/queue/sort') {
       ctx.body = await askElectron('queue-get');
+      return;
+    }
+    if (p === '/api/youtube-dj/shuffle' || p === '/api/youtube-karaoke/shuffle') {
+      const enabled = body.enabled != null ? !!body.enabled : true;
+      ctx.body = await askElectron('queue-shuffle-set', { enabled, reshuffleUpcoming: true });
       return;
     }
 

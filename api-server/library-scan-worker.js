@@ -32,6 +32,7 @@ try {
           artist: val.artist || '',
           source: val.source || '',
           title: val.title || '',
+          upload_date: val.upload_date || '',
         };
       }
     }
@@ -124,10 +125,10 @@ for (const videoId of Object.keys(fileMap)) {
     size: f.size,
     subtitles: f.subs,
     thumbnail: (meta?.thumbnail || '').replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault'),
-    upload_date: meta?.upload_date || '',
+    upload_date: tagEntry.upload_date || meta?.upload_date || '',
     cached: true,
     tag: isKaraokeVariant ? 'karaoke' : (tagEntry.tag || 'music'),
-    year: tagEntry.year || '',
+    year: tagEntry.year || String(tagEntry.upload_date || meta?.upload_date || '').slice(0, 4),
     artist: tagEntry.artist || '',
     // '<id>-karaoke' files are only produced by the local karaoke pipeline;
     // stamp provenance even when tags.json lost it so the Custom filter and
