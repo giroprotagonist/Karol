@@ -1,12 +1,19 @@
 // Karol Electron — Stable Architecture
 // Absolute paths for modules, preload, and HTML to avoid resolution issues.
 
-const { app, BrowserWindow, ipcMain, screen, protocol, session, powerSaveBlocker, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, protocol, session, powerSaveBlocker, powerMonitor, nativeImage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, fork } = require('child_process');
 const os = require('os');
 let apiServerProcess = null;
+
+const APP_ICON_PATH = [
+  path.join(__dirname, 'icon.png'),
+  path.join(__dirname, 'build', 'icon.icns'),
+  path.join(__dirname, 'build', 'icon-1024.png'),
+].find((p) => fs.existsSync(p));
+const APP_ICON = APP_ICON_PATH ? nativeImage.createFromPath(APP_ICON_PATH) : null;
 
 // Custom media scheme must be privileged BEFORE ready so <video> can stream
 // (HTTP range). Without stream:true, large local MP4s often stall at t=0.
@@ -729,10 +736,31 @@ function loadState() {
 async function runHealthCheck() {
   const results = {};
   try {
-    // External drive
-    const drivePath = process.env.KAROL_EXTERNAL_DRIVE || '/Volumes/maxone';
-    results.drive = fs.existsSync(drivePath);
-  } catch { results.drive = false; }
+    // External drive — must be a real mount, not a ghost /Volumes folder
+    const drivePath = (library && library.EXTERNAL_DRIVE)
+      || process.env.KAROL_EXTERNAL_DRIVE
+      || '/Volumes/maxone';
+    results.drivePath = drivePath;
+    if (library && typeof library.probeDrive === 'function') {
+      const probe = library.probeDrive();
+      results.drive = !!probe.mounted;
+      results.driveReadable = !!probe.readable;
+      results.driveGhost = !!probe.ghost;
+      results.driveError = probe.error || '';
+    } else {
+      results.drive = fs.existsSync(drivePath);
+      results.driveReadable = false;
+      if (results.drive) {
+        try {
+          fs.accessSync(path.join(drivePath, 'Deskreen'), fs.constants.R_OK);
+          fs.readdirSync(path.join(drivePath, 'Deskreen'));
+          results.driveReadable = true;
+        } catch {
+          results.driveReadable = false;
+        }
+      }
+    }
+  } catch { results.drive = false; results.driveReadable = false; }
   try {
     // yt-dlp
     results.ytdlp = fs.existsSync('/opt/homebrew/bin/yt-dlp');
@@ -743,7 +771,7 @@ async function runHealthCheck() {
   try {
     results.python3 = fs.existsSync('/opt/homebrew/bin/python3');
   } catch { results.python3 = false; }
-  // Library count
+  // Library count + live scan/disk status
   try {
     const cachePath = '/tmp/karol-library-cache.json';
     if (fs.existsSync(cachePath)) {
@@ -751,14 +779,26 @@ async function runHealthCheck() {
       results.libraryCount = cache.count || (cache.videos ? cache.videos.length : 0) || 0;
     } else { results.libraryCount = 0; }
   } catch { results.libraryCount = 0; }
+  try {
+    if (library && typeof library.refreshDiskStats === 'function') {
+      results.libraryScan = library.refreshDiskStats({ recount: false });
+      if (typeof library.scheduleDiskCount === 'function') library.scheduleDiskCount(false);
+    } else if (library && typeof library.getScanStatus === 'function') {
+      results.libraryScan = library.getScanStatus();
+    }
+    if (results.libraryScan && results.libraryScan.catalogCount != null) {
+      results.libraryCount = results.libraryScan.catalogCount || results.libraryCount;
+    }
+    if (results.libraryScan) {
+      results.diskMediaCount = results.libraryScan.diskMediaCount || 0;
+      results.diskByFolder = results.libraryScan.diskByFolder || {};
+      results.scanning = results.libraryScan.status === 'scanning';
+    }
+  } catch (e) {
+    results.libraryScan = { status: 'error', error: e.message };
+  }
   // API server health
   results.apiServer = (apiServerProcess && apiServerProcess.connected) ? true : false;
-
-  // Exit any quick-start scan workers from previous session (non-blocking)
-  try {
-    const { execFile } = require('child_process');
-    execFile('/usr/bin/pkill', ['-f', 'library-scan-worker'], { timeout: 3000 }, () => {});
-  } catch {}
 
   // Clean stale temp dirs (>24h old)
   try {
@@ -788,9 +828,141 @@ let playWin = null;
 let monitorWin = null;
 let monitorModeEnabled = false;
 let karaokePowerBlockerId = null;
+let usbKeepAwakeBlockerId = null;
+let usbKeepAwakeTimer = null;
+let driveWatchTimer = null;
+let lastDriveMounted = null;
 
 let pendingPlay = null;
 let isQuitting = false;
+
+function getExternalDrivePath() {
+  return (library && library.EXTERNAL_DRIVE)
+    || process.env.KAROL_EXTERNAL_DRIVE
+    || '/Volumes/maxone';
+}
+
+function isExternalDriveMounted() {
+  if (library && typeof library.isDriveMounted === 'function') {
+    return library.isDriveMounted();
+  }
+  try {
+    const drivePath = getExternalDrivePath();
+    if (!fs.existsSync(drivePath)) return false;
+    return fs.statSync(drivePath).dev !== fs.statSync('/Volumes').dev;
+  } catch {
+    return false;
+  }
+}
+
+/** Keep the Mac / USB bus from idling out the hub + external drive. */
+function startUsbKeepAwake() {
+  if (usbKeepAwakeBlockerId === null
+      || !powerSaveBlocker.isStarted(usbKeepAwakeBlockerId)) {
+    usbKeepAwakeBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    console.log('[karol] USB/system keep-awake started', usbKeepAwakeBlockerId);
+  }
+  if (usbKeepAwakeTimer) return;
+  usbKeepAwakeTimer = setInterval(() => {
+    try {
+      const drivePath = getExternalDrivePath();
+      if (!isExternalDriveMounted()) return;
+      // Light I/O so the hub/drive stay asserted as in-use
+      fs.statSync(drivePath);
+      const tagsPath = path.join(drivePath, 'Deskreen', 'tags.json');
+      if (fs.existsSync(tagsPath)) {
+        const fd = fs.openSync(tagsPath, 'r');
+        const buf = Buffer.alloc(64);
+        fs.readSync(fd, buf, 0, 64, 0);
+        fs.closeSync(fd);
+      } else {
+        fs.readdirSync(drivePath);
+      }
+    } catch (e) {
+      // Drive may have been unplugged mid-interval
+    }
+  }, 25_000);
+  if (typeof usbKeepAwakeTimer.unref === 'function') usbKeepAwakeTimer.unref();
+}
+
+function stopUsbKeepAwake() {
+  if (usbKeepAwakeTimer) {
+    clearInterval(usbKeepAwakeTimer);
+    usbKeepAwakeTimer = null;
+  }
+  if (usbKeepAwakeBlockerId !== null && powerSaveBlocker.isStarted(usbKeepAwakeBlockerId)) {
+    powerSaveBlocker.stop(usbKeepAwakeBlockerId);
+    console.log('[karol] USB/system keep-awake stopped');
+  }
+  usbKeepAwakeBlockerId = null;
+}
+
+async function onExternalDriveAppeared() {
+  console.log('[karol] External drive mounted:', getExternalDrivePath());
+  try {
+    if (library && typeof library.ensureLibraryDirs === 'function') {
+      library.ensureLibraryDirs();
+    }
+    if (library && typeof library.invalidateListCache === 'function') {
+      library.invalidateListCache();
+    }
+    try { fs.unlinkSync('/tmp/karol-library-cache.json'); } catch {}
+    if (library && typeof library.init === 'function') {
+      await library.init(true);
+    }
+    notifyCtrl('drive-status', { mounted: true, path: getExternalDrivePath() });
+    const health = await runHealthCheck();
+    notifyCtrl('health-report', health);
+  } catch (e) {
+    console.error('[karol] Drive remount rescan failed:', e.message);
+  }
+}
+
+function onExternalDriveGone() {
+  console.log('[karol] External drive missing:', getExternalDrivePath());
+  if (library && typeof library.invalidateListCache === 'function') {
+    library.invalidateListCache();
+  }
+  notifyCtrl('drive-status', { mounted: false, path: getExternalDrivePath() });
+}
+
+function maybePromptRemovableVolumeAccess() {
+  try {
+    const probe = (library && typeof library.probeDrive === 'function')
+      ? library.probeDrive()
+      : { mounted: isExternalDriveMounted(), readable: false, ghost: false, error: '' };
+    if (probe.ghost) {
+      console.warn('[karol] Ghost folder at', getExternalDrivePath(), '— remove it and remount the drive');
+      return;
+    }
+    if (probe.mounted && !probe.readable) {
+      console.warn('[karol] Drive mounted but not readable — grant Removable Volumes access');
+      shell.openExternal(
+        'x-apple.systempreferences:com.apple.preference.security?Privacy_RemovableVolumes'
+      ).catch(() => {});
+    }
+  } catch {}
+}
+
+function startExternalDriveWatch() {
+  if (driveWatchTimer) return;
+  lastDriveMounted = isExternalDriveMounted();
+  console.log('[karol] External drive watch:', lastDriveMounted ? 'mounted' : 'NOT mounted', getExternalDrivePath());
+  if (lastDriveMounted) {
+    try {
+      if (library && typeof library.ensureLibraryDirs === 'function') library.ensureLibraryDirs();
+    } catch {}
+  }
+  maybePromptRemovableVolumeAccess();
+  driveWatchTimer = setInterval(() => {
+    const mounted = isExternalDriveMounted();
+    if (mounted === lastDriveMounted) return;
+    lastDriveMounted = mounted;
+    if (mounted) onExternalDriveAppeared();
+    else onExternalDriveGone();
+  }, 5_000);
+  if (typeof driveWatchTimer.unref === 'function') driveWatchTimer.unref();
+}
 
 function isKaraokeActive() {
   return !!(playWin && !playWin.isDestroyed());
@@ -1077,6 +1249,7 @@ function createMonitor() {
   const w = Math.min(960, Math.max(640, Math.floor(b.width * 0.55)));
   const h = Math.min(540, Math.max(360, Math.floor(b.height * 0.55)));
   monitorWin = new BrowserWindow({
+    ...windowIconOpts(),
     x: b.x + Math.floor((b.width - w) / 2),
     y: b.y + Math.floor((b.height - h) / 2),
     width: w,
@@ -1155,6 +1328,7 @@ function createPlayer() {
   const ext = getExternalDisplay();
   const bounds = ext ? ext.bounds : { x: 0, y: 0, width: 1280, height: 720 };
   playWin = new BrowserWindow({
+    ...windowIconOpts(),
     x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
     title: 'Karol Player', backgroundColor: '#000000', show: true,
@@ -1614,9 +1788,16 @@ function notifyPlayer(msg) {
   sendToPlayers('player-event', msg);
 }
 
+function windowIconOpts() {
+  return APP_ICON && !APP_ICON.isEmpty() ? { icon: APP_ICON } : {};
+}
+
 // ── App ──
 app.whenReady().then(async () => {
   console.log('[karol] Karol Electron');
+  if (process.platform === 'darwin' && app.dock && APP_ICON && !APP_ICON.isEmpty()) {
+    app.dock.setIcon(APP_ICON);
+  }
   console.log('[karol] Displays:', screen.getAllDisplays().map(d => ({
     id: d.id, label: d.label, primary: d.id === screen.getPrimaryDisplay().id, bounds: d.bounds,
   })));
@@ -1648,10 +1829,16 @@ app.whenReady().then(async () => {
     updateKaraokePowerPolicy('on-battery');
   });
 
-  // Load library cache
+  // Load library cache — stream scan status to the controller UI
+  if (library && typeof library.setScanListener === 'function') {
+    library.setScanListener((status) => {
+      notifyCtrl('library-scan-progress', status);
+    });
+  }
   if (library && typeof library.init === 'function') {
-    await library.init();
-    console.log('[karol] Library ready');
+    const scanStatus = await library.init();
+    console.log('[karol] Library ready:', JSON.stringify(scanStatus || {}));
+    if (scanStatus) notifyCtrl('library-scan-progress', scanStatus);
   }
 
   // Restore persistent state
@@ -1668,6 +1855,10 @@ app.whenReady().then(async () => {
   setTimeout(() => {
     reclaimKaraokeJobs().catch((e) => console.error('[karol] Job reclaim failed:', e.message));
   }, 8000);
+
+  // Keep USB hub + external library drive awake for the whole session
+  startUsbKeepAwake();
+  startExternalDriveWatch();
 
   // Run health check
   const health = await runHealthCheck();
@@ -1994,7 +2185,35 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     notifyCtrl('player-status', s);
   });
 
-  ipcMain.handle('library-list', (_e, opts) => library ? library.list(opts || {}) : { ok: false });
+  ipcMain.handle('library-list', (_e, opts) => {
+    if (!library) {
+      // Last-resort: serve the on-disk cache even if library.js failed to load
+      try {
+        const cachePath = '/tmp/karol-library-cache.json';
+        if (fs.existsSync(cachePath)) {
+          const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+          if (cache && cache.ok && cache.count > 0) {
+            return {
+              ok: true,
+              count: cache.count,
+              videos: cache.videos || [],
+              archiveMtime: cache.archiveMtime || 0,
+              fallback: true,
+            };
+          }
+        }
+      } catch (e) {
+        return { ok: false, error: 'library unavailable: ' + e.message };
+      }
+      return { ok: false, error: 'library module failed to load' };
+    }
+    try {
+      return library.list(opts || {});
+    } catch (e) {
+      console.error('[karol] library.list failed:', e.message);
+      return { ok: false, error: e.message };
+    }
+  });
   ipcMain.handle('library-metadata', (_e, vid) => library ? library.getMetadata(vid) : null);
   ipcMain.handle('library-tags', () => library ? library.getTags() : {});
   // Resolve display titles for remote-only library entries and persist them
@@ -2363,11 +2582,35 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   // ── Library rescan ──
   ipcMain.handle('library-rescan', async () => {
     if (library && typeof library.init === 'function') {
+      notifyCtrl('library-scan-progress', {
+        status: 'scanning',
+        message: 'Rescan requested — scanning maxone…',
+        driveMounted: isExternalDriveMounted(),
+        drivePath: getExternalDrivePath(),
+        catalogCount: 0,
+        diskMediaCount: 0,
+      });
       // Delete the disk cache so init() rebuilds from scratch
       try { require('fs').unlinkSync('/tmp/karol-library-cache.json'); } catch(e) {}
-      await library.init(true);
+      const status = await library.init(true);
+      const health = await runHealthCheck();
+      notifyCtrl('health-report', health);
+      return { ok: true, scan: status || (library.getScanStatus && library.getScanStatus()) };
     }
-    return { ok: true };
+    return { ok: false, error: 'Library module unavailable' };
+  });
+
+  ipcMain.handle('library-scan-status', async () => {
+    // Non-blocking: never walk the whole drive on the UI status poll
+    if (library && typeof library.refreshDiskStats === 'function') {
+      const scan = library.refreshDiskStats({ recount: false });
+      if (typeof library.scheduleDiskCount === 'function') library.scheduleDiskCount(false);
+      return { ok: true, scan };
+    }
+    if (library && typeof library.getScanStatus === 'function') {
+      return { ok: true, scan: library.getScanStatus() };
+    }
+    return { ok: false, error: 'unavailable' };
   });
 
   // ── Lyric reprocessing ──
@@ -2698,6 +2941,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   // ── Create controller window ──
   const primary = screen.getPrimaryDisplay();
   ctrlWin = new BrowserWindow({
+    ...windowIconOpts(),
     width: 1200, height: 900, x: primary.workArea.x, y: primary.workArea.y,
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
     title: 'Karol DJ Controller', backgroundColor: '#0a0a14',
@@ -2719,6 +2963,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
+  if (driveWatchTimer) { clearInterval(driveWatchTimer); driveWatchTimer = null; }
+  stopUsbKeepAwake();
   if (karaokePowerBlockerId !== null && powerSaveBlocker.isStarted(karaokePowerBlockerId)) {
     powerSaveBlocker.stop(karaokePowerBlockerId);
     karaokePowerBlockerId = null;
@@ -2735,6 +2982,7 @@ app.on('activate', () => {
   if (!ctrlWin || ctrlWin.isDestroyed()) {
     const primary = screen.getPrimaryDisplay();
     ctrlWin = new BrowserWindow({
+      ...windowIconOpts(),
       width: 1200, height: 900, x: primary.workArea.x, y: primary.workArea.y,
       webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
       title: 'Karol DJ Controller', backgroundColor: '#0a0a14',

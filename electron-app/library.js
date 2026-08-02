@@ -5,8 +5,44 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
-const mysql = require('../api-server/karol-mysql');
-const { createMediaResolver } = require('../media-resolver');
+
+// Resolve modules in both dev (repo checkout) and packaged Electron layouts.
+function requireFirst(candidates, label) {
+  let lastErr = null;
+  for (const candidate of candidates) {
+    try {
+      return require(candidate);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  console.error('[library] Failed to load', label, lastErr && lastErr.message);
+  return null;
+}
+
+const mysql = requireFirst([
+  path.join(__dirname, '..', 'api-server', 'karol-mysql'),
+  path.join(process.resourcesPath || '', 'api-server', 'karol-mysql'),
+  '../api-server/karol-mysql',
+], 'karol-mysql') || {
+  tagSet: async () => {},
+  catalogGetPublic: async () => null,
+  catalogUpsertBatch: async () => {},
+  catalogGetMedia: async () => null,
+};
+
+const mediaResolverMod = requireFirst([
+  path.join(__dirname, 'media-resolver'),
+  path.join(__dirname, '..', 'media-resolver'),
+  path.join(process.resourcesPath || '', 'media-resolver'),
+  '../media-resolver',
+], 'media-resolver');
+const createMediaResolver = mediaResolverMod && mediaResolverMod.createMediaResolver
+  ? mediaResolverMod.createMediaResolver
+  : () => ({
+    findExisting: () => null,
+    resolve: async () => null,
+  });
 
 // ── Directories (configurable via env, same as api-server defaults) ──
 const EXTERNAL_DRIVE = process.env.KAROL_EXTERNAL_DRIVE || '/Volumes/maxone';
@@ -23,10 +59,67 @@ const SCRIPTS_DIR = path.resolve(__dirname, '..', 'scripts');
 const LIBRARY_SEARCH_DIRS = [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR];
 const VIDEO_EXTS = ['.mp4', '.mkv', '.mp3', '.webm'];
 
-// Ensure directories exist
-for (const d of [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR]) {
-  try { fs.mkdirSync(d, { recursive: true }); } catch {}
+/**
+ * Probe external drive. Distinguishes:
+ *  - unplugged
+ *  - ghost /Volumes/maxone folder (blocks remount)
+ *  - mounted but TCC/permission blocked (Removable Volumes)
+ *  - mounted and readable
+ */
+function probeDrive() {
+  const out = { mounted: false, readable: false, ghost: false, error: '', errorCode: '' };
+  try {
+    if (!fs.existsSync(EXTERNAL_DRIVE)) {
+      out.error = 'not_mounted';
+      return out;
+    }
+    const driveStat = fs.statSync(EXTERNAL_DRIVE);
+    if (!driveStat.isDirectory()) {
+      out.error = 'not_directory';
+      return out;
+    }
+    const volumesStat = fs.statSync('/Volumes');
+    // Ghost /Volumes/maxone (created while unplugged) shares /Volumes' device id.
+    if (driveStat.dev === volumesStat.dev) {
+      out.ghost = true;
+      out.error = 'ghost_folder';
+      return out;
+    }
+    out.mounted = true;
+    try {
+      fs.accessSync(LIBRARY_DIR, fs.constants.R_OK);
+      // Cheap readability probe — do NOT readdir karaoke/ (20k+ entries) here.
+      fs.readdirSync(LIBRARY_DIR, { withFileTypes: false }).slice(0, 1);
+      out.readable = true;
+    } catch (e) {
+      out.errorCode = e.code || '';
+      out.error = (e.code === 'EPERM' || e.code === 'EACCES')
+        ? 'permission'
+        : (e.message || 'unreadable');
+    }
+  } catch (e) {
+    out.errorCode = e.code || '';
+    out.error = e.message || 'probe_failed';
+  }
+  return out;
 }
+
+/** True only when EXTERNAL_DRIVE is a real mount, not a ghost folder under /Volumes. */
+function isDriveMounted() {
+  return probeDrive().mounted;
+}
+
+function ensureLibraryDirs() {
+  const probe = probeDrive();
+  if (!probe.mounted || !probe.readable) return false;
+  for (const d of [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR]) {
+    try { fs.mkdirSync(d, { recursive: true }); } catch {}
+  }
+  return true;
+}
+
+// Ensure directories exist only when the external volume is actually mounted.
+ensureLibraryDirs();
 
 // ── Internal state ──
 let __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
@@ -34,6 +127,164 @@ let __libraryScanInFlight = null;
 const LIBRARY_LIST_CACHE_MS = 60_000; // rescan every 60 seconds
 let _rebuildTagsInFlight = null;
 let _tagsSyncScheduled = false;
+let _scanListener = null;
+let __scanState = {
+  status: 'idle', // idle | scanning | ready | error
+  driveMounted: false,
+  drivePath: EXTERNAL_DRIVE,
+  libraryDir: LIBRARY_DIR,
+  catalogCount: 0,
+  diskMediaCount: 0,
+  diskByFolder: {},
+  startedAt: 0,
+  finishedAt: 0,
+  error: '',
+  message: '',
+};
+
+function setScanListener(fn) {
+  _scanListener = typeof fn === 'function' ? fn : null;
+}
+
+function emitScan( partial ) {
+  __scanState = { ...__scanState, ...partial, drivePath: EXTERNAL_DRIVE, libraryDir: LIBRARY_DIR };
+  if (_scanListener) {
+    try { _scanListener({ ...__scanState }); } catch (e) { console.error('[library] scan listener error:', e.message); }
+  }
+}
+
+function getScanStatus() {
+  return { ...__scanState };
+}
+
+let __diskCountCache = { ts: 0, diskMediaCount: 0, diskByFolder: {} };
+let __diskCountInFlight = null;
+const DISK_COUNT_TTL_MS = 120_000;
+
+/** Fast on-disk media file counts (no metadata parse). Never block startup on this. */
+function countDiskMedia(force) {
+  if (!force && __diskCountCache.ts && (Date.now() - __diskCountCache.ts) < DISK_COUNT_TTL_MS) {
+    return { diskMediaCount: __diskCountCache.diskMediaCount, diskByFolder: { ...__diskCountCache.diskByFolder } };
+  }
+  const folders = {
+    root: LIBRARY_DIR,
+    karaoke: LIBRARY_KARAOKE_DIR,
+    songs: LIBRARY_SONGS_DIR,
+    downloads: DOWNLOADS_DIR,
+  };
+  const diskByFolder = {};
+  let diskMediaCount = 0;
+  const mediaExt = /\.(mp4|mkv|mp3|webm)$/i;
+  for (const [key, dir] of Object.entries(folders)) {
+    let n = 0;
+    try {
+      if (!fs.existsSync(dir)) { diskByFolder[key] = 0; continue; }
+      for (const f of fs.readdirSync(dir)) {
+        if (mediaExt.test(f) && !f.startsWith('._')) n++;
+      }
+    } catch { n = 0; }
+    diskByFolder[key] = n;
+    diskMediaCount += n;
+  }
+  __diskCountCache = { ts: Date.now(), diskMediaCount, diskByFolder };
+  return { diskMediaCount, diskByFolder };
+}
+
+/** Background disk count so the UI/main process stays responsive. */
+function scheduleDiskCount(force) {
+  if (__diskCountInFlight) return __diskCountInFlight;
+  if (!force && __diskCountCache.ts && (Date.now() - __diskCountCache.ts) < DISK_COUNT_TTL_MS) {
+    return Promise.resolve(__diskCountCache);
+  }
+  __diskCountInFlight = new Promise((resolve) => {
+    setImmediate(() => {
+      try {
+        const probe = probeDrive();
+        if (probe.mounted && probe.readable) countDiskMedia(true);
+      } catch (e) {
+        console.error('[library] disk count failed:', e.message);
+      }
+      __diskCountInFlight = null;
+      // Refresh status with new disk numbers (non-force, so no re-walk)
+      try { refreshDiskStats({ recount: false }); } catch {}
+      resolve(__diskCountCache);
+    });
+  });
+  return __diskCountInFlight;
+}
+
+function catalogCountFromMemoryOrDisk() {
+  if (__libraryListCache.data) {
+    return __libraryListCache.data.count
+      || (__libraryListCache.data.videos && __libraryListCache.data.videos.length)
+      || 0;
+  }
+  // Fall back to on-disk cache file so UI isn't stuck at 0 after restart races
+  tryLoadCacheFromDisk();
+  if (__libraryListCache.data) {
+    return __libraryListCache.data.count
+      || (__libraryListCache.data.videos && __libraryListCache.data.videos.length)
+      || 0;
+  }
+  return 0;
+}
+
+/**
+ * Update scan status for the UI. By default does NOT walk the drive
+ * (that was freezing Karol on launch). Pass { recount: true } after Rescan.
+ */
+function refreshDiskStats(opts = {}) {
+  const recount = !!opts.recount;
+  const probe = probeDrive();
+  const mounted = probe.mounted;
+  const readable = probe.readable;
+  let disk = { diskMediaCount: __diskCountCache.diskMediaCount || 0, diskByFolder: { ...(__diskCountCache.diskByFolder || {}) } };
+  if (mounted && readable && recount) {
+    disk = countDiskMedia(true);
+  } else if (mounted && readable && !__diskCountCache.ts) {
+    // Kick a background count once; don't block this call
+    scheduleDiskCount(false);
+  }
+  const catalogCount = catalogCountFromMemoryOrDisk();
+  let status = 'idle';
+  let message = '';
+  let error = '';
+  if (__libraryScanInFlight) {
+    status = 'scanning';
+    message = 'Scanning maxone library…'
+      + (disk.diskMediaCount ? (' found ' + disk.diskMediaCount.toLocaleString() + ' media files') : '');
+  } else if (!mounted) {
+    status = probe.ghost ? 'error' : 'missing';
+    message = probe.ghost
+      ? 'Ghost folder at /Volumes/maxone — delete it and remount the drive'
+      : 'External drive not mounted';
+    error = probe.error || 'not_mounted';
+  } else if (!readable) {
+    status = 'error';
+    message = 'maxone is mounted but Karol cannot read files — enable Removable Volumes for Karol in System Settings → Privacy';
+    error = 'permission';
+  } else if (catalogCount > 0) {
+    status = 'ready';
+    message = disk.diskMediaCount
+      ? ('Library ready — ' + catalogCount.toLocaleString() + ' videos in catalog, '
+        + disk.diskMediaCount.toLocaleString() + ' media files on disk')
+      : ('Library ready — ' + catalogCount.toLocaleString() + ' videos (counting files on disk…)');
+  } else {
+    status = 'idle';
+    message = 'Drive mounted and readable — waiting for library scan';
+  }
+  emitScan({
+    driveMounted: mounted,
+    driveReadable: readable,
+    catalogCount,
+    diskMediaCount: disk.diskMediaCount,
+    diskByFolder: disk.diskByFolder,
+    status,
+    message,
+    error,
+  });
+  return getScanStatus();
+}
 
 // ── Tag helpers ──
 
@@ -476,30 +727,93 @@ function tryLoadCacheFromDisk() {
 
 function buildLibraryCache() {
   if (__libraryScanInFlight) return __libraryScanInFlight;
+  const probe = probeDrive();
+  emitScan({
+    status: 'scanning',
+    startedAt: Date.now(),
+    finishedAt: 0,
+    error: '',
+    driveMounted: probe.mounted,
+    driveReadable: probe.readable,
+    diskMediaCount: __diskCountCache.diskMediaCount || 0,
+    diskByFolder: __diskCountCache.diskByFolder || {},
+    catalogCount: catalogCountFromMemoryOrDisk(),
+    message: 'Scanning maxone library in background…',
+  });
+  // Disk file counts in parallel — do not block spawning the worker
+  scheduleDiskCount(true);
   __libraryScanInFlight = new Promise((resolve) => {
     const workerCandidates = [
       path.resolve(__dirname, '..', 'api-server', 'library-scan-worker.js'),
       path.resolve(__dirname, '..', '..', 'api-server', 'library-scan-worker.js'),
       path.join('/Users/macdonk/Documents/GitHub/Karol', 'api-server', 'library-scan-worker.js'),
-    ];
+      // Packaged app: worker ships next to api-server under Resources
+      (typeof process !== 'undefined' && process.resourcesPath)
+        ? path.join(process.resourcesPath, 'api-server', 'library-scan-worker.js')
+        : '',
+    ].filter(Boolean);
     const workerPath = workerCandidates.find(p => fs.existsSync(p)) || workerCandidates[0];
-    const worker = execFile(
+    if (!fs.existsSync(workerPath)) {
+      const msg = 'library-scan-worker.js not found';
+      console.error('[library]', msg);
+      __libraryScanInFlight = null;
+      emitScan({ status: 'error', error: msg, finishedAt: Date.now(), message: msg });
+      resolve(null);
+      return;
+    }
+    console.log('[library] Scan worker:', workerPath);
+    execFile(
       '/opt/homebrew/bin/node',
       [workerPath, ARCHIVE_PATH, LIBRARY_DIR, DOWNLOADS_DIR, TAGS_PATH],
-      { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
+      { timeout: 180_000, maxBuffer: 20 * 1024 * 1024 },
       async (err, stdout, stderr) => {
         if (stderr) console.error('[library] Worker stderr:', stderr.trim());
         let rawJson = null;
         try { rawJson = await fs.promises.readFile(CACHE_FILE, 'utf8'); } catch (e) {}
         let result = null;
         try { result = rawJson ? JSON.parse(rawJson) : null; } catch (e) { console.error('[library] Parse error:', e.message); }
-        if (result && result.ok) {
+        // Prefer cached disk counts; refresh in background
+        const diskAfter = {
+          diskMediaCount: __diskCountCache.diskMediaCount || 0,
+          diskByFolder: __diskCountCache.diskByFolder || {},
+        };
+        scheduleDiskCount(false);
+        if (result && result.ok && result.count > 0) {
           __libraryListCache = { ts: Date.now(), data: result, rawJson: rawJson, archiveMtime: result.archiveMtime || 0 };
           console.log('[library] Cache built: ' + result.count + ' videos');
+          __libraryScanInFlight = null;
+          emitScan({
+            status: 'ready',
+            catalogCount: result.count || 0,
+            diskMediaCount: diskAfter.diskMediaCount,
+            diskByFolder: diskAfter.diskByFolder,
+            finishedAt: Date.now(),
+            error: '',
+            driveMounted: probeDrive().mounted,
+            driveReadable: probeDrive().readable,
+            message: 'Scan complete — ' + (result.count || 0).toLocaleString() + ' videos in library',
+          });
         } else {
-          console.error('[library] Worker failed:', err ? err.message : 'no result');
+          // Keep prior good cache if worker failed / empty race
+          tryLoadCacheFromDisk();
+          const failMsg = err ? err.message : 'scan produced no result';
+          console.error('[library] Worker failed:', failMsg);
+          __libraryScanInFlight = null;
+          const catalogCount = catalogCountFromMemoryOrDisk();
+          emitScan({
+            status: catalogCount > 0 ? 'ready' : 'error',
+            catalogCount,
+            diskMediaCount: diskAfter.diskMediaCount,
+            diskByFolder: diskAfter.diskByFolder,
+            finishedAt: Date.now(),
+            error: catalogCount > 0 ? '' : failMsg,
+            driveMounted: probeDrive().mounted,
+            driveReadable: probeDrive().readable,
+            message: catalogCount > 0
+              ? ('Using previous library cache — ' + catalogCount.toLocaleString() + ' videos')
+              : ('Scan failed — ' + failMsg),
+          });
         }
-        __libraryScanInFlight = null;
         resolve(result);
       }
     );
@@ -514,26 +828,47 @@ function init(force) {
     if (force) {
       __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
     }
-    tryLoadCacheFromDisk();
+    const hadCache = tryLoadCacheFromDisk();
+    // Instant status for UI — never block launch on a full drive walk
+    const status = refreshDiskStats({ recount: false });
     if (force || !__libraryListCache.data) {
-      console.log('[library] No cache — starting background scan...');
+      console.log('[library] Starting library scan…', force ? '(forced)' : '(no cache)');
       buildLibraryCache().then(() => {
         tryLoadCacheFromDisk();
+        refreshDiskStats({ recount: false });
+        scheduleDiskCount(true);
         console.log('[library] Background scan complete');
-        resolve();
+        resolve(getScanStatus());
       }).catch(e => {
         console.error('[library] Background scan failed:', e.message);
-        resolve();
+        emitScan({ status: 'error', error: e.message, finishedAt: Date.now(), message: 'Scan failed — ' + e.message });
+        resolve(getScanStatus());
       });
     } else {
-      resolve();
+      emitScan({
+        status: 'ready',
+        catalogCount: __libraryListCache.data.count || 0,
+        finishedAt: Date.now(),
+        driveMounted: status.driveMounted,
+        driveReadable: status.driveReadable,
+        message: 'Loaded library cache — ' + (__libraryListCache.data.count || 0).toLocaleString() + ' videos',
+      });
+      scheduleDiskCount(false);
+      resolve(getScanStatus());
     }
   });
 }
 
 function list(opts) {
   if (!__libraryListCache.data) {
-    return { ok: false, error: 'Library scan in progress — retry in a few seconds' };
+    // Another process / prior session may have already built the cache file.
+    tryLoadCacheFromDisk();
+  }
+  if (!__libraryListCache.data) {
+    if (__libraryScanInFlight) {
+      return { ok: false, error: 'Library scan in progress — retry in a few seconds', scanning: true };
+    }
+    return { ok: false, error: 'Library not loaded yet — click Rescan', scanning: false };
   }
 
   const q = (opts.q || '').toLowerCase();
@@ -544,8 +879,15 @@ function list(opts) {
 
   const hasQuery = q || year || tag || page > 1 || limit > 0;
   if (!hasQuery) {
-    // Fast path: return full cached data
-    return JSON.parse(JSON.stringify(__libraryListCache.data));
+    // Fast path: return cached data without a deep clone of 4k+ rows
+    // (JSON round-trip was freezing the UI for seconds on every load).
+    const cached = __libraryListCache.data;
+    return {
+      ok: true,
+      count: cached.count || (cached.videos ? cached.videos.length : 0),
+      videos: cached.videos || [],
+      archiveMtime: cached.archiveMtime || 0,
+    };
   }
 
   let videos = __libraryListCache.data.videos || [];
@@ -707,6 +1049,10 @@ async function scanSummary() {
   return { ok: true, totalFiles: totalMp4Files, totalSize, subtitleLanguages: [...langSet] };
 }
 
+function invalidateListCache() {
+  __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
+}
+
 module.exports = {
   init,
   list,
@@ -728,6 +1074,17 @@ module.exports = {
   getStatus,
   getDownloadDir,
   scanSummary,
+  isDriveMounted,
+  probeDrive,
+  ensureLibraryDirs,
+  invalidateListCache,
+  setScanListener,
+  getScanStatus,
+  refreshDiskStats,
+  scheduleDiskCount,
+  countDiskMedia,
+  tryLoadCacheFromDisk,
+  EXTERNAL_DRIVE,
   LIBRARY_DIR,
   LIBRARY_KARAOKE_DIR,
   LIBRARY_SONGS_DIR,

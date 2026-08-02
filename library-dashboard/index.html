@@ -111,7 +111,7 @@ body{padding-bottom:72px}
 
 <div class="toolbar">
   <div class="view-toggle">
-    <button id="btnGridView" onclick="switchView('grid')">Grid</button>
+    <button id="btnGridView" class="active" onclick="switchView('grid')">Grid</button>
     <button id="btnListView" onclick="switchView('list')">List</button>
   </div>
   <input type="text" id="searchInput" placeholder="Search title, artist, year..." oninput="onSearchInput()">
@@ -679,9 +679,10 @@ function switchView(view){
 }
 
 function init(){
-  var savedView=localStorage.getItem('karolView');
-  if(savedView==='list')currentView='list';
-  switchView(currentView);
+  // Always open on grid — list remains available via the toggle.
+  try{localStorage.setItem('karolView','grid')}catch(e){}
+  currentView='grid';
+  switchView('grid');
   // Don't load all songs on startup — too slow with thousands of entries.
   // Library loads on first search keystroke.
   document.getElementById('grid').innerHTML='<div class="empty" style="padding:60px 20px"><div style="font-size:48px;margin-bottom:12px">🔍</div><div style="font-size:18px;font-weight:600">Type to search the library</div><div style="font-size:13px;color:var(--textDim);margin-top:4px">Search by title, artist, or year</div></div>';

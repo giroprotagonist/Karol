@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://www.youtube.com https://i.ytimg.com https://*.ytimg.com; media-src 'self' file: blob: karol-file:; connect-src 'self' file: karol-file:; img-src 'self' file: data: https:; font-src 'self' data:;">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://www.youtube.com https://www.youtube-nocookie.com https://i.ytimg.com https://*.ytimg.com; media-src 'self' file: blob: karol-file:; connect-src 'self' file: karol-file:; img-src 'self' file: data: https:; font-src 'self' data:;">
 <title>Karol Player</title>
 <style>
 :root{--bg:#000;--accent:#8b5cf6;--gold:#f0c040;--white:#fff;--marquee-bg:rgba(10,10,15,0.92)}
@@ -408,7 +409,7 @@ body.is-monitor #finale{display:none !important}
 
 <div id="main-area">
 <div id="video-layer">
-  <iframe id="youtube-frame" style="display:none" allow="autoplay" allowfullscreen></iframe>
+  <iframe id="youtube-frame" style="display:none" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
   <div id="lyric-overlay"><span id="lyric-line"></span></div>
   <div id="countdown"></div>
   <div id="lyric-slider">
@@ -1098,7 +1099,11 @@ function hideBetweenSongs(instant) {
 
 function playYouTube(videoId) {
   youtubeFrame.style.display = 'block';
-  youtubeFrame.src = 'https://www.youtube.com/embed/' + videoId + '?autoplay=1&controls=0&disablekb=1&fs=0&modestbranding=1&rel=0&iv_load_policy=3';
+  // youtube-nocookie + explicit referrerpolicy avoids YouTube Error 153
+  // ("Video player configuration error") in Electron embeds.
+  youtubeFrame.referrerPolicy = 'strict-origin-when-cross-origin';
+  youtubeFrame.src = 'https://www.youtube-nocookie.com/embed/' + videoId
+    + '?autoplay=1&controls=0&disablekb=1&fs=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1';
 
   playerState = 'playing';
   hideLoading();

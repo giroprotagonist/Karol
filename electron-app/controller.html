@@ -209,6 +209,23 @@ body.dragging{cursor:col-resize;user-select:none}
 #health-bar .health-label{color:var(--textDim)}
 #health-bar .health-refresh{font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(139,92,246,0.15);color:var(--accent);cursor:pointer;margin-left:auto}
 #health-bar .health-refresh:hover{background:rgba(139,92,246,0.3)}
+#library-status{
+  margin:0 12px 8px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);
+  background:rgba(30,30,56,0.65);font-size:12px;line-height:1.35;display:flex;flex-direction:column;gap:4px;
+}
+#library-status.scanning{border-color:#f59e0b;background:rgba(245,158,11,0.12);box-shadow:0 0 0 1px rgba(245,158,11,0.25) inset}
+#library-status.ready{border-color:rgba(34,197,94,0.45);background:rgba(34,197,94,0.08)}
+#library-status.error,#library-status.missing{border-color:rgba(239,68,68,0.55);background:rgba(239,68,68,0.12)}
+#library-status .ls-title{font-weight:700;font-size:13px;color:var(--text);display:flex;align-items:center;gap:8px}
+#library-status .ls-detail{color:var(--textDim);font-size:11px}
+#library-status .ls-counts{color:var(--text);font-size:12px;font-weight:600}
+#library-status .ls-folders{color:var(--textDim);font-size:10px}
+#library-status .ls-spinner{
+  width:12px;height:12px;border:2px solid rgba(245,158,11,0.35);border-top-color:#f59e0b;
+  border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rescan-btn.scanning{background:rgba(245,158,11,0.25)!important;color:#fbbf24!important;border-color:#f59e0b!important}
 
 /* Retry/clear buttons for error jobs */
 #processing-actions{display:flex;gap:6px;margin-top:8px}
@@ -280,6 +297,12 @@ body.dragging{cursor:col-resize;user-select:none}
     <button class="filter-tab" data-filter="musicvideo" onclick="setLibraryFilter('musicvideo')">Music Videos</button>
     <button class="rescan-btn" onclick="rescanLibrary()" title="Rescan library">Rescan</button>
   </div>
+  <div id="library-status" class="scanning">
+    <div class="ls-title"><span class="ls-spinner"></span><span id="ls-title-text">Checking maxone library…</span></div>
+    <div class="ls-counts" id="ls-counts">Catalog: — · On disk: —</div>
+    <div class="ls-detail" id="ls-detail">Waiting for drive / scan status</div>
+    <div class="ls-folders" id="ls-folders"></div>
+  </div>
   <div id="library-list">
     <div id="loading-state"><div class="spinner"></div>Loading library...</div>
   </div>
@@ -300,7 +323,7 @@ body.dragging{cursor:col-resize;user-select:none}
     </div>
   </div>
   <div id="health-bar">
-    <div class="health-item"><div class="health-dot" id="health-drive"></div><span class="health-label">Drive</span></div>
+    <div class="health-item"><div class="health-dot" id="health-drive"></div><span class="health-label" id="health-drive-text">Drive</span></div>
     <div class="health-item"><div class="health-dot" id="health-ytdlp"></div><span class="health-label">yt-dlp</span></div>
     <div class="health-item"><div class="health-dot" id="health-ffmpeg"></div><span class="health-label">FFmpeg</span></div>
     <div class="health-item"><div class="health-dot" id="health-lib"></div><span class="health-label" id="health-lib-text">Lib</span></div>
@@ -508,9 +531,158 @@ function buildMusicVideoRows() {
   return rows.concat(remote);
 }
 
+let _libraryStatusBound = false;
+let _lastScanStatus = null;
+
+function fmtNum(n) {
+  return (n == null || n === '') ? '—' : Number(n).toLocaleString();
+}
+
+function renderLibraryStatus(scan) {
+  if (!scan) return;
+  // Merge with last known good counts so a partial update can't flash 0/0
+  var prev = _lastScanStatus || {};
+  var merged = Object.assign({}, prev, scan);
+  if ((merged.catalogCount == null || merged.catalogCount === 0) && prev.catalogCount > 0 && scan.status !== 'missing') {
+    merged.catalogCount = prev.catalogCount;
+  }
+  if ((merged.diskMediaCount == null || merged.diskMediaCount === 0) && prev.diskMediaCount > 0 && merged.driveReadable !== false && scan.status !== 'missing') {
+    merged.diskMediaCount = prev.diskMediaCount;
+    if (!merged.diskByFolder && prev.diskByFolder) merged.diskByFolder = prev.diskByFolder;
+  }
+  _lastScanStatus = merged;
+
+  var box = document.getElementById('library-status');
+  if (!box) return;
+  var mounted = !!merged.driveMounted;
+  var readable = merged.driveReadable !== false && mounted;
+  var status = merged.status || (mounted ? (merged.catalogCount > 0 ? 'ready' : 'idle') : 'missing');
+  // Only force missing when we truly have no mount AND no catalog cache
+  if (!mounted && !(merged.catalogCount > 0) && status !== 'scanning') status = 'missing';
+  if (mounted && merged.driveReadable === false) status = 'error';
+
+  box.className = status === 'scanning' ? 'scanning'
+    : status === 'ready' ? 'ready'
+    : (status === 'error' || status === 'missing') ? 'error'
+    : 'scanning';
+
+  var titleEl = document.getElementById('ls-title-text');
+  var countsEl = document.getElementById('ls-counts');
+  var detailEl = document.getElementById('ls-detail');
+  var foldersEl = document.getElementById('ls-folders');
+  var spinnerNeeded = status === 'scanning';
+  var titleRow = box.querySelector('.ls-title');
+  if (titleRow) {
+    var spin = titleRow.querySelector('.ls-spinner');
+    if (spinnerNeeded && !spin) {
+      var s = document.createElement('span'); s.className = 'ls-spinner'; titleRow.insertBefore(s, titleRow.firstChild);
+    } else if (!spinnerNeeded && spin) spin.remove();
+  }
+
+  if (status === 'scanning') {
+    titleEl.textContent = 'Scanning maxone library…';
+  } else if (status === 'ready') {
+    titleEl.textContent = 'Library connected to maxone';
+  } else if (status === 'missing') {
+    titleEl.textContent = 'maxone drive not mounted';
+  } else if (status === 'error' && merged.driveReadable === false) {
+    titleEl.textContent = 'maxone needs Removable Volumes permission';
+  } else if (status === 'error') {
+    titleEl.textContent = 'Library scan problem';
+  } else {
+    titleEl.textContent = 'Library status';
+  }
+
+  var catalog = merged.catalogCount != null ? merged.catalogCount : 0;
+  var disk = merged.diskMediaCount != null ? merged.diskMediaCount : 0;
+  countsEl.textContent = 'In library: ' + fmtNum(catalog) + '  ·  Media files on disk: ' + fmtNum(disk);
+  if (status === 'ready' && disk > 0 && catalog > 0 && catalog < disk * 0.5) {
+    countsEl.textContent += '  ⚠ catalog much smaller than disk';
+  }
+
+  var path = merged.libraryDir || merged.drivePath || '/Volumes/maxone/Deskreen';
+  detailEl.textContent = (merged.message || '') + (path ? '  ·  ' + path : '');
+  if (merged.error && merged.error !== 'permission') detailEl.textContent += '  ·  ' + merged.error;
+
+  var f = merged.diskByFolder || {};
+  if (!mounted) {
+    foldersEl.textContent = 'Plug in maxone, then click Rescan';
+  } else if (merged.driveReadable === false) {
+    foldersEl.textContent = 'System Settings → Privacy & Security → Removable Volumes → enable Karol, then click Rescan';
+  } else {
+    foldersEl.textContent = 'Folders — root: ' + fmtNum(f.root) + ' · karaoke: ' + fmtNum(f.karaoke) + ' · songs: ' + fmtNum(f.songs) + ' · downloads: ' + fmtNum(f.downloads);
+  }
+
+  var btn = document.querySelector('.rescan-btn');
+  if (btn && status === 'scanning') {
+    btn.textContent = 'Scanning…';
+    btn.disabled = true;
+    btn.classList.add('scanning');
+  } else if (btn && btn.classList.contains('scanning') && status !== 'scanning') {
+    btn.textContent = 'Rescan';
+    btn.disabled = false;
+    btn.classList.remove('scanning');
+  }
+
+  var search = document.getElementById('search-box');
+  if (search && catalog) {
+    search.placeholder = 'Search library... (' + fmtNum(catalog) + ' videos)';
+  }
+  var libCount = document.getElementById('lib-count');
+  if (libCount && catalog) libCount.textContent = catalog;
+}
+
+async function refreshLibraryFromScan() {
+  try {
+    var result = await api.library.list({});
+    if (result && result.ok) {
+      allVideos = result.videos || [];
+      var libCount = document.getElementById('lib-count');
+      if (libCount) libCount.textContent = result.count || allVideos.length;
+      await refreshCustomVideoIds();
+      applyFilterAndRender();
+      renderProcessingPanel();
+    }
+  } catch (e) { console.error('Library refresh error:', e); }
+}
+
+function bindLibraryStatusEvents() {
+  if (_libraryStatusBound) return;
+  _libraryStatusBound = true;
+  api.on('library-scan-progress', function(info) {
+    // Support both new status objects and legacy {status:'done'}
+    if (info && (info.catalogCount != null || info.diskMediaCount != null || info.message || info.driveMounted != null)) {
+      renderLibraryStatus(info);
+    } else if (info && info.status === 'done') {
+      renderLibraryStatus(Object.assign({}, _lastScanStatus || {}, { status: 'ready', message: 'Scan complete' }));
+    }
+    if (info && (info.status === 'ready' || info.status === 'done')) {
+      refreshLibraryFromScan();
+    }
+  });
+  api.on('drive-status', function(info) {
+    renderLibraryStatus(Object.assign({}, _lastScanStatus || {}, {
+      driveMounted: !!(info && info.mounted),
+      drivePath: (info && info.path) || '/Volumes/maxone',
+      status: (info && info.mounted) ? ((_lastScanStatus && _lastScanStatus.status) || 'idle') : 'missing',
+      message: (info && info.mounted) ? 'Drive mounted — rescanning…' : 'External drive unplugged',
+    }));
+  });
+  api.on('health-report', function(health) {
+    renderHealth(health);
+  });
+}
+
 // ── Init ──
 async function init() {
   console.log('[controller] Starting init...');
+  bindLibraryStatusEvents();
+  try {
+    var st = await api.libraryScanStatus();
+    if (st && st.ok && st.scan) renderLibraryStatus(st.scan);
+  } catch (_) {}
+  refreshHealth();
+
   try {
     var result = await api.library.list({});
     console.log('[controller] Library list result:', result?.ok, result?.count);
@@ -519,9 +691,25 @@ async function init() {
       await refreshCustomVideoIds();
       applyFilterAndRender();
       document.getElementById('lib-count').textContent = result.count || allVideos.length;
+      renderLibraryStatus(Object.assign({}, _lastScanStatus || {}, {
+        status: 'ready',
+        catalogCount: result.count || allVideos.length,
+        message: 'Library loaded — ' + fmtNum(result.count || allVideos.length) + ' videos',
+      }));
     } else {
-      document.getElementById('library-list').innerHTML = '<div style="color:var(--textDim);padding:20px;text-align:center">Library scanning... retrying in 10s</div>';
-      setTimeout(init, 10000);
+      // Keep prior drive/count info; only mark scanning when backend says so
+      var scanning = !!(result && result.scanning);
+      var nextStatus = scanning ? 'scanning' : 'error';
+      renderLibraryStatus(Object.assign({}, _lastScanStatus || {}, {
+        status: nextStatus,
+        message: (result && result.error) || (scanning ? 'Library scanning… retrying in 5s' : 'Library not loaded — click Rescan'),
+      }));
+      document.getElementById('library-list').innerHTML = '<div style="color:#fbbf24;padding:20px;text-align:center;font-weight:600">'
+        + (scanning ? 'Scanning maxone library…' : 'Library not loaded')
+        + '<br><span style="font-weight:400;color:var(--textDim)">'
+        + (scanning ? 'Retrying in 5s' : 'Click Rescan (and enable Removable Volumes if prompted)')
+        + '</span></div>';
+      setTimeout(init, scanning ? 5000 : 8000);
       return;
     }
   } catch (e) {
@@ -538,25 +726,6 @@ async function init() {
     processingJobs = jobs || {};
     applyFilterAndRender();
     renderProcessingPanel();
-  });
-
-  // Listen for library scan completion to refresh
-  api.on('library-scan-progress', function(info) {
-    if (info.status === 'done') {
-      // Refresh library after a short delay to let cache write
-      setTimeout(async function() {
-        try {
-          var result = await api.library.list({});
-          if (result && result.ok) {
-            allVideos = result.videos || [];
-            document.getElementById('lib-count').textContent = result.count || allVideos.length;
-            await refreshCustomVideoIds();
-            applyFilterAndRender();
-            renderProcessingPanel();
-          }
-        } catch(e) { console.error('Library refresh error:', e); }
-      }, 3000);
-    }
   });
 
   // Render any existing processing jobs on startup
@@ -908,15 +1077,29 @@ async function submitFillMatch(id) {
 
 async function rescanLibrary() {
   var btn = document.querySelector('.rescan-btn');
-  btn.textContent = 'Scanning...';
+  btn.textContent = 'Scanning…';
   btn.disabled = true;
+  btn.classList.add('scanning');
+  renderLibraryStatus(Object.assign({}, _lastScanStatus || {}, {
+    status: 'scanning',
+    message: 'Rescan started — reading files on maxone…',
+  }));
   try {
-    await api.rescan();
-  } catch(e) { console.log('Rescan error:', e); }
-  // Refresh library
-  await init();
+    var r = await api.rescan();
+    if (r && r.scan) renderLibraryStatus(r.scan);
+  } catch(e) {
+    console.log('Rescan error:', e);
+    renderLibraryStatus(Object.assign({}, _lastScanStatus || {}, {
+      status: 'error',
+      error: e.message,
+      message: 'Rescan failed',
+    }));
+  }
+  await refreshLibraryFromScan();
+  await refreshHealth();
   btn.textContent = 'Rescan';
   btn.disabled = false;
+  btn.classList.remove('scanning');
 }
 
 document.getElementById('search-box').addEventListener('input', function() {
@@ -1556,20 +1739,45 @@ async function refreshHealth() {
 }
 
 function renderHealth(health) {
-  function setDot(elId, ok) {
+  function setDot(elId, ok, warn) {
     var el = document.getElementById(elId);
     if (!el) return;
-    el.className = 'health-dot ' + (ok ? 'ok' : 'bad');
+    el.className = 'health-dot ' + (ok ? 'ok' : (warn ? 'warn' : 'bad'));
   }
   if (!health) return;
-  setDot('health-drive', health.drive);
+  var driveOk = !!(health.drive && health.driveReadable !== false);
+  var driveWarn = !!(health.drive && health.driveReadable === false);
+  setDot('health-drive', driveOk, driveWarn);
+  var driveText = document.getElementById('health-drive-text');
+  if (driveText) {
+    driveText.textContent = !health.drive
+      ? 'Drive (missing)'
+      : (health.driveReadable === false ? 'Drive (no access)' : 'maxone');
+  }
   setDot('health-ytdlp', health.ytdlp);
   setDot('health-ffmpeg', health.ffmpeg);
-  setDot('health-lib', health.libraryCount > 0);
-  if (health.libraryCount) {
-    document.getElementById('health-lib-text').textContent = 'Lib (' + health.libraryCount + ')';
+  var scanning = !!(health.scanning || (health.libraryScan && health.libraryScan.status === 'scanning'));
+  setDot('health-lib', health.libraryCount > 0, scanning || driveWarn);
+  var libText = 'Lib';
+  if (scanning) libText = 'Scanning…';
+  else if (health.libraryCount || health.diskMediaCount) {
+    libText = 'Lib ' + fmtNum(health.libraryCount || 0) + '/' + fmtNum(health.diskMediaCount || 0);
   }
+  document.getElementById('health-lib-text').textContent = libText;
   setDot('health-api', health.apiServer);
+  if (health.libraryScan) {
+    renderLibraryStatus(Object.assign({}, health.libraryScan, {
+      driveMounted: health.drive,
+      driveReadable: health.driveReadable,
+      catalogCount: health.libraryScan.catalogCount || health.libraryCount || 0,
+      diskMediaCount: health.libraryScan.diskMediaCount || health.diskMediaCount || 0,
+    }));
+  }
+  // If catalog is ready but the list never loaded (stuck on "Scanning…"), pull it in
+  var readyCount = (health.libraryScan && health.libraryScan.catalogCount) || health.libraryCount || 0;
+  if (readyCount > 0 && (!allVideos || allVideos.length === 0) && health.libraryScan && health.libraryScan.status !== 'scanning') {
+    refreshLibraryFromScan();
+  }
 }
 
 // ── Listen for events from main process ──

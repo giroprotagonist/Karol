@@ -16,19 +16,25 @@
   "build": {
     "appId": "com.karol.dj",
     "productName": "Karol",
+    "icon": "build/icon.icns",
     "mac": {
       "category": "public.app-category.music",
+      "icon": "build/icon.icns",
       "target": "dmg",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "extendInfo": {
-        "NSQuitAlwaysKeepsWindows": false
+        "NSQuitAlwaysKeepsWindows": false,
+        "NSRemovableVolumesUsageDescription": "Karol needs access to your karaoke library on the external hard drive (/Volumes/maxone).",
+        "NSDocumentsFolderUsageDescription": "Karol may read documents when importing media.",
+        "NSDownloadsUsageDescription": "Karol may read Downloads when importing media."
       }
     },
     "files": [
       "main.js",
       "preload.js",
       "library.js",
+      "media-resolver.js",
       "player-state.js",
       "downloads.js",
       "requests.js",
@@ -39,12 +45,17 @@
       "request-qr.png",
       "venmo-qr.png",
       "cashapp-qr.png",
+      "icon.png",
       "node_modules/**/*"
     ],
     "extraResources": [
       {
         "from": "../api-server",
         "to": "api-server"
+      },
+      {
+        "from": "../media-resolver.js",
+        "to": "media-resolver.js"
       },
       {
         "from": "../dj-controller/dist",

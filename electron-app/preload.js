@@ -96,7 +96,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
     const validChannels = [
       'player-status', 'queue-update', 'player-event',
       'download-progress', 'library-scan-progress', 'health-report',
-      'monitor-mode', 'lyrics-updated',
+      'monitor-mode', 'lyrics-updated', 'drive-status',
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (_event, ...args) => callback(...args));
@@ -116,6 +116,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
 
   // ── Health ──
   health: () => ipcRenderer.invoke('health-check'),
+  libraryScanStatus: () => ipcRenderer.invoke('library-scan-status'),
   retryJob: (videoId) => ipcRenderer.invoke('retry-job', { videoId }),
   clearErrors: () => ipcRenderer.invoke('clear-errors'),
   rescan: () => ipcRenderer.invoke('library-rescan'),

@@ -344,12 +344,26 @@ const SCRIPTS_DIR = path.resolve(__dirname, '..', 'scripts');
 
 // The external archive may be unplugged or temporarily denied by macOS privacy.
 // Remote transport/FX must still start, so never crash the API server here.
-for (const dir of LIBRARY_SEARCH_DIRS) {
+// Only mkdir when EXTERNAL_DRIVE is a real mount — otherwise we create a ghost
+// /Volumes/maxone folder that blocks the real disk from mounting later.
+function isExternalDriveMounted() {
   try {
-    fs.mkdirSync(dir, { recursive: true });
-  } catch (e) {
-    console.warn('[library] External directory unavailable:', dir, e.code || e.message);
+    if (!fs.existsSync(EXTERNAL_DRIVE)) return false;
+    return fs.statSync(EXTERNAL_DRIVE).dev !== fs.statSync('/Volumes').dev;
+  } catch {
+    return false;
   }
+}
+if (isExternalDriveMounted()) {
+  for (const dir of LIBRARY_SEARCH_DIRS) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (e) {
+      console.warn('[library] External directory unavailable:', dir, e.code || e.message);
+    }
+  }
+} else {
+  console.warn('[library] External drive not mounted — skipping library mkdir:', EXTERNAL_DRIVE);
 }
 
 // Determine the download directory for a video based on its tag
