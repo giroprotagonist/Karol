@@ -164,7 +164,7 @@ body.dragging{cursor:col-resize;user-select:none}
 #phone-connect img{width:72px;height:72px;background:#fff;padding:4px;border-radius:6px;flex-shrink:0}
 #phone-connect .pc-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
 #phone-connect .pc-label{font-size:9px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--accent)}
-#phone-connect .pc-url{font-size:11px;font-weight:600;color:var(--text);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:all}
+#phone-connect .pc-url{font-size:11px;font-weight:600;color:var(--text);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:all;cursor:pointer}
 #phone-connect .pc-hint{font-size:10px;color:var(--textDim)}
 #player-window-btn,#monitor-mode-btn{padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;background:var(--border);color:var(--text);margin-left:8px}
 #player-window-btn{margin-left:auto}
@@ -378,7 +378,7 @@ body.dragging{cursor:col-resize;user-select:none}
     <div id="request-status" class="stat" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
     <button id="player-window-btn" onclick="api.window.launchPlayer()">Show Player Window</button>
     <button id="monitor-mode-btn" onclick="toggleMonitorMode()">Monitor Mode: Off</button>
-    <div id="phone-connect" title="Scan with Karol Controller on your S24">
+    <div id="phone-connect" title="Scan with phone browser — opens public DJ controller">
       <img id="phone-qr" alt="Phone connect QR" width="72" height="72">
       <div class="pc-meta">
         <span class="pc-label">S24 control</span>
@@ -775,8 +775,14 @@ async function refreshPhoneConnect() {
     if (!info || !info.ok) return;
     var urlEl = document.getElementById('phone-url');
     var qrEl = document.getElementById('phone-qr');
+    var hintEl = document.querySelector('#phone-connect .pc-hint');
     if (urlEl) urlEl.textContent = info.url || '';
     if (qrEl && info.qrDataUrl) qrEl.src = info.qrDataUrl;
+    if (hintEl) {
+      hintEl.textContent = (info.url && info.url.indexOf('https://') === 0)
+        ? 'Public link — works on cellular / any Wi‑Fi'
+        : 'Same Wi‑Fi/hotspot as this Mac required';
+    }
   } catch (e) {
     console.warn('[controller] connection info failed:', e.message);
   }

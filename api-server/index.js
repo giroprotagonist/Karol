@@ -83,20 +83,24 @@ app.use(async (ctx, next) => {
   await next();
 });
 
-// Simple per-IP rate limiter: 100 req/s burst, refills 20 tokens/s.
+// Simple per-IP rate limiter: 200 req/s burst, refills 60 tokens/s.
+// Phone DJ controller polls now-playing ~2/s + status/queue; keep headroom.
 // Only rate-limits non-localhost clients to prevent runaway polling.
 const rateLimits = new Map();
+const RATE_EXEMPT = /^\/api\/youtube-dj\/(status|health|now-playing)$/;
 app.use(async (ctx, next) => {
   const ip = ctx.ip || 'unknown';
   if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') { await next(); return; }
+  // High-frequency poll endpoints — never 429 these or the phone flaps offline
+  if (RATE_EXEMPT.test(ctx.path)) { await next(); return; }
   const now = Date.now();
   let entry = rateLimits.get(ip);
   if (!entry || now - entry.ts > 30000) {
-    entry = { tokens: 100, last: now, ts: now };
+    entry = { tokens: 200, last: now, ts: now };
     rateLimits.set(ip, entry);
   }
   const elapsed = now - entry.last;
-  entry.tokens = Math.min(100, entry.tokens + elapsed * (20 / 1000));
+  entry.tokens = Math.min(200, entry.tokens + elapsed * (60 / 1000));
   entry.last = now;
   if (entry.tokens < 1) {
     ctx.status = 429;
@@ -127,6 +131,21 @@ function getLanIp() {
   return '127.0.0.1';
 }
 
+/** Public HTTPS URL for phone QR (Cloudflare tunnel). Override with KAROL_PUBLIC_URL. */
+function getPublicControllerUrl() {
+  const raw = (process.env.KAROL_PUBLIC_URL || 'https://request.rideyrbike.com').replace(/\/+$/, '');
+  return raw + '/dj-controller/';
+}
+
+function getPhoneControllerUrl() {
+  // Prefer public tunnel — S24 on cellular / different Wi‑Fi cannot reach LAN IP.
+  // Set KAROL_PHONE_URL_MODE=lan to force local hotspot URL.
+  if (String(process.env.KAROL_PHONE_URL_MODE || '').toLowerCase() === 'lan') {
+    return 'http://' + getLanIp() + ':' + PORT + '/dj-controller/';
+  }
+  return getPublicControllerUrl();
+}
+
 function getMyIps() {
   const ips = new Set();
   const nets = os.networkInterfaces();
@@ -150,7 +169,7 @@ function findCoverPath(filePath) {
 }
 
 // ── YouTube DJ real handlers (playback via Electron app IPC) ──
-function askElectron(action, payload = {}, timeoutMs = 2500) {
+function askElectron(action, payload = {}, timeoutMs = 5000) {
   return new Promise((resolve) => {
     if (!process.send) {
       resolve({ ok: false, error: 'Electron IPC unavailable' });
@@ -198,12 +217,30 @@ app.use(async (ctx, next) => {
     // ── Status ──
     if (p === '/api/youtube-dj/status' || p === '/api/youtube-dj/health') {
       const result = await askElectron('status');
+      // Never let an IPC timeout ({ ok:false }) overwrite the online envelope —
+      // that made the phone controller flap Offline / Reconnecting on S24.
+      if (result && result.ok === false && result.error) {
+        ctx.body = {
+          electronMode: true,
+          status: 'online',
+          ok: true,
+          hostMode: 'mac',
+          djActive: true,
+          stale: true,
+          warning: result.error,
+        };
+        return;
+      }
       ctx.body = { electronMode: true, status: 'online', ok: true, ...(result || {}) };
       return;
     }
 
     if (p === '/api/youtube-dj/now-playing') {
       const result = await askElectron('now-playing');
+      if (result && result.ok === false && result.error) {
+        ctx.body = { ok: true, title: '', videoId: '', currentTime: 0, duration: 0, state: -2, stale: true };
+        return;
+      }
       ctx.body = result && result.ok !== false ? result : { title: '', videoId: '', currentTime: 0, duration: 0, state: -2 };
       return;
     }
@@ -1462,7 +1499,8 @@ router.get('/api/ableton/template', (ctx) => {
 // ── Discovery endpoint (required by Android controller health check) ──
 router.get('/api/discover.json', (ctx) => {
   const lanIp = getLanIp();
-  const djControllerUrl = 'http://' + lanIp + ':' + PORT + '/dj-controller/';
+  const djControllerUrl = getPhoneControllerUrl();
+  const lanUrl = 'http://' + lanIp + ':' + PORT + '/dj-controller/';
   ctx.body = {
     name: 'Karol API Server',
     role: 'dj-host',
@@ -1472,14 +1510,15 @@ router.get('/api/discover.json', (ctx) => {
     shareUrl: djControllerUrl,
     djControllerUrl,
     controllerUrl: djControllerUrl,
+    lanUrl,
     electronMode: true,
   };
 });
 
-// Phone connection QR (PNG) — always encodes the live LAN controller URL
+// Phone connection QR (PNG) — public HTTPS by default so S24 works off-LAN
 router.get('/api/connect-qr.png', async (ctx) => {
   const lanIp = getLanIp();
-  const url = 'http://' + lanIp + ':' + PORT + '/dj-controller/';
+  const url = getPhoneControllerUrl();
   const out = path.join('/tmp', 'karol-phone-connect-qr.png');
   try {
     const { execFileSync } = require('child_process');
@@ -1491,14 +1530,22 @@ router.get('/api/connect-qr.png', async (ctx) => {
   } catch (e) {
     ctx.status = 500;
     ctx.type = 'application/json';
-    ctx.body = { ok: false, error: 'qrencode failed: ' + e.message, url };
+    ctx.body = { ok: false, error: 'qrencode failed: ' + e.message, url, lanIp };
   }
 });
 
 router.get('/api/connect-info', (ctx) => {
   const lanIp = getLanIp();
-  const url = 'http://' + lanIp + ':' + PORT + '/dj-controller/';
-  ctx.body = { ok: true, url, lanIp, port: PORT, role: 'dj-host' };
+  const url = getPhoneControllerUrl();
+  ctx.body = {
+    ok: true,
+    url,
+    publicUrl: getPublicControllerUrl(),
+    lanUrl: 'http://' + lanIp + ':' + PORT + '/dj-controller/',
+    lanIp,
+    port: PORT,
+    role: 'dj-host',
+  };
 });
 
 // ── Local Player Mode API (stubs — playback handled by Electron app) ──

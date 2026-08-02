@@ -1387,6 +1387,15 @@ function getLanIp() {
   return '127.0.0.1';
 }
 
+/** Phone QR URL — public HTTPS tunnel by default (S24 often can't reach LAN IP). */
+function getPhoneControllerUrl() {
+  if (String(process.env.KAROL_PHONE_URL_MODE || '').toLowerCase() === 'lan') {
+    return 'http://' + getLanIp() + ':3131/dj-controller/';
+  }
+  const raw = (process.env.KAROL_PUBLIC_URL || 'https://request.rideyrbike.com').replace(/\/+$/, '');
+  return raw + '/dj-controller/';
+}
+
 function buildPhoneQueueItem(item, index) {
   const videoId = item.videoId || '';
   const baseId = String(videoId).replace(/-karaoke$/, '');
@@ -2447,7 +2456,8 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.handle('connection-info', () => {
     const lanIp = getLanIp();
     const port = 3131;
-    const url = 'http://' + lanIp + ':' + port + '/dj-controller/';
+    const lanUrl = 'http://' + lanIp + ':' + port + '/dj-controller/';
+    const url = getPhoneControllerUrl();
     let qrDataUrl = '';
     try {
       const { execFileSync } = require('child_process');
@@ -2457,7 +2467,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     } catch (e) {
       console.warn('[karol] QR generate failed:', e.message);
     }
-    return { ok: true, url, lanIp, port, qrDataUrl };
+    return { ok: true, url, lanUrl, lanIp, port, qrDataUrl };
   });
   ipcMain.handle('karaoke-power-status', () => ({ ok: true, ...getKaraokePowerStatus() }));
 

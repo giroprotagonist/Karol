@@ -140,6 +140,9 @@ export default function App() {
 		[],
 	);
 
+	const reconnectAttemptRef = useRef(0);
+	reconnectAttemptRef.current = reconnectAttempt;
+
 	const refreshAll = useCallback(async () => {
 		if (!host) return;
 		try {
@@ -168,7 +171,7 @@ export default function App() {
 			setConnecting(false);
 			if (wasConnected) {
 				// Auto-reconnect with exponential backoff: 2s → 4s → 8s → 16s → 30s cap
-				const attempt = reconnectAttempt + 1;
+				const attempt = reconnectAttemptRef.current + 1;
 				setReconnectAttempt(attempt);
 				setReconnecting(true);
 				const delay = Math.min(BACKOFF_BASE * Math.pow(2, attempt - 1), 30_000);
@@ -180,11 +183,11 @@ export default function App() {
 				setError(err instanceof Error ? err.message : 'Connection failed');
 			}
 		}
-	}, [host, reconnectAttempt]);
+	}, [host]);
 
-	// Fetch library data once on connect (cached; re-fetches only on manual trigger)
+	// Library is ~1.6MB / 4k videos — only fetch when Library tab is opened (or manual refresh).
 	useEffect(() => {
-		if (!host || !connected) return;
+		if (!host || !connected || activeTab !== 'library') return;
 		setLibraryLoading(true);
 		fetchLibraryList(host)
 			.then((list) => setLibraryVideos(list.videos))
@@ -192,7 +195,7 @@ export default function App() {
 			.finally(() => setLibraryLoading(false));
 		fetchLibraryTags(host).then((t) => setLibraryTags(t.tags ?? {})).catch(() => {});
 		fetchLibraryScan(host).then((s) => setLibraryScanStats(s)).catch(() => {});
-	}, [host, connected, libraryFetchTrigger]);
+	}, [host, connected, libraryFetchTrigger, activeTab]);
 
 	// Poll download status when a library download is in progress
 	useEffect(() => {
@@ -236,12 +239,26 @@ export default function App() {
 		setHost(autoHost);
 	}, []);
 
-	// Poll for state changes
+	// Poll for state changes (slower on mobile / when tab hidden to avoid S24 jank)
 	useEffect(() => {
 		if (!pollEnabled) return;
 		void refreshAll();
-		const interval = setInterval(() => { void refreshAll(); }, 2_500);
-		return () => clearInterval(interval);
+		const isCoarse = typeof window !== 'undefined'
+			&& window.matchMedia
+			&& window.matchMedia('(pointer: coarse)').matches;
+		const baseMs = isCoarse ? 4_000 : 2_500;
+		let interval = window.setInterval(() => {
+			if (typeof document !== 'undefined' && document.hidden) return;
+			void refreshAll();
+		}, baseMs);
+		const onVis = () => {
+			if (!document.hidden) void refreshAll();
+		};
+		document.addEventListener('visibilitychange', onVis);
+		return () => {
+			clearInterval(interval);
+			document.removeEventListener('visibilitychange', onVis);
+		};
 	}, [pollEnabled, refreshAll]);
 
 	// Poll now-playing for smooth time updates + auto-reconnect trigger
@@ -249,7 +266,12 @@ export default function App() {
 		if (!pollEnabled || !host) return;
 		let cancelled = false;
 		let consecutiveFailures = 0;
+		const isCoarse = typeof window !== 'undefined'
+			&& window.matchMedia
+			&& window.matchMedia('(pointer: coarse)').matches;
+		const pollMs = isCoarse ? 1_200 : 500;
 		const pollNowPlaying = async () => {
+			if (typeof document !== 'undefined' && document.hidden) return;
 			try {
 				const next = await fetchNowPlaying(host);
 				if (!cancelled) {
@@ -262,7 +284,7 @@ export default function App() {
 			} catch {
 				if (!cancelled) {
 					consecutiveFailures++;
-					// After 3 consecutive now-playing failures (~1.5s), trigger refreshAll reconnect
+					// After 3 consecutive now-playing failures, trigger refreshAll reconnect
 					if (consecutiveFailures >= 3 && hasLoadedRef.current && !reconnecting) {
 						setReconnecting(true);
 						setReconnectAttempt(1);
@@ -274,7 +296,7 @@ export default function App() {
 			}
 		};
 		void pollNowPlaying();
-		const interval = setInterval(() => { void pollNowPlaying(); }, 500);
+		const interval = setInterval(() => { void pollNowPlaying(); }, pollMs);
 		return () => { cancelled = true; clearInterval(interval); };
 	}, [host, pollEnabled, reconnecting, refreshAll]);
 
@@ -386,18 +408,23 @@ export default function App() {
 	const runAction = useCallback(
 		async (label: string, action: () => Promise<unknown>) => {
 			if (!host) return;
-			setBusy(label);
+			const isTransport = label === 'play' || label === 'pause'
+				|| label.includes('skip') || label === 'seek' || label === 'play-item';
+			// Transport taps on phone must not lock the whole UI behind a full refresh
+			if (!isTransport) setBusy(label);
 			try {
 				await action();
-				await refreshAll();
-				// Refetch now-playing after transport actions
-				if (label === 'play' || label === 'pause' || label.includes('skip') || label === 'seek') {
+				if (isTransport) {
 					const latest = await fetchNowPlaying(host);
 					if (latest) setNowPlaying(latest);
+					// Soft queue refresh — don't await in a way that blocks the next tap
+					void fetchQueue(host).then((q) => setQueueState(q)).catch(() => {});
+				} else {
+					await refreshAll();
 				}
 			} catch (err) {
 				setError(err instanceof Error ? err.message : 'Action failed');
-			} finally { setBusy(''); }
+			} finally { if (!isTransport) setBusy(''); }
 		},
 		[host, refreshAll],
 	);
