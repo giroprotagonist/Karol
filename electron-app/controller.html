@@ -79,6 +79,14 @@ input,select{font-family:inherit}
 .np-status.playing{background:rgba(16,185,129,0.2);color:var(--success)}
 .np-status.paused{background:rgba(240,192,64,0.2);color:var(--gold)}
 .np-status.idle{background:rgba(122,122,154,0.15);color:var(--textDim)}
+#interstitial-settings{display:flex;flex-direction:column;gap:4px;min-width:140px;padding:0 4px}
+#interstitial-settings label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap}
+#interstitial-settings label span{color:var(--gold)}
+#bs-ms-slider{width:140px;accent-color:var(--accent);cursor:pointer}
+#volume-settings{display:flex;flex-direction:column;gap:4px;min-width:130px;padding:0 4px}
+#volume-settings label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap}
+#volume-settings label span{color:var(--accent)}
+#vol-slider{width:130px;accent-color:var(--accent);cursor:pointer}
 
 /* Transport buttons */
 .transport-btn{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;transition:all 0.15s}
@@ -86,6 +94,19 @@ input,select{font-family:inherit}
 .transport-btn.play:hover{background:#7c3aed}
 .transport-btn.neutral{background:var(--border);color:var(--text)}
 .transport-btn.neutral:hover{background:#2a2a44}
+.transport-btn.hold{
+  width:auto;min-width:56px;padding:0 12px;border-radius:20px;font-size:11px;font-weight:800;
+  letter-spacing:1px;background:rgba(240,192,64,0.12);color:var(--gold);border:1px solid rgba(240,192,64,0.35);
+}
+.transport-btn.hold:hover{background:rgba(240,192,64,0.22)}
+.transport-btn.hold:disabled{opacity:0.35;cursor:not-allowed;background:rgba(255,255,255,0.04);color:var(--textDim);border-color:var(--border)}
+.transport-btn.hold.holding{
+  background:rgba(240,192,64,0.35);color:#111;border-color:var(--gold);
+  box-shadow:0 0 14px rgba(240,192,64,0.45);animation:holdPulse 1.6s ease-in-out infinite;
+}
+@keyframes holdPulse{0%,100%{box-shadow:0 0 10px rgba(240,192,64,0.35)}50%{box-shadow:0 0 18px rgba(240,192,64,0.7)}}
+.np-status.gap{background:rgba(139,92,246,0.22);color:#c4b5fd}
+.np-status.holding{background:rgba(240,192,64,0.25);color:var(--gold)}
 
 /* ── DJ FX bar ── */
 #fx-bar{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
@@ -151,6 +172,15 @@ body.dragging{cursor:col-resize;user-select:none}
 #filter-bar .filter-tab{flex:1;padding:6px 0;border-radius:6px;background:rgba(30,30,56,0.4);border:1px solid var(--border);color:var(--textDim);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;text-align:center}
 #filter-bar .filter-tab:hover{background:rgba(139,92,246,0.1);color:var(--text)}
 #filter-bar .filter-tab.active{background:rgba(139,92,246,0.2);border-color:var(--accent);color:var(--accent)}
+#filter-bar .filter-tab .tab-count{
+  display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;
+  background:rgba(122,122,154,0.25);color:var(--textDim);vertical-align:middle
+}
+#filter-bar .filter-tab.active .tab-count{background:rgba(139,92,246,0.35);color:var(--accent)}
+#filter-bar .filter-tab[data-filter="custom"] .tab-count{background:rgba(236,72,153,0.2);color:#ec4899}
+#filter-bar .filter-tab[data-filter="custom"].active .tab-count{background:rgba(236,72,153,0.35);color:#f9a8d4}
+#filter-bar .filter-tab[data-filter="musicvideo"] .tab-count{background:rgba(240,192,64,0.18);color:var(--gold)}
+#reclass-menu .rc-hint{display:block;font-size:10px;color:var(--textDim);font-weight:500;margin-top:2px;line-height:1.3}
 .rescan-btn{flex:0 0 auto;padding:6px 10px;border-radius:6px;background:rgba(236,72,153,0.12);border:1px solid var(--border);color:var(--textDim);font-size:10px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .rescan-btn:hover{background:rgba(236,72,153,0.25);color:var(--text);border-color:#ec4899}
 
@@ -288,13 +318,13 @@ body.dragging{cursor:col-resize;user-select:none}
   </div>
   <input id="search-box" type="text" placeholder="Search library... (4094 videos)" autofocus>
   <div id="singer-bar">
-    <input id="singer-input" type="text" placeholder="Singer name" autocomplete="off">
+    <input id="singer-input" type="text" placeholder="Singer name (default: Naynay)" autocomplete="off" title="Leave blank to credit Naynay as the DJ">
   </div>
   <div id="filter-bar">
-    <button class="filter-tab active" data-filter="all" onclick="setLibraryFilter('all')">All</button>
-    <button class="filter-tab" data-filter="karaoke" onclick="setLibraryFilter('karaoke')">Karaoke</button>
-    <button class="filter-tab" data-filter="custom" onclick="setLibraryFilter('custom')">Custom</button>
-    <button class="filter-tab" data-filter="musicvideo" onclick="setLibraryFilter('musicvideo')">Music Videos</button>
+    <button class="filter-tab active" data-filter="all" onclick="setLibraryFilter('all')" title="All library videos">All <span class="tab-count" id="count-all">0</span></button>
+    <button class="filter-tab" data-filter="karaoke" onclick="setLibraryFilter('karaoke')" title="Standard karaoke tracks">Karaoke <span class="tab-count" id="count-karaoke">0</span></button>
+    <button class="filter-tab" data-filter="custom" onclick="setLibraryFilter('custom')" title="Custom karaoke-maker tracks (your pipeline)">Custom <span class="tab-count" id="count-custom">0</span></button>
+    <button class="filter-tab" data-filter="musicvideo" onclick="setLibraryFilter('musicvideo')" title="Music videos for interstitial B-roll + jukebox">Music Videos <span class="tab-count" id="count-music">0</span></button>
     <button class="rescan-btn" onclick="rescanLibrary()" title="Rescan library">Rescan</button>
   </div>
   <div id="library-status" class="scanning">
@@ -344,8 +374,17 @@ body.dragging{cursor:col-resize;user-select:none}
       </div>
     </div>
     <span class="np-status idle" id="np-status">Idle</span>
+    <div id="interstitial-settings" title="Auto gap after each song before the next one starts. Use HOLD to freeze that screen while B-roll keeps playing.">
+      <label>Gap <span id="bs-ms-label">15s</span></label>
+      <input type="range" id="bs-ms-slider" min="5" max="60" step="1" value="15">
+    </div>
+    <div id="volume-settings" title="Karol output into BlackHole → Ableton. Keep under ~70% so Live doesn't redline.">
+      <label>Out <span id="vol-label">55%</span></label>
+      <input type="range" id="vol-slider" min="10" max="100" step="1" value="55">
+    </div>
     <button class="transport-btn neutral" id="btn-prev" onclick="api.transport.prev()">⏮</button>
     <button class="transport-btn play" id="btn-play" onclick="togglePlay()">▶</button>
+    <button class="transport-btn hold" id="btn-hold-gap" onclick="toggleGapHold()" disabled title="Hold the between-songs screen — B-roll keeps playing">HOLD</button>
     <button class="transport-btn neutral" id="btn-next" onclick="api.transport.skip()">⏭</button>
   </div>
 
@@ -445,15 +484,32 @@ let processingJobs = {}; // Track active karaoke pipeline jobs
   });
 })();
 
+const DEFAULT_DJ_NAME = 'Naynay';
+
+function displaySingerName(raw) {
+  var s = String(raw || '').trim();
+  if (!s || /^dj$/i.test(s)) return DEFAULT_DJ_NAME;
+  return s;
+}
+
+function currentSingerOrDj() {
+  var a = document.getElementById('singer-input');
+  var b = document.getElementById('request-singer');
+  var typed = (a && a.value.trim()) || (b && b.value.trim()) || '';
+  return displaySingerName(typed);
+}
+
 // Rebuild the Karaoke + Custom + Music Videos membership sets from tags.json.
 // Called at init AND on every library refresh — tags can change while the
 // window is open (pipeline publishes, rescans, DJ reclassifies), so the sets
 // must never be a one-shot snapshot.
+let customUniqueCount = 0;
 async function refreshCustomVideoIds() {
   try {
     var tags = await api.library.tags();
     if (!tags || Object.keys(tags).length === 0) return; // keep previous sets on transient read failure
     var next = new Set();
+    var customBases = new Set();
     var kNext = new Set();
     var mvNext = new Set();
     var mvMeta = {};
@@ -464,8 +520,10 @@ async function refreshCustomVideoIds() {
       if (entry.source === 'karaoke-maker') {
         // Library rows may use either the base id or the '-karaoke'
         // variant id — index both so the Custom filter matches.
-        next.add(key.replace(/-karaoke$/, ''));
-        next.add(key.replace(/-karaoke$/, '') + '-karaoke');
+        var base = key.replace(/-karaoke$/, '');
+        customBases.add(base);
+        next.add(base);
+        next.add(base + '-karaoke');
       } else if (entry.tag === 'karaoke') {
         // Karaoke tab: tag=karaoke, NOT a karaoke-maker product
         kNext.add(key);
@@ -477,12 +535,40 @@ async function refreshCustomVideoIds() {
                         unavailable: !!entry.title_unavailable };
       }
     }
-    if (next.size > 0 || customVideoIds.size === 0) customVideoIds = next;
-    if (kNext.size > 0 || karaokeVideoIds.size === 0) karaokeVideoIds = kNext;
-    if (mvNext.size > 0 || musicVideoIds.size === 0) { musicVideoIds = mvNext; musicVideoMeta = mvMeta; }
+    // Always replace when tags loaded successfully (including empty customs
+    // after the DJ reclassified the last custom track away).
+    customVideoIds = next;
+    customUniqueCount = customBases.size;
+    karaokeVideoIds = kNext;
+    musicVideoIds = mvNext;
+    musicVideoMeta = mvMeta;
     tagMetaById = metaNext;
-    console.log('[controller] Karaoke:', karaokeVideoIds.size, '| Custom:', customVideoIds.size, '| Music videos:', musicVideoIds.size);
+    updateFilterTabCounts();
+    console.log('[controller] Karaoke:', karaokeVideoIds.size, '| Custom:', customUniqueCount, '| Music videos:', musicVideoIds.size);
   } catch(_) { /* keep previous sets */ }
+}
+
+function updateFilterTabCounts() {
+  var elAll = document.getElementById('count-all');
+  var elK = document.getElementById('count-karaoke');
+  var elC = document.getElementById('count-custom');
+  var elM = document.getElementById('count-music');
+  if (elAll) elAll.textContent = String(allVideos.length || 0);
+  if (elK) {
+    var kCount = 0;
+    for (var i = 0; i < allVideos.length; i++) {
+      if (isKaraokeTabMember(allVideos[i])) kCount++;
+    }
+    elK.textContent = String(kCount);
+  }
+  if (elC) elC.textContent = String(customUniqueCount || 0);
+  if (elM) elM.textContent = String(musicVideoIds.size || 0);
+  var libCount = document.getElementById('lib-count');
+  if (libCount) {
+    libCount.textContent = allVideos.length
+      + ' · C' + (customUniqueCount || 0)
+      + ' · M' + (musicVideoIds.size || 0);
+  }
 }
 
 // Effective tag/source for a library row: live tags.json wins over the cached
@@ -835,9 +921,9 @@ function renderLibrary(videos) {
     } else {
       // Empty title → main process resolves the real one on queue; never send the raw id
       actionsHtml = '<div class="lib-actions">' +
-        '<button class="lib-btn queue" onclick="queueVideo(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">+ Queue</button>' +
-        '<button class="lib-btn playnow" onclick="playNow(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">Play</button>' +
-        '<button class="lib-btn reclass" title="Move to Karaoke / Custom / Music Video" onclick="event.stopPropagation();openReclassMenu(event,\'' + v.videoId + '\')">&#8942;</button>' +
+        '<button class="lib-btn queue" title="Add to queue" onclick="queueVideo(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">+ Queue</button>' +
+        '<button class="lib-btn playnow" title="Play now" onclick="playNow(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">Play</button>' +
+        '<button class="lib-btn reclass" title="Recategorize: Karaoke / Custom / Music Video" onclick="event.stopPropagation();openReclassMenu(event,\'' + v.videoId + '\')">&#8942;</button>' +
       '</div>';
     }
 
@@ -887,10 +973,11 @@ function applyFilterAndRender() {
   if (libraryFilter === 'musicvideo') resolveVisibleMusicVideoTitles(videos.slice(0, 200));
   // Update placeholder with current filter count
   var label = libraryFilter === 'karaoke' ? videos.length + ' karaoke tracks'
-    : libraryFilter === 'custom' ? videos.length + ' custom tracks'
+    : libraryFilter === 'custom' ? (customUniqueCount || videos.length) + ' custom tracks'
     : libraryFilter === 'musicvideo' ? videos.length + ' music videos'
     : 'all ' + allVideos.length + ' videos';
   document.getElementById('search-box').placeholder = 'Search ' + label + '...';
+  updateFilterTabCounts();
 }
 
 // Remote-only music videos have no local info.json, so titles may be unknown.
@@ -986,17 +1073,24 @@ async function reclassifyTrack(bucket) {
       setRequestStatus('Reclassify failed: ' + ((r && r.error) || 'unknown error'), '#ef4444');
       return;
     }
+    // Keep base + -karaoke sibling tags in sync so Custom counts stay accurate
+    var base = String(videoId).replace(/-karaoke$/, '');
+    var sibling = videoId === base ? base + '-karaoke' : base;
+    if (sibling !== videoId) {
+      try { await api.library.reclassify(sibling, target.tag, target.source); } catch (_) {}
+    }
     // Immediate local update so the row moves tabs without waiting for a rescan
+    var ids = [videoId, sibling];
     for (var i = 0; i < allVideos.length; i++) {
-      if (allVideos[i].videoId === videoId) {
+      if (ids.indexOf(allVideos[i].videoId) >= 0) {
         allVideos[i].tag = target.tag;
         allVideos[i].source = target.source;
       }
     }
     await refreshCustomVideoIds();
     applyFilterAndRender();
-    setRequestStatus('Moved to ' + target.label + ': ' + videoId, '#40f040');
-    setTimeout(function() { setRequestStatus(''); }, 3000);
+    setRequestStatus('Moved to ' + target.label + ' · Custom: ' + customUniqueCount + ' · Music: ' + musicVideoIds.size, '#40f040');
+    setTimeout(function() { setRequestStatus(''); }, 3500);
   } catch (e) {
     setRequestStatus('Reclassify error: ' + e.message, '#ef4444');
   }
@@ -1121,8 +1215,7 @@ async function queueVideo(videoId, title) {
     return;
   }
   try {
-    var singer = (document.getElementById('singer-input') && document.getElementById('singer-input').value.trim()) ||
-                 (document.getElementById('request-singer').value.trim()) || 'DJ';
+    var singer = currentSingerOrDj();
     await api.queue.add(videoId, title, singer, '');
     refreshQueue();
   } catch(e) { console.error('Queue error:', e); }
@@ -1134,8 +1227,7 @@ async function playNow(videoId, title) {
     return;
   }
   try {
-    var singer = (document.getElementById('singer-input') && document.getElementById('singer-input').value.trim()) ||
-                 (document.getElementById('request-singer').value.trim()) || 'DJ';
+    var singer = currentSingerOrDj();
     await api.queue.playNow(videoId, title, singer, '');
     refreshQueue();
   } catch(e) { console.error('Play now error:', e); }
@@ -1513,6 +1605,103 @@ function togglePlay() {
   }
 }
 
+var gapHoldState = { interstitialActive: false, interstitialHeld: false, interstitialRemainingMs: 0 };
+
+function applyGapHoldState(state) {
+  if (!state || typeof state !== 'object') return;
+  gapHoldState = {
+    interstitialActive: !!state.interstitialActive,
+    interstitialHeld: !!state.interstitialHeld,
+    interstitialRemainingMs: Math.max(0, state.interstitialRemainingMs || 0),
+  };
+  updateGapHoldBtn();
+  updateGapStatusBadge();
+}
+
+function updateGapHoldBtn() {
+  var btn = document.getElementById('btn-hold-gap');
+  if (!btn) return;
+  var active = gapHoldState.interstitialActive;
+  var held = gapHoldState.interstitialHeld;
+  btn.disabled = !active;
+  btn.classList.toggle('holding', held);
+  btn.textContent = held ? 'RESUME' : 'HOLD';
+  btn.title = held
+    ? 'Resume the between-songs countdown'
+    : (active ? 'Hold the between-songs screen — B-roll keeps playing' : 'Available during the auto gap between songs');
+}
+
+function updateGapStatusBadge() {
+  if (!gapHoldState.interstitialActive) return;
+  var statusEl = document.getElementById('np-status');
+  if (!statusEl) return;
+  if (gapHoldState.interstitialHeld) {
+    statusEl.textContent = 'Holding';
+    statusEl.className = 'np-status holding';
+  } else {
+    var sec = Math.max(1, Math.round((gapHoldState.interstitialRemainingMs || 0) / 1000));
+    statusEl.textContent = 'Gap ' + sec + 's';
+    statusEl.className = 'np-status gap';
+  }
+}
+
+function toggleGapHold() {
+  if (!api.transport || !api.transport.toggleGapHold) return;
+  api.transport.toggleGapHold().then(applyGapHoldState).catch(function() {});
+}
+
+function initInterstitialSettings() {
+  var slider = document.getElementById('bs-ms-slider');
+  var label = document.getElementById('bs-ms-label');
+  var volSlider = document.getElementById('vol-slider');
+  var volLabel = document.getElementById('vol-label');
+  if (!api.settings) return;
+  function applyGapLabel(sec) {
+    if (label) label.textContent = sec + 's';
+  }
+  function applyVolLabel(pct) {
+    if (volLabel) volLabel.textContent = pct + '%';
+  }
+  api.settings.get().then(function(r) {
+    var ms = (r && r.betweenSongsMs) || 15000;
+    var sec = Math.round(ms / 1000);
+    if (slider) { slider.value = String(sec); applyGapLabel(sec); }
+    var vol = (r && typeof r.volumeLevel === 'number') ? r.volumeLevel : 0.55;
+    var pct = Math.round(vol * 100);
+    if (volSlider) { volSlider.value = String(pct); applyVolLabel(pct); }
+    if (r && (r.interstitialActive != null || r.interstitialHeld != null)) {
+      applyGapHoldState(r);
+    } else if (api.transport && api.transport.gapState) {
+      api.transport.gapState().then(applyGapHoldState).catch(function() {});
+    }
+  }).catch(function() {});
+  var saveTimer = null;
+  if (slider) {
+    slider.addEventListener('input', function() {
+      var sec = parseInt(slider.value, 10) || 15;
+      applyGapLabel(sec);
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(function() {
+        api.settings.set({ betweenSongsMs: sec * 1000 }).catch(function() {});
+      }, 200);
+    });
+  }
+  var volTimer = null;
+  if (volSlider) {
+    volSlider.addEventListener('input', function() {
+      var pct = parseInt(volSlider.value, 10) || 55;
+      applyVolLabel(pct);
+      var level = Math.max(0.1, Math.min(1, pct / 100));
+      clearTimeout(volTimer);
+      volTimer = setTimeout(function() {
+        api.settings.set({ volumeLevel: level }).catch(function() {});
+        if (api.transport && api.transport.volume) api.transport.volume(level);
+      }, 80);
+    });
+  }
+}
+initInterstitialSettings();
+
 function seekProgress(e) {
   if (!nowPlaying || !nowPlaying.duration || nowPlaying.duration <= 0) return;
   var rect = e.currentTarget.getBoundingClientRect();
@@ -1532,11 +1721,16 @@ function updateNowPlaying() {
     document.getElementById('np-duration').textContent = '0:00';
     document.getElementById('np-progress-bar').style.width = '0%';
     updatePlayBtn(false);
+    if (gapHoldState.interstitialActive) updateGapStatusBadge();
+    else {
+      var idleStatus = document.getElementById('np-status');
+      if (idleStatus) { idleStatus.textContent = 'Idle'; idleStatus.className = 'np-status idle'; }
+    }
     return;
   }
 
   document.getElementById('np-title').textContent = safeDisplayTitle(nowPlaying.title, nowPlaying.videoId);
-  document.getElementById('np-singer').textContent = (nowPlaying.requester || 'DJ') + ' \u2022 ' + (nowPlaying.isYouTube ? 'YouTube' : 'Local');
+  document.getElementById('np-singer').textContent = displaySingerName(nowPlaying.requester) + ' \u2022 ' + (nowPlaying.isYouTube ? 'YouTube' : 'Local');
   document.getElementById('np-current').textContent = formatTime(nowPlaying.currentTime || 0);
   document.getElementById('np-duration').textContent = formatTime(nowPlaying.duration || 0);
 
@@ -1545,8 +1739,12 @@ function updateNowPlaying() {
 
   var statusEl = document.getElementById('np-status');
   var isPlaying = nowPlaying.state === 1;
-  statusEl.textContent = isPlaying ? 'Playing' : (nowPlaying.state === 2 ? 'Paused' : 'Idle');
-  statusEl.className = 'np-status ' + (isPlaying ? 'playing' : (nowPlaying.state === 2 ? 'paused' : 'idle'));
+  if (gapHoldState.interstitialActive) {
+    updateGapStatusBadge();
+  } else {
+    statusEl.textContent = isPlaying ? 'Playing' : (nowPlaying.state === 2 ? 'Paused' : 'Idle');
+    statusEl.className = 'np-status ' + (isPlaying ? 'playing' : (nowPlaying.state === 2 ? 'paused' : 'idle'));
+  }
 
   updatePlayBtn(isPlaying);
 }
@@ -1823,6 +2021,10 @@ api.on('player-status', function(state) {
   updateNowPlaying();
 });
 
+api.on('interstitial-state', function(state) {
+  applyGapHoldState(state);
+});
+
 api.on('queue-update', function() {
   fullLyricsActive = false;
   lyricSliderActive = false;
@@ -1841,10 +2043,19 @@ init();
 </script>
 
 <!-- Per-track reclassify menu -->
-<div id="reclass-menu">
-  <button onclick="reclassifyTrack('karaoke')">Move to Karaoke</button>
-  <button onclick="reclassifyTrack('custom')">Move to Custom</button>
-  <button onclick="reclassifyTrack('music')">Move to Music Video</button>
+<div id="reclass-menu" role="menu" aria-label="Recategorize video">
+  <button onclick="reclassifyTrack('karaoke')" title="Move to Karaoke tab (standard karaoke)">
+    Move to Karaoke
+    <span class="rc-hint">Standard karaoke · not custom pipeline</span>
+  </button>
+  <button onclick="reclassifyTrack('custom')" title="Move to Custom tab (karaoke-maker / your pipeline)">
+    Move to Custom
+    <span class="rc-hint">Your karaoke-maker tracks</span>
+  </button>
+  <button onclick="reclassifyTrack('music')" title="Move to Music Videos (jukebox + interstitial B-roll)">
+    Move to Music Video
+    <span class="rc-hint">Interstitial B-roll + music jukebox</span>
+  </button>
 </div>
 
 <!-- Re-lyric config modal -->

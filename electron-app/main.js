@@ -655,6 +655,18 @@ function startDirectDownload(videoId, url, tag = 'music') {
         }
         processingJobs[videoId] = { status: 'done', progress: 100, label: videoId, karaokify: false, url: url };
         console.log('[karol] Direct download complete:', videoId);
+        try { invalidateMusicBrollPool(); } catch (_) {}
+        // If this track is currently selected, re-fire play so the player
+        // picks up the new local file (avoids stuck "not downloaded" state).
+        try {
+          const cur = queueIndex >= 0 && queue[queueIndex] ? queue[queueIndex] : null;
+          const curId = cur ? String(cur.videoId || '') : '';
+          const baseCur = curId.replace(/-karaoke$/, '');
+          if (cur && (curId === videoId || baseCur === videoId || curId === videoId + '-karaoke')) {
+            console.log('[karol] Re-playing after download:', videoId);
+            sendPlay(cur.videoId, cur.title, cur.singer || cur.requester || '');
+          }
+        } catch (e) {}
         // Refresh queue title from metadata if we only had a placeholder
         try {
           const resolvedTitle = resolveTitleLocal(videoId);
@@ -701,7 +713,38 @@ function startDirectDownload(videoId, url, tag = 'music') {
 let queue = [];
 let queueIndex = -1;
 let playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
-let volumeLevel = 1;
+const DEFAULT_VOLUME = 0.55;
+let volumeLevel = DEFAULT_VOLUME;
+const DEFAULT_DJ_NAME = 'Naynay';
+
+/** Show Naynay whenever the singer slot is empty or the legacy "DJ" placeholder. */
+function displaySingerName(raw) {
+  const s = String(raw || '').trim();
+  if (!s || /^dj$/i.test(s)) return DEFAULT_DJ_NAME;
+  return s;
+}
+
+function healQueueSingerNames() {
+  let changed = false;
+  for (const item of queue) {
+    if (!item) continue;
+    const singer = String(item.singer || '').trim();
+    const requester = String(item.requester || '').trim();
+    if (!singer || /^dj$/i.test(singer)) {
+      item.singer = DEFAULT_DJ_NAME;
+      changed = true;
+    }
+    if (!requester || /^dj$/i.test(requester)) {
+      item.requester = DEFAULT_DJ_NAME;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function normalizeQueueSinger(requester) {
+  return displaySingerName(requester);
+}
 let skipRequested = false;
 
 // ── State persistence ──
@@ -726,6 +769,7 @@ function loadState() {
       const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
       if (state.queue && Array.isArray(state.queue)) queue = state.queue;
       if (typeof state.queueIndex === 'number') queueIndex = state.queueIndex;
+      if (healQueueSingerNames()) saveState();
       console.log('[karol] Loaded state: ' + queue.length + ' queued, index ' + queueIndex);
       // Don't reload processingJobs from old session — they may not be running
     }
@@ -1337,7 +1381,12 @@ function createPlayer() {
   });
   updateKaraokePowerPolicy('player-opened');
 
-  playWin.webContents.on('console-message', (e, l, m) => console.log('[player]', m));
+  playWin.webContents.on('console-message', (event, level, message) => {
+    const msg = (typeof message === 'string' && message)
+      || (event && typeof event.message === 'string' && event.message)
+      || '';
+    if (msg) console.log('[player]', msg);
+  });
   playWin.webContents.on('did-finish-load', () => {
     console.log('[karol] Player loaded');
     placePlayerOnExternalDisplay('did-finish-load');
@@ -1500,10 +1549,11 @@ function handleDjApi(action, payload) {
       const vid = resolveVid(payload.videoId || videoId);
       if (!vid) return { ok: false, error: 'No videoId' };
       const title = bestTitleFor(vid, payload.title);
-      queue.push({ videoId: vid, title, singer: requester, requester });
+      const who = normalizeQueueSinger(requester);
+      queue.push({ videoId: vid, title, singer: who, requester: who });
       if (queueIndex < 0) {
         queueIndex = queue.length - 1;
-        sendPlay(vid, title, requester);
+        sendPlay(vid, title, who);
       }
       saveState();
       notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
@@ -1514,19 +1564,19 @@ function handleDjApi(action, payload) {
       const vid = resolveVid(payload.videoId);
       if (!vid) return { ok: false, error: 'No videoId' };
       const title = bestTitleFor(vid, payload.title);
-      const requester = payload.requester || '';
+      const who = normalizeQueueSinger(payload.requester || '');
       const existingIdx = queue.findIndex((item) => item.videoId === vid);
       let carriedMysqlId = null;
       if (existingIdx >= 0) {
         carriedMysqlId = queue[existingIdx].mysqlRequestId || null;
         queue.splice(existingIdx, 1);
       }
-      queue.push({ videoId: vid, title, singer: requester, requester, mysqlRequestId: carriedMysqlId });
+      queue.push({ videoId: vid, title, singer: who, requester: who, mysqlRequestId: carriedMysqlId });
       skipRequested = true;
       clearBetweenSongsTimer();
       queueIndex = queue.length - 1;
       saveState();
-      sendPlay(vid, title, requester);
+      sendPlay(vid, title, who);
       notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
       notifyPlayerQueue();
       return { ok: true, state: buildPhoneQueueState() };
@@ -1620,8 +1670,9 @@ function handleDjApi(action, payload) {
       return { ok: true, nowPlaying: buildPhoneNowPlaying() };
     }
     case 'transport-volume': {
-      const level = Number(payload.level ?? payload.volume ?? 1);
-      volumeLevel = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 1));
+      const level = Number(payload.level ?? payload.volume ?? DEFAULT_VOLUME);
+      volumeLevel = Math.max(0, Math.min(1, Number.isFinite(level) ? level : DEFAULT_VOLUME));
+      saveSettings();
       notifyPlayer({ type: 'volume', level: volumeLevel });
       return { ok: true, volumeLevel, nowPlaying: buildPhoneNowPlaying() };
     }
@@ -1671,23 +1722,95 @@ function sendPlay(videoId, title, requester) {
       saveState();
     }
   }
+  // Kick off a local download if the file is missing — never rely on YouTube
+  // embeds in Electron (Error 153). Player will wait/poll for the file.
+  try {
+    const baseId = String(resolved || '').replace(/-karaoke$/, '');
+    const hasFile = library && typeof library.getFilePath === 'function'
+      && (library.getFilePath(resolved) || library.getFilePath(baseId));
+    if (!hasFile && /^[A-Za-z0-9_-]{11}$/.test(baseId)) {
+      console.log('[karol] sendPlay: no local file for', resolved, '— starting download');
+      startDirectDownload(baseId, 'https://www.youtube.com/watch?v=' + baseId, 'music');
+    }
+  } catch (e) {
+    console.warn('[karol] sendPlay download check failed:', e && e.message);
+  }
   // Send play + full queue snapshot so player + monitor can render immediately
   sendToPlayers('player-event', {
     type: 'play', videoId: resolved, isYouTube: false,
     title: displayTitle({ title, videoId: resolved }),
     requester: requester || '',
+    volumeLevel: volumeLevel,
     queue: queue, currentIndex: queueIndex,
   });
 }
 
 let betweenSongsTimer = null;
-const BETWEEN_SONGS_MS = 10000;
+let betweenSongsMs = 15000; // default 15s — controllable from DJ controller
+let betweenSongsHeld = false;
+let betweenSongsRemainingMs = 0;
+let betweenSongsDeadline = 0;
+let betweenSongsPendingItem = null;
+
+const SETTINGS_FILE = path.join('/tmp', 'karol-settings.json');
+
+function loadSettings() {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const s = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+      if (typeof s.betweenSongsMs === 'number' && isFinite(s.betweenSongsMs)) {
+        betweenSongsMs = s.betweenSongsMs;
+      }
+      if (typeof s.volumeLevel === 'number' && isFinite(s.volumeLevel)) {
+        volumeLevel = Math.max(0, Math.min(1, s.volumeLevel));
+      }
+    }
+  } catch (e) {
+    console.warn('[karol] settings load failed:', e.message);
+  }
+}
+
+function saveSettings() {
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
+      betweenSongsMs: getBetweenSongsMs(),
+      volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
+    }, null, 2));
+  } catch (e) {
+    console.warn('[karol] settings save failed:', e.message);
+  }
+}
+
+function getBetweenSongsMs() {
+  return Math.max(3000, Math.min(120000, Math.round(Number(betweenSongsMs) || 15000)));
+}
 
 function clearBetweenSongsTimer() {
   if (betweenSongsTimer) {
     clearTimeout(betweenSongsTimer);
     betweenSongsTimer = null;
   }
+  betweenSongsHeld = false;
+  betweenSongsRemainingMs = 0;
+  betweenSongsDeadline = 0;
+  betweenSongsPendingItem = null;
+  notifyInterstitialState();
+}
+
+function getInterstitialState() {
+  const active = !!(betweenSongsTimer || betweenSongsHeld || betweenSongsPendingItem);
+  let remainingMs = 0;
+  if (betweenSongsHeld) remainingMs = Math.max(0, betweenSongsRemainingMs || 0);
+  else if (betweenSongsDeadline) remainingMs = Math.max(0, betweenSongsDeadline - Date.now());
+  return {
+    interstitialActive: active,
+    interstitialHeld: !!betweenSongsHeld,
+    interstitialRemainingMs: remainingMs,
+  };
+}
+
+function notifyInterstitialState() {
+  notifyCtrl('interstitial-state', getInterstitialState());
 }
 
 /** Payload for pause interstitial — prefer next singer, else current / paused tip. */
@@ -1697,35 +1820,331 @@ function buildPauseInterstitialPayload() {
   let label = 'Up next';
   if (queue.length > 1 && queueIndex >= 0) {
     const next = queue[(queueIndex + 1) % queue.length];
-    singer = String(next.singer || next.requester || '').trim();
+    singer = displaySingerName(next.singer || next.requester);
     title = displayTitle(next);
     label = 'Up next';
   } else if (queueIndex >= 0 && queueIndex < queue.length) {
     const cur = queue[queueIndex];
-    singer = String(cur.singer || cur.requester || '').trim() || 'Paused';
+    singer = displaySingerName(cur.singer || cur.requester);
     title = displayTitle(cur);
     label = 'Paused';
   } else {
-    singer = 'Paused';
+    singer = DEFAULT_DJ_NAME;
     title = 'Scan QR to request a song';
     label = 'Paused';
   }
   return {
     type: 'pause-interstitial',
-    singer: singer || 'Next up',
+    singer: singer || DEFAULT_DJ_NAME,
     title,
     label,
+    brollVideoId: pickRandomMusicBrollId(),
     queue,
     currentIndex: queueIndex,
   };
 }
 
-function doTransportPause() {
-  // Don't interrupt natural between-songs auto-advance with a pause interstitial
+/**
+ * Interstitial B-roll pool = Music Videos tab (tag music/song), exclusive songs/ folder.
+ * Remote-tagged entries are downloaded into LIBRARY_SONGS_DIR in the background so the
+ * local pool grows toward the full ~600 catalog; picks are a no-repeat shuffle of locals.
+ */
+let musicBrollPool = null; // { all: string[], local: string[], remote: string[] }
+let musicBrollPoolBuiltAt = 0;
+let musicBrollDeck = []; // shuffled local ids; refill when empty
+let musicBrollLocalIndex = null; // Set of bases with a local non-karaoke file
+let musicBrollLocalIndexAt = 0;
+const MUSIC_BROLL_POOL_TTL_MS = 5 * 60 * 1000;
+const MUSIC_BROLL_INDEX_TTL_MS = 60 * 1000;
+let musicBrollSeedTimer = null;
+let musicBrollSeedInFlight = 0;
+const MUSIC_BROLL_SEED_CONCURRENCY = 1;
+/** Off by default — auto-filling ~600 Music Videos into songs/ flooded the Processing panel.
+ *  Interstitial B-roll uses whatever is already local in songs/. Set true only if you want
+ *  background downloads of missing tagged music videos. */
+let musicBrollAutoSeed = false;
+
+function musicSearchDirs() {
+  const dirs = [];
+  const seen = new Set();
+  const push = (d) => {
+    if (!d) return;
+    try {
+      const abs = path.resolve(d);
+      if (seen.has(abs)) return;
+      seen.add(abs);
+      dirs.push(abs);
+    } catch (_) {}
+  };
+  if (library) {
+    // Prefer exclusive USB songs/, then legacy Mac Deskreen songs/, then Deskreen root
+    push(library.LIBRARY_SONGS_DIR);
+    const legacy = library.LEGACY_SONGS_DIRS || [];
+    for (const d of legacy) push(d);
+    push(library.LIBRARY_DIR);
+  }
+  return dirs;
+}
+
+/** One directory scan → Set of playable music bases (avoids 600× existsSync on USB). */
+function rebuildMusicBrollLocalIndex(force) {
+  const now = Date.now();
+  if (!force && musicBrollLocalIndex && (now - musicBrollLocalIndexAt) < MUSIC_BROLL_INDEX_TTL_MS) {
+    return musicBrollLocalIndex;
+  }
+  const found = new Set();
+  const exts = new Set(['.mp4', '.webm', '.mkv', '.m4v']);
+  for (const dir of musicSearchDirs()) {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch (_) { continue; }
+    for (const name of names) {
+      if (!name || name.startsWith('._')) continue;
+      const ext = path.extname(name).toLowerCase();
+      if (!exts.has(ext)) continue;
+      const base = path.basename(name, path.extname(name));
+      if (!/^[A-Za-z0-9_-]{11}$/.test(base)) continue;
+      if (/-karaoke$/i.test(base)) continue;
+      try {
+        if (fs.statSync(path.join(dir, name)).size > 1000) found.add(base);
+      } catch (_) {}
+    }
+  }
+  musicBrollLocalIndex = found;
+  musicBrollLocalIndexAt = now;
+  return found;
+}
+
+function findLocalMusicFile(base) {
+  const idx = rebuildMusicBrollLocalIndex(false);
+  if (!idx.has(base)) return null;
+  const exts = ['.mp4', '.webm', '.mkv', '.m4v'];
+  for (const dir of musicSearchDirs()) {
+    for (const ext of exts) {
+      const p = path.join(dir, base + ext);
+      try {
+        if (fs.existsSync(p) && fs.statSync(p).size > 1000) return p;
+      } catch (_) {}
+    }
+  }
+  return null;
+}
+
+function isMusicVideoTagEntry(entry) {
+  if (!entry) return false;
+  const tag = typeof entry === 'object' ? entry.tag : entry;
+  const source = typeof entry === 'object' ? entry.source : '';
+  if (source === 'karaoke-maker') return false;
+  return tag === 'music' || tag === 'song';
+}
+
+function listMusicVideoIds() {
+  const all = [];
+  const seen = new Set();
+  if (!library || typeof library.getTags !== 'function') return all;
+  const tags = library.getTags() || {};
+  for (const key of Object.keys(tags)) {
+    if (/-karaoke$/.test(key)) continue;
+    if (!isMusicVideoTagEntry(tags[key])) continue;
+    const base = String(key).replace(/-karaoke$/, '');
+    if (!/^[A-Za-z0-9_-]{11}$/.test(base) || seen.has(base)) continue;
+    seen.add(base);
+    all.push(base);
+  }
+  return all;
+}
+
+/** Rebuild Music Videos B-roll pools (all tagged + which are on disk in songs/). */
+function rebuildMusicBrollPool(force) {
+  const now = Date.now();
+  if (!force && musicBrollPool && (now - musicBrollPoolBuiltAt) < MUSIC_BROLL_POOL_TTL_MS) {
+    return musicBrollPool;
+  }
+  const localIdx = rebuildMusicBrollLocalIndex(force);
+  const all = [];
+  const local = [];
+  const remote = [];
+  try {
+    for (const base of listMusicVideoIds()) {
+      all.push(base);
+      if (localIdx.has(base)) local.push(base);
+      else remote.push(base);
+    }
+  } catch (e) {
+    console.warn('[karol] music broll pool rebuild failed:', e && e.message);
+  }
+  musicBrollPool = { all, local, remote };
+  musicBrollPoolBuiltAt = now;
+  if (musicBrollDeck.length) {
+    const localSet = new Set(local);
+    musicBrollDeck = musicBrollDeck.filter((id) => localSet.has(id));
+  }
+  console.log('[karol] Interstitial music pool:', local.length, 'local /', all.length, 'Music Videos (songs/ + tagged)',
+    musicBrollAutoSeed ? '(auto-seed on)' : '(auto-seed off)');
+  return musicBrollPool;
+}
+
+/** Invalidate B-roll cache when tags/library change. */
+function invalidateMusicBrollPool() {
+  musicBrollPool = null;
+  musicBrollPoolBuiltAt = 0;
+  musicBrollDeck = [];
+  musicBrollLocalIndex = null;
+  musicBrollLocalIndexAt = 0;
+}
+
+function shuffleInPlace(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+function refillMusicBrollDeck(local) {
+  const copy = local.slice();
+  if (pickRandomMusicBrollId._last && copy.length > 1) {
+    const filtered = copy.filter((id) => id !== pickRandomMusicBrollId._last);
+    musicBrollDeck = shuffleInPlace(filtered.length ? filtered : copy);
+  } else {
+    musicBrollDeck = shuffleInPlace(copy);
+  }
+}
+
+/** Queue missing Music Videos into songs/ (opt-in — does not run unless musicBrollAutoSeed). */
+function scheduleMusicBrollSeed() {
+  if (!musicBrollAutoSeed) return;
+  if (musicBrollSeedTimer) return;
+  musicBrollSeedTimer = setTimeout(() => {
+    musicBrollSeedTimer = null;
+    try { seedNextMusicBrollDownloads(); } catch (e) {
+      console.warn('[karol] music broll seed failed:', e && e.message);
+    }
+  }, 4000);
+}
+
+function seedNextMusicBrollDownloads() {
+  if (!musicBrollAutoSeed) return;
+  const pool = rebuildMusicBrollPool(false);
+  if (!pool.remote.length) return;
+  while (musicBrollSeedInFlight < MUSIC_BROLL_SEED_CONCURRENCY && pool.remote.length) {
+    const idx = Math.floor(Math.random() * pool.remote.length);
+    const id = pool.remote.splice(idx, 1)[0];
+    if (!id) continue;
+    if (rebuildMusicBrollLocalIndex(false).has(id)) continue;
+    if (processingJobs[id] && processingJobs[id].status !== 'error' && processingJobs[id].status !== 'done') continue;
+    musicBrollSeedInFlight++;
+    console.log('[karol] Seeding Music Videos → songs/:', id, '(' + pool.remote.length + ' remaining)');
+    try {
+      if (library && typeof library.setTag === 'function') library.setTag(id, 'music');
+    } catch (_) {}
+    try {
+      startDirectDownload(id, 'https://www.youtube.com/watch?v=' + id, 'music');
+    } catch (e) {
+      musicBrollSeedInFlight = Math.max(0, musicBrollSeedInFlight - 1);
+      console.warn('[karol] music seed start failed:', id, e && e.message);
+      continue;
+    }
+    const watch = setInterval(() => {
+      const job = processingJobs[id];
+      const localNow = (() => {
+        try {
+          rebuildMusicBrollLocalIndex(true);
+          return rebuildMusicBrollLocalIndex(false).has(id);
+        } catch (_) { return false; }
+      })();
+      const done = localNow || (job && (job.status === 'done' || job.status === 'error'));
+      if (!done) return;
+      clearInterval(watch);
+      musicBrollSeedInFlight = Math.max(0, musicBrollSeedInFlight - 1);
+      invalidateMusicBrollPool();
+      setTimeout(() => {
+        try { rebuildMusicBrollPool(true); } catch (_) {}
+        scheduleMusicBrollSeed();
+      }, 500);
+    }, 5000);
+  }
+}
+
+/** Uniform random pick from local Music Videos already on disk (no-repeat deck). */
+function pickRandomMusicBrollId() {
+  try {
+    const pool = rebuildMusicBrollPool(false);
+    if (!pool.local.length) {
+      console.warn('[karol] No local Music Videos in songs/ for interstitial B-roll (', pool.all.length, 'tagged remote — auto-seed is', musicBrollAutoSeed ? 'on' : 'off', ')');
+      return null;
+    }
+    if (!musicBrollDeck.length) refillMusicBrollDeck(pool.local);
+    let choice = musicBrollDeck.pop();
+    if (!choice || (pool.local.length > 1 && choice === pickRandomMusicBrollId._last && musicBrollDeck.length)) {
+      choice = musicBrollDeck.pop() || choice;
+    }
+    if (!choice) {
+      refillMusicBrollDeck(pool.local);
+      choice = musicBrollDeck.pop();
+    }
+    pickRandomMusicBrollId._last = choice || null;
+    return choice || null;
+  } catch (e) {
+    console.warn('[karol] broll pick failed:', e && e.message);
+    return null;
+  }
+}
+
+/** Hold between-songs countdown; B-roll keeps playing on the player. */
+function holdBetweenSongs() {
+  if (!betweenSongsPendingItem && !betweenSongsTimer) return false;
   if (betweenSongsTimer) {
-    notifyPlayer({ type: 'pause' });
+    clearTimeout(betweenSongsTimer);
+    betweenSongsTimer = null;
+    betweenSongsRemainingMs = Math.max(1500, betweenSongsDeadline - Date.now());
+  }
+  betweenSongsHeld = true;
+  sendToPlayers('player-event', { type: 'between-songs-hold' });
+  console.log('[karol] Interstitial held —', Math.round(betweenSongsRemainingMs / 1000) + 's remaining');
+  notifyInterstitialState();
+  return true;
+}
+
+/** Resume held between-songs countdown. */
+function resumeBetweenSongs() {
+  if (!betweenSongsHeld || !betweenSongsPendingItem) return false;
+  betweenSongsHeld = false;
+  const item = betweenSongsPendingItem;
+  const ms = Math.max(1500, betweenSongsRemainingMs || getBetweenSongsMs());
+  betweenSongsDeadline = Date.now() + ms;
+  sendToPlayers('player-event', { type: 'between-songs-resume', remainingMs: ms });
+  betweenSongsTimer = setTimeout(() => {
+    betweenSongsTimer = null;
+    betweenSongsPendingItem = null;
+    betweenSongsRemainingMs = 0;
+    notifyInterstitialState();
+    sendPlay(item.videoId, item.title, item.singer || item.requester);
+    notifyPlayerQueue();
+  }, ms);
+  console.log('[karol] Interstitial resumed —', Math.round(ms / 1000) + 's left');
+  notifyInterstitialState();
+  return true;
+}
+
+/** Dedicated Hold/Resume for the Gap interstitial (controller HOLD button). */
+function toggleBetweenSongsHold() {
+  if (betweenSongsHeld) {
+    resumeBetweenSongs();
+  } else if (betweenSongsTimer || betweenSongsPendingItem) {
+    holdBetweenSongs();
+  }
+  return getInterstitialState();
+}
+
+function doTransportPause() {
+  // During between-songs: hold the countdown, keep B-roll + animations running
+  if (betweenSongsTimer || betweenSongsHeld || betweenSongsPendingItem) {
+    holdBetweenSongs();
     playback.state = 'paused';
-    return { ok: true, nowPlaying: buildPhoneNowPlaying() };
+    notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+    return { ok: true, nowPlaying: buildPhoneNowPlaying(), interstitialHeld: true };
   }
   // Show interstitial over a live (or already paused) track — never advance queue
   if (playback.state === 'playing' || playback.state === 'paused' || playback.videoId) {
@@ -1741,6 +2160,12 @@ function doTransportPause() {
 }
 
 function doTransportPlay() {
+  // Resume a held between-songs interstitial (B-roll already spinning)
+  if (betweenSongsHeld && betweenSongsPendingItem) {
+    resumeBetweenSongs();
+    playback.state = 'playing';
+    return { ok: true, nowPlaying: buildPhoneNowPlaying(), interstitialHeld: false };
+  }
   // Resume same paused track (reverse QR trip) — do not call sendPlay / advance
   if (playback.state === 'paused') {
     sendToPlayers('player-event', { type: 'resume' });
@@ -1752,16 +2177,25 @@ function doTransportPlay() {
   return { ok: true, nowPlaying: buildPhoneNowPlaying() };
 }
 
-/** Show next-singer + big QR for 10s, then start playback. */
+/** Show next-singer + big QR + music B-roll, then start playback. */
 function playAfterBetweenSongs(item) {
   if (!item) return;
   clearBetweenSongsTimer();
-  const singer = String(item.singer || item.requester || '').trim();
+  betweenSongsPendingItem = item;
+  const ms = getBetweenSongsMs();
+  betweenSongsRemainingMs = ms;
+  betweenSongsDeadline = Date.now() + ms;
+  const singer = displaySingerName(item.singer || item.requester);
   const title = displayTitle(item);
+  if (!playWin || playWin.isDestroyed()) createPlayer();
+  const brollVideoId = pickRandomMusicBrollId();
+  console.log('[karol] Interstitial broll pick:', brollVideoId || '(none)', 'gap', ms + 'ms', 'singer', singer);
   sendToPlayers('player-event', {
     type: 'between-songs',
-    singer: singer || 'Next up',
+    singer: singer,
     title,
+    durationMs: ms,
+    brollVideoId,
     queue,
     currentIndex: queueIndex,
   });
@@ -1769,9 +2203,13 @@ function playAfterBetweenSongs(item) {
   notifyPlayerQueue();
   betweenSongsTimer = setTimeout(() => {
     betweenSongsTimer = null;
+    betweenSongsPendingItem = null;
+    betweenSongsRemainingMs = 0;
+    notifyInterstitialState();
     sendPlay(item.videoId, item.title, item.singer || item.requester);
     notifyPlayerQueue();
-  }, BETWEEN_SONGS_MS);
+  }, ms);
+  notifyInterstitialState();
 }
 
 function advanceQueue(direction) {
@@ -1847,11 +2285,18 @@ app.whenReady().then(async () => {
   if (library && typeof library.init === 'function') {
     const scanStatus = await library.init();
     console.log('[karol] Library ready:', JSON.stringify(scanStatus || {}));
+    // Build interstitial Music Videos pool off the critical path
+    setTimeout(() => {
+      try { rebuildMusicBrollPool(true); } catch (e) {
+        console.warn('[karol] music broll pool warm-up failed:', e && e.message);
+      }
+    }, 1500);
     if (scanStatus) notifyCtrl('library-scan-progress', scanStatus);
   }
 
   // Restore persistent state
   loadState();
+  loadSettings();
 
   // Heal any queue entries persisted with bare-id titles (older sessions):
   // resolve from library / MySQL catalog / oEmbed and notify all surfaces.
@@ -2117,6 +2562,32 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     callback(true);
   });
 
+  // YouTube Error 153 ("Video player configuration error") — Electron iframes
+  // often omit/block Referer. Force a normal browser Referer/Origin on YT requests.
+  try {
+    session.defaultSession.webRequest.onBeforeSendHeaders(
+      {
+        urls: [
+          'https://www.youtube.com/*',
+          'https://www.youtube-nocookie.com/*',
+          'https://*.youtube.com/*',
+          'https://*.youtube-nocookie.com/*',
+          'https://*.googlevideo.com/*',
+          'https://*.ytimg.com/*',
+        ],
+      },
+      (details, callback) => {
+        const headers = details.requestHeaders || {};
+        headers.Referer = 'https://www.youtube.com/';
+        headers.Origin = 'https://www.youtube.com';
+        callback({ requestHeaders: headers });
+      },
+    );
+    console.log('[karol] YouTube Referer/Origin headers patched (Error 153 mitigation)');
+  } catch (e) {
+    console.warn('[karol] YouTube header patch failed:', e && e.message);
+  }
+
   // Serve local media. stream:true privilege (registered above) is required so
   // Chromium can range-request large MP4s; without it playback stalls at t=0.
   // Prefer registerFileProtocol over protocol.handle(net.fetch) — the latter
@@ -2225,6 +2696,11 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   });
   ipcMain.handle('library-metadata', (_e, vid) => library ? library.getMetadata(vid) : null);
   ipcMain.handle('library-tags', () => library ? library.getTags() : {});
+  ipcMain.handle('library-random-music', () => {
+    const videoId = pickRandomMusicBrollId();
+    const title = videoId ? (resolveTitleLocal(videoId) || '') : '';
+    return { ok: true, videoId, title };
+  });
   // Resolve display titles for remote-only library entries and persist them
   // into tags.json so each id is resolved only once. Local lookup first, then
   // concurrent oEmbed (no per-id MySQL round-trips — those made the original
@@ -2268,11 +2744,15 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     if (!library) return { ok: false, error: 'library unavailable' };
     // Reclassify (tag AND source overwritten) when source is provided;
     // plain tag-only calls keep the legacy merge-preserving behavior.
+    let result;
     if (source !== undefined && typeof library.reclassify === 'function') {
-      return library.reclassify(videoId, { tag, source });
+      result = library.reclassify(videoId, { tag, source });
+    } else {
+      library.setTag(videoId, tag);
+      result = { ok: true };
     }
-    library.setTag(videoId, tag);
-    return { ok: true };
+    invalidateMusicBrollPool();
+    return result;
   });
   ipcMain.handle('library-status', (_e, vid) => library ? library.getStatus(vid) : { exists: false });
   ipcMain.handle('library-lyrics', (_e, vid) => library ? library.getLyrics(vid) : null);
@@ -2284,6 +2764,8 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   });
   ipcMain.handle('library-scan', async () => {
     if (library) await library.init(true);
+    invalidateMusicBrollPool();
+    setTimeout(() => { try { rebuildMusicBrollPool(true); } catch (_) {} }, 500);
     return { ok: true };
   });
 
@@ -2327,8 +2809,9 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.handle('queue-add', (_e, { videoId, title, requester }) => {
     const vid = resolveVid(videoId);
     const cleanTitle = bestTitleFor(vid, title);
-    queue.push({ videoId: vid, title: cleanTitle, singer: requester || '', requester: requester || '' });
-    if (queueIndex < 0) { queueIndex = queue.length - 1; sendPlay(vid, cleanTitle, requester); }
+    const who = normalizeQueueSinger(requester);
+    queue.push({ videoId: vid, title: cleanTitle, singer: who, requester: who });
+    if (queueIndex < 0) { queueIndex = queue.length - 1; sendPlay(vid, cleanTitle, who); }
     saveState();
     notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
     notifyPlayerQueue();
@@ -2338,15 +2821,16 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.handle('queue-play-now', (_e, { videoId, title, requester }) => {
     const vid = resolveVid(videoId);
     const cleanTitle = bestTitleFor(vid, title);
+    const who = normalizeQueueSinger(requester);
     const existingIdx = queue.findIndex(item => item.videoId === vid);
     if (existingIdx >= 0) {
       queue.splice(existingIdx, 1);
     }
-    queue.push({ videoId: vid, title: cleanTitle, singer: requester || '', requester: requester || '' });
+    queue.push({ videoId: vid, title: cleanTitle, singer: who, requester: who });
     skipRequested = true;
     queueIndex = queue.length - 1;
     saveState();
-    sendPlay(vid, cleanTitle, requester);
+    sendPlay(vid, cleanTitle, who);
     notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
     notifyPlayerQueue();
     return { ok: true };
@@ -2417,12 +2901,19 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     return { title: '', state: -2 };
   });
 
-  ipcMain.on('transport-play', () => { doTransportPlay(); });
-  ipcMain.on('transport-pause', () => { doTransportPause(); });
+  ipcMain.on('transport-play', () => { doTransportPlay(); notifyInterstitialState(); });
+  ipcMain.on('transport-pause', () => { doTransportPause(); notifyInterstitialState(); });
   ipcMain.on('transport-skip', () => advanceQueue(1));
   ipcMain.on('transport-prev', () => advanceQueue(-1));
   ipcMain.on('transport-seek', (_e, t) => notifyPlayer({ type: 'seek', time: t }));
-  ipcMain.on('transport-volume', (_e, l) => notifyPlayer({ type: 'volume', level: l }));
+  ipcMain.handle('transport-toggle-gap-hold', () => toggleBetweenSongsHold());
+  ipcMain.handle('transport-gap-state', () => getInterstitialState());
+  ipcMain.on('transport-volume', (_e, l) => {
+    const level = Math.max(0, Math.min(1, Number(l)));
+    volumeLevel = Number.isFinite(level) ? level : DEFAULT_VOLUME;
+    saveSettings();
+    notifyPlayer({ type: 'volume', level: volumeLevel });
+  });
   ipcMain.on('fx-trigger', (_e, name) => notifyPlayer({ type: 'fx', name: String(name || '').slice(0, 24) }));
   ipcMain.on('toggle-lyric-slider', (_e, active) => {
     notifyPlayer({ type: 'toggle-lyric-slider', active });
@@ -2555,6 +3046,29 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   // ── Health ──
   ipcMain.handle('health-check', async () => await runHealthCheck());
+  ipcMain.handle('settings-get', () => ({
+    ok: true,
+    betweenSongsMs: getBetweenSongsMs(),
+    volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
+    ...getInterstitialState(),
+  }));
+  ipcMain.handle('settings-set', (_e, patch) => {
+    if (patch && typeof patch.betweenSongsMs === 'number' && isFinite(patch.betweenSongsMs)) {
+      betweenSongsMs = Math.max(3000, Math.min(120000, Math.round(patch.betweenSongsMs)));
+      console.log('[karol] Interstitial duration set to', getBetweenSongsMs() + 'ms');
+    }
+    if (patch && typeof patch.volumeLevel === 'number' && isFinite(patch.volumeLevel)) {
+      volumeLevel = Math.max(0, Math.min(1, patch.volumeLevel));
+      notifyPlayer({ type: 'volume', level: volumeLevel });
+      console.log('[karol] Player volume set to', volumeLevel, '(~' + (20 * Math.log10(Math.max(0.0001, volumeLevel))).toFixed(1) + ' dBFS)');
+    }
+    saveSettings();
+    return {
+      ok: true,
+      betweenSongsMs: getBetweenSongsMs(),
+      volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
+    };
+  });
 
   // ── Retry failed pipeline job ──
   ipcMain.handle('retry-job', (_e, { videoId }) => {

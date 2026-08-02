@@ -30,6 +30,20 @@ function start(videoId, makeKaraoke = false, url = null, opts = {}) {
     const mp4 = library.getVideoPath(videoId);
     const karaokeMp4 = path.join(library.LIBRARY_KARAOKE_DIR, videoId + '-karaoke.mp4');
 
+    // Join an in-flight download instead of spawning a second yt-dlp
+    const existing = activeDownloads.get(videoId);
+    if (existing && existing.proc && !makeKaraoke) {
+      existing.proc.once('close', (code) => {
+        const resultPath = library.getVideoPath(videoId);
+        if (code === 0 && fs.existsSync(resultPath)) {
+          resolve({ ok: true, videoId, path: resultPath, joined: true });
+        } else {
+          reject(new Error('Existing download failed (code ' + code + ')'));
+        }
+      });
+      return;
+    }
+
     // Already have a regular download
     if (fs.existsSync(mp4) && !makeKaraoke) {
       resolve({ ok: true, videoId, alreadyExists: true, path: mp4 });
@@ -110,11 +124,19 @@ function fullKaraokePipeline(videoId, url, opts, resolve, reject) {
     args.push('--rebuild-audio');
     // Explore YouTube karaoke versions before Whisper invent
     args.push('--find-karaoke');
+    // Re-Lyric always intends to replace the on-disk LRC (including garbage
+    // WEBVTT dumps from older parses).
+    args.push('--force-overwrite-lyrics');
   }
   if (opts.forceWhisper) args.push('--force-whisper');
   if (opts.forceOverwriteLyrics) args.push('--force-overwrite-lyrics');
   if (opts.karaokeMatch) args.push('--karaoke-match', opts.karaokeMatch);
-  if (opts.whisperModel) args.push('--whisper-model', opts.whisperModel);
+  // Prefer medium.en when UI omits a model — large-v3 often OOMs / stalls on laptop.
+  if (opts.whisperModel) {
+    args.push('--whisper-model', opts.whisperModel);
+  } else if (opts.isReLyric) {
+    args.push('--whisper-model', 'medium.en');
+  }
 
   // Pass artist/title from tags or opts so LRCLIB search has clean metadata
   try {

@@ -462,6 +462,11 @@ def should_overwrite_lrc(existing_path: Path, new_path: Path, force: bool = Fals
         log("quality-gate", f"LRC compare failed ({e}) — keeping existing")
         return False
 
+    # Always replace WEBVTT/garbage dumps left by older caption bugs
+    if _lrc_json_is_garbage(old):
+        log("quality-gate", "Existing LRC is garbage — allowing overwrite")
+        return True
+
     old_rank = _lrc_source_rank(old)
     new_rank = _lrc_source_rank(new)
     if old_rank >= 100 and new_rank < 100:
@@ -1686,6 +1691,53 @@ def _parse_genius(html: str) -> str:
     return "\n\n".join(parts)
 
 
+def _looks_like_lrc_content(content: str) -> bool:
+    """True when a subtitle file is standard [mm:ss.xx] LRC, not WebVTT."""
+    if not content:
+        return False
+    head = content[:800].lstrip().upper()
+    if head.startswith("WEBVTT") or "-->" in content[:2000]:
+        return False
+    return bool(re.search(r"\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]\s*\S", content))
+
+
+def _looks_like_garbage_lyrics(text: str) -> bool:
+    """Detect WEBVTT/header junk that used to ship as 'lyrics' after bad parses."""
+    if not text or len(text.strip()) < 8:
+        return True
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return True
+    bad_markers = ("WEBVTT", "Kind: captions", "Language:", "-->")
+    marker_hits = sum(1 for ln in lines if any(m in ln for m in bad_markers))
+    ts_only = sum(
+        1 for ln in lines
+        if re.match(r"^\d{2}:\d{2}:\d{2}[.,]\d+", ln) or re.match(r"^\d{2}:\d{2}:\d{2}\s*-->", ln)
+    )
+    if marker_hits >= 1:
+        return True
+    if ts_only >= 3 and ts_only >= len(lines) * 0.25:
+        return True
+    return False
+
+
+def _lrc_json_is_garbage(data: dict) -> bool:
+    """True when an on-disk LRC JSON is unusable (VTT dump, empty, etc.)."""
+    if not isinstance(data, dict):
+        return True
+    lines = data.get("lines") or []
+    if not lines:
+        return True
+    plain_parts = []
+    for line in lines:
+        text = (line.get("text") or "").strip()
+        if not text and line.get("words"):
+            text = " ".join(w.get("text", "") for w in line["words"]).strip()
+        if text:
+            plain_parts.append(text)
+    return _looks_like_garbage_lyrics("\n".join(plain_parts))
+
+
 def parse_vtt_to_lrc_json(vtt_path: str, video_id: str, duration: float) -> Optional[str]:
     """Parse a WebVTT subtitle file and convert it to an LRC JSON file.
 
@@ -1703,6 +1755,12 @@ def parse_vtt_to_lrc_json(vtt_path: str, video_id: str, duration: float) -> Opti
     except (OSError, UnicodeDecodeError) as e:
         log("lyrics", f"VTT read error: {e}")
         return None
+
+    # yt-dlp sometimes names files .vtt after converting to LRC, or callers
+    # historically passed .en.lrc into this function by mistake.
+    if _looks_like_lrc_content(content):
+        log("lyrics", f"File looks like LRC, not VTT — routing to LRC parser: {os.path.basename(vtt_path)}")
+        return parse_lrc_file_to_lrc_json(vtt_path, video_id, duration)
 
     # VTT timestamp format: 00:00:05.000 --> 00:00:08.500
     # Also handles: 00:00:05.000 --> 00:00:08.500 position:10% align:left
@@ -1859,13 +1917,14 @@ def parse_lrc_file_to_lrc_json(lrc_path: str, video_id: str, duration: float) ->
             "words": word_entries,
         })
 
-    json_path = os.path.join(os.path.dirname(lrc_path), f"{video_id}-karaoke-from-lrc.lrc.json")
+    json_path = os.path.join(os.path.dirname(lrc_path), f"{video_id}-karaoke.lrc.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({
             "videoId": video_id,
             "duration": duration,
             "lines": lrc_lines,
             "source": "lrc-captions",
+            "alignMode": "embedded_subs",
         }, f, indent=2, ensure_ascii=False)
     log("lyrics", f"LRC → JSON: {len(lrc_lines)} cues from {os.path.basename(lrc_path)}")
     return json_path
@@ -2192,6 +2251,8 @@ def _score_lyric_candidate(
     """Higher is better. Prefer synced catalog sources over paste/invent."""
     if not text or len(text.strip()) < 10:
         return -1.0
+    if _looks_like_garbage_lyrics(text):
+        return -1.0
     words = len(text.split())
     # Rough expected lyric density: ~1 word / 2.5s of song
     expected = max(40.0, duration / 2.5)
@@ -2209,6 +2270,89 @@ def _score_lyric_candidate(
     }
     score += bonuses.get(source, 0.0)
     return score
+
+
+def _collect_embedded_caption_candidates(tmp_dir: str, video_id: str, duration: float) -> list[dict]:
+    """Find yt-dlp caption files in tmp and convert them to scored Stage 1 candidates."""
+    found: list[dict] = []
+    patterns = [
+        f"{video_id}.en.lrc",
+        f"{video_id}.en-en.lrc",
+        f"{video_id}.en.vtt",
+        f"{video_id}.en-en.vtt",
+        f"{video_id}.en-orig.lrc",
+        f"{video_id}.en-orig.vtt",
+    ]
+    # Also pick up locale variants like .en-es-419.lrc that still carry English text
+    try:
+        for name in os.listdir(tmp_dir):
+            lower = name.lower()
+            if not (lower.startswith(video_id.lower() + ".") and (lower.endswith(".lrc") or lower.endswith(".vtt"))):
+                continue
+            if name not in patterns:
+                patterns.append(name)
+    except OSError:
+        pass
+
+    seen = set()
+    for name in patterns:
+        path = os.path.join(tmp_dir, name)
+        if path in seen or not os.path.exists(path) or os.path.getsize(path) < 20:
+            continue
+        seen.add(path)
+        emb_json = captions_file_to_lrc_json(path, video_id, duration)
+        if not emb_json:
+            continue
+        emb_plain = _plain_from_lrc_json(emb_json)
+        score = _score_lyric_candidate(emb_plain, True, duration, "embedded_subs")
+        if score <= 0:
+            log("lyrics", f"Skipping low-quality embedded captions: {name}")
+            continue
+        found.append({
+            "source": "embedded_subs",
+            "text": emb_plain,
+            "synced": True,
+            "json_path": emb_json,
+            "score": score,
+            "caption_file": name,
+        })
+        log("lyrics", f"Embedded captions candidate from {name}: score={score:.0f} "
+                      f"words={len(emb_plain.split())}")
+    return found
+
+
+def _load_whisper_model_with_fallback(wt, requested: str, whisper_lang: str):
+    """Load Whisper model; fall back to smaller models on OOM / load failure.
+
+    large-v3 is easy to kill on laptop RAM — never hard-fail the whole pipeline
+    just because the requested model could not load.
+    """
+    requested = (requested or "").strip() or ("medium.en" if whisper_lang == "en" else "medium")
+    fallbacks: list[str] = [requested]
+    if whisper_lang == "en":
+        for m in ("medium.en", "small.en", "base.en", "tiny.en"):
+            if m not in fallbacks:
+                fallbacks.append(m)
+    else:
+        for m in ("medium", "small", "base", "tiny"):
+            if m not in fallbacks:
+                fallbacks.append(m)
+
+    last_err: Optional[BaseException] = None
+    for name in fallbacks:
+        try:
+            log("whisper", f"    Loading model {name} (language={whisper_lang})...")
+            model = wt.load_model(name)
+            if name != requested:
+                log("whisper", f"    Fell back from {requested} → {name}")
+            return model, name
+        except MemoryError as e:
+            last_err = e
+            log("whisper", f"    OOM loading {name} — trying smaller model")
+        except Exception as e:
+            last_err = e
+            log("whisper", f"    Failed loading {name}: {e}")
+    raise RuntimeError(f"Could not load any Whisper model (tried {fallbacks}): {last_err}")
 
 
 def _load_karaoke_match_from_tags(video_id: str) -> Optional[str]:
@@ -2378,8 +2522,7 @@ def step_whisper_lyrics(
 
         try:
             if model is None:
-                log("whisper", f"    Loading model {model_name} (language={whisper_lang})...")
-                model = wt.load_model(model_name)
+                model, model_name = _load_whisper_model_with_fallback(wt, model_name, whisper_lang)
 
             nst = first_chunk_threshold if ci == 0 else 0.6
             result = None
@@ -2438,10 +2581,22 @@ def step_whisper_lyrics(
 
         except MemoryError:
             log("whisper", f"    OOM on chunk {ci+1} — skipping and continuing")
+            # Drop broken large model so next chunk can fall back
+            if model is not None and str(model_name).startswith("large"):
+                log("whisper", "    Dropping large model after OOM — will reload smaller next chunk")
+                model = None
+                model_name = "medium.en" if whisper_lang == "en" else "medium"
             continue
         except Exception as e:
             log("whisper", f"    Chunk {ci+1} failed ({e}) — skipping")
+            if model is None and "Could not load any Whisper model" in str(e):
+                log("whisper", "    Aborting Whisper invent — no model available")
+                break
             continue
+
+    if not all_lines:
+        log("whisper", "No usable transcription lines — returning None")
+        return None
 
     # Sort and deduplicate
     all_lines.sort(key=lambda l: l["startTime"])
@@ -3533,10 +3688,16 @@ def step_register(
         pass
     log("library", f"Published karaoke MP4 → {dest_mp4}")
 
-    # Copy .lrc.json if it exists (for real-time overlay on tablet)
-    src_lrc_json = Path(karaoke_mp4).parent / f"{video_id}-karaoke.lrc.json"
-    if src_lrc_json.exists():
-        dest_lrc_json = karaoke_dir / f"{video_id}-karaoke.lrc.json"
+    # Copy .lrc.json if it exists (for real-time overlay on tablet).
+    # Accept canonical name and older -from-lrc / whisper sidecar names.
+    dest_lrc_json = karaoke_dir / f"{video_id}-karaoke.lrc.json"
+    parent = Path(karaoke_mp4).parent
+    src_candidates = [
+        parent / f"{video_id}-karaoke.lrc.json",
+        parent / f"{video_id}-karaoke-from-lrc.lrc.json",
+    ]
+    src_lrc_json = next((p for p in src_candidates if p.exists()), None)
+    if src_lrc_json is not None:
         if should_overwrite_lrc(dest_lrc_json, src_lrc_json, force=force_overwrite_lyrics):
             _atomic_publish(src_lrc_json, dest_lrc_json)
             # ── Repair: ensure word arrays match line text (prevents stale-word bugs) ──
@@ -3544,6 +3705,8 @@ def step_register(
             log("library", f"Copied LRC JSON → {dest_lrc_json}")
         else:
             log("library", f"Kept existing LRC JSON (new result not better): {dest_lrc_json}")
+    else:
+        log("library", f"No LRC JSON found next to karaoke MP4 in {parent}")
 
     # Copy vocal stem WAV for future reprocessing (onset detection, Whisper)
     if vocals_path and os.path.exists(vocals_path) and os.path.getsize(vocals_path) > 10000:
@@ -4206,7 +4369,14 @@ def main() -> None:
         if dest_lrc_lib.exists() and not args.force_overwrite_lyrics:
             try:
                 existing_lrc = json.loads(dest_lrc_lib.read_text(encoding="utf-8"))
-                if _lrc_source_rank(existing_lrc) >= 100:
+                if _lrc_json_is_garbage(existing_lrc):
+                    log("lyrics", "Existing library LRC looks like WEBVTT/garbage — ignoring sticky keep")
+                    catalog_text, catalog_synced, catalog_lrclib_id = step_fetch_lyrics(
+                        video_id, duration,
+                        artist_override=args.artist,
+                        title_override=args.title,
+                    )
+                elif _lrc_source_rank(existing_lrc) >= 100:
                     # Still refresh from same lrclibId if possible; never fall to Whisper
                     pref_id = existing_lrc.get("lrclibId")
                     catalog_text, catalog_synced, catalog_lrclib_id = step_fetch_lyrics(
@@ -4290,30 +4460,8 @@ def main() -> None:
                           f"words={len(pasted_lyrics.split())}")
 
         # Embedded yt-dlp subs already on disk (from download)
-        lrc_sub_path = os.path.join(tmp_dir, f"{video_id}.en.lrc")
-        vtt_sub_path = os.path.join(tmp_dir, f"{video_id}.en.vtt")
-        if os.path.exists(lrc_sub_path):
-            emb_json = parse_vtt_to_lrc_json(lrc_sub_path, video_id, duration)
-            if emb_json:
-                emb_plain = _plain_from_lrc_json(emb_json)
-                candidates.append({
-                    "source": "embedded_subs",
-                    "text": emb_plain,
-                    "synced": True,
-                    "json_path": emb_json,
-                    "score": _score_lyric_candidate(emb_plain, True, duration, "embedded_subs"),
-                })
-        elif os.path.exists(vtt_sub_path):
-            emb_json = parse_vtt_to_lrc_json(vtt_sub_path, video_id, duration)
-            if emb_json:
-                emb_plain = _plain_from_lrc_json(emb_json)
-                candidates.append({
-                    "source": "embedded_subs",
-                    "text": emb_plain,
-                    "synced": True,
-                    "json_path": emb_json,
-                    "score": _score_lyric_candidate(emb_plain, True, duration, "embedded_subs"),
-                })
+        for emb in _collect_embedded_caption_candidates(tmp_dir, video_id, duration):
+            candidates.append(emb)
 
         # Pick best Stage 1 candidate
         candidates = [c for c in candidates if c.get("score", -1) > 0]
@@ -4436,7 +4584,19 @@ def main() -> None:
                 is_synced = True
                 lyric_source = "whisper_invent"
             else:
-                log("lyrics", "No lyrics available. Rendering video without lyric overlay.")
+                # Emergency: if Whisper dies (large-v3 OOM etc.), still try embedded captions
+                log("lyrics", "Whisper invent failed — retrying embedded captions as last resort")
+                emergency = _collect_embedded_caption_candidates(tmp_dir, video_id, duration)
+                if emergency:
+                    emergency.sort(key=lambda c: c.get("score", -1), reverse=True)
+                    pick = emergency[0]
+                    json_path = pick["json_path"]
+                    lrc_text = "WHISPER_DONE"
+                    is_synced = True
+                    lyric_source = "embedded_subs"
+                    log("lyrics", f"Recovered lyrics from {pick.get('caption_file')}")
+                else:
+                    log("lyrics", "No lyrics available. Rendering video without lyric overlay.")
 
         # If --force-whisper and we have plain text but user wants invent anyway — ignore
         # (force-whisper no longer skips Stage 1; it only invents when Stage 1 is empty)

@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://www.youtube.com https://www.youtube-nocookie.com https://i.ytimg.com https://*.ytimg.com; media-src 'self' file: blob: karol-file:; connect-src 'self' file: karol-file:; img-src 'self' file: data: https:; font-src 'self' data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://www.youtube.com https://www.youtube-nocookie.com https://i.ytimg.com https://*.ytimg.com; media-src 'self' file: blob: karol-file: http://127.0.0.1:3131 http://localhost:3131; connect-src 'self' file: karol-file: http://127.0.0.1:3131 http://localhost:3131; img-src 'self' file: data: https:; font-src 'self' data:;">
 <title>Karol Player</title>
 <style>
-:root{--bg:#000;--accent:#8b5cf6;--gold:#f0c040;--white:#fff;--marquee-bg:rgba(10,10,15,0.92)}
+:root{--bg:#000;--accent:#8b5cf6;--gold:#f0c040;--white:#fff;--marquee-bg:rgba(10,10,15,0.92);--marquee-h:112px}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;background:var(--bg);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:none}
 body{display:flex;flex-direction:column}
@@ -16,7 +16,7 @@ body.is-monitor html,body.is-monitor{cursor:default}
 
 #main-area{flex:1;display:flex;flex-direction:row;min-height:0}
 #video-layer{flex:2;position:relative;min-width:0;min-height:0;transition:flex .3s}
-#video-layer video,#video-layer iframe{width:100%;height:100%;border:none;object-fit:contain;background:#000}
+#video-layer > video,#video-layer > iframe{width:100%;height:100%;border:none;object-fit:contain;background:#000}
 
 /* Full lyrics sidebar — toggleable fail-safe for karaoke tracks */
 #full-lyrics{flex:0;width:0;min-width:0;background:rgba(8,8,16,0.97);border-left:2px solid var(--accent);display:flex;flex-direction:column;overflow:hidden;transition:flex .3s,width .3s,padding .3s}
@@ -42,8 +42,16 @@ body.is-monitor html,body.is-monitor{cursor:default}
 @keyframes spin{to{transform:rotate(360deg)}}
 #loading-text{color:var(--accent);font-size:18px;font-weight:600}
 
-#queue-marquee{flex-shrink:0;width:100%;z-index:10;background:var(--marquee-bg);border-top:2px solid rgba(139,92,246,0.4);display:flex;align-items:center;padding:8px 0;min-height:96px;pointer-events:none;overflow:hidden}
+#queue-marquee{flex-shrink:0;width:100%;z-index:60;height:var(--marquee-h);box-sizing:border-box;background:var(--marquee-bg);border-top:2px solid rgba(139,92,246,0.4);display:flex;align-items:center;padding:8px 0;min-height:var(--marquee-h);pointer-events:none;overflow:hidden}
 #queue-marquee.hidden{display:none}
+/* During interstitial: tip QRs own tipping — hide marquee tip strip so scroll has full width */
+body:has(#between-songs.active) #qm-tip,
+body:has(#qr-fly.mode-hero) #qm-tip,
+body.interstitial-on #qm-tip{display:none !important}
+/* Clip player chrome so hero QR / tip cards cannot paint over the marquee */
+body:has(#between-songs.active) #main-area,
+body:has(#qr-fly.mode-hero) #main-area,
+#video-layer.between-active{overflow:hidden}
 #qm-current{display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:340px;max-width:420px;padding:0 18px;border-right:1px solid rgba(139,92,246,0.4);flex-shrink:0;z-index:2;background:linear-gradient(90deg,var(--marquee-bg) 85%,transparent 100%)}
 #qm-current .qm-label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);font-weight:700;line-height:1.1}
 #qm-current .qm-singer{font-size:42px;font-weight:800;color:var(--white);line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:380px}
@@ -281,17 +289,19 @@ body.is-monitor #conn-status{top:12px;left:12px}
 }
 body.is-monitor #donkey-buddy{display:none}
 
-/* Flying QR — corner during play, hero during between-songs, trips with prism FX */
-#qr-fly{position:absolute;z-index:55;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;transform-origin:center center;will-change:transform,filter;top:18px;right:18px;width:236px}
-#qr-fly.mode-hero{top:6vh;left:3.5vw;right:auto;width:min(46vw,calc(88vh - 118px),900px)}
+/* Flying QR — corner during play, hero during between-songs, trips with prism FX.
+   Hero size is driven by #bs-qr-slot; keep label inside the video layer above the marquee. */
+#qr-fly{position:absolute;z-index:55;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;transform-origin:center center;will-change:transform,filter;top:18px;right:18px;width:236px;max-height:100%;box-sizing:border-box}
+#qr-fly.mode-hero{top:auto;left:auto;right:auto;width:min(42vh,46vw,560px);gap:clamp(4px,0.8vh,10px);overflow:visible}
+#qr-fly.mode-hero .qr-card{max-height:calc(100% - 2.75rem);flex:0 1 auto;overflow:hidden}
 #qr-fly .qr-aura,#qr-fly .qr-aura-2{position:absolute;inset:-18%;border-radius:28%;opacity:0;pointer-events:none;z-index:0;background:conic-gradient(from 0deg,#ff006e,#8338ec,#3a86ff,#06d6a0,#ffbe0b,#fb5607,#ff006e);filter:blur(22px);mix-blend-mode:screen}
-#qr-fly .qr-card{position:relative;z-index:2;width:100%;aspect-ratio:1;background:#fff;padding:5.5%;border-radius:6%;box-shadow:0 4px 24px rgba(0,0,0,0.55);box-sizing:border-box;overflow:hidden}
+#qr-fly .qr-card{position:relative;z-index:2;width:100%;aspect-ratio:1;background:#fff;padding:5.5%;border-radius:6%;box-shadow:0 4px 24px rgba(0,0,0,0.55);box-sizing:border-box;overflow:hidden;flex:0 1 auto;min-height:0}
 #qr-fly .qr-card img{display:block;width:100%;height:100%;object-fit:contain}
 #qr-fly .qr-ghost{position:absolute;top:0;left:0;width:100%;aspect-ratio:1;z-index:1;opacity:0;pointer-events:none;border-radius:6%;mix-blend-mode:screen}
 #qr-fly .qr-ghost img{width:100%;height:100%;object-fit:contain;padding:5.5%;box-sizing:border-box;background:#fff;border-radius:6%}
 #qr-fly .qr-caption{position:relative;z-index:2;font-size:14px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,0.9);background:rgba(0,0,0,0.45);padding:4px 10px;border-radius:6px;transition:opacity .3s,transform .3s}
 #qr-fly.mode-hero .qr-caption{opacity:0;transform:translateY(8px);height:0;padding:0;overflow:hidden}
-#qr-fly .qr-hero-label{position:relative;z-index:2;font-weight:900;text-transform:uppercase;color:var(--gold);letter-spacing:clamp(2px,0.5vw,7px);font-size:clamp(26px,3.2vw,54px);line-height:1.1;text-align:center;white-space:nowrap;text-shadow:0 0 16px rgba(240,192,64,0.75),0 0 48px rgba(240,192,64,0.35),0 2px 10px rgba(0,0,0,0.85);opacity:0;height:0;overflow:hidden;transform:translateY(-8px);transition:opacity .3s,transform .3s}
+#qr-fly .qr-hero-label{position:relative;z-index:2;font-weight:900;text-transform:uppercase;color:var(--gold);letter-spacing:clamp(2px,0.5vw,7px);font-size:clamp(22px,2.6vw,42px);line-height:1.1;text-align:center;white-space:nowrap;text-shadow:0 0 16px rgba(240,192,64,0.75),0 0 48px rgba(240,192,64,0.35),0 2px 10px rgba(0,0,0,0.85);opacity:0;height:0;overflow:hidden;transform:translateY(-8px);transition:opacity .3s,transform .3s;flex-shrink:0}
 #qr-fly.mode-hero .qr-hero-label{opacity:1;height:auto;transform:translateY(0)}
 #qr-fly.tripping{z-index:60}
 #qr-fly.tripping .qr-aura{opacity:0.85;animation:qrAuraSpin 1.1s linear infinite}
@@ -309,38 +319,155 @@ body.is-monitor #donkey-buddy{display:none}
 }
 body.is-monitor #qr-fly{display:none}
 
-/* Between-songs interstitial (HDMI): spacer left (QR flies over it), details right */
-#between-songs{position:absolute;inset:0;z-index:40;display:flex;flex-direction:row;align-items:center;justify-content:center;gap:clamp(28px,4vw,64px);background:radial-gradient(ellipse at center,#1a1028 0%,#050508 70%);pointer-events:none;padding:clamp(24px,4vh,56px) clamp(28px,4vw,64px);opacity:0;visibility:hidden;transition:opacity 0.55s ease,visibility 0.55s}
+/* Between-songs interstitial (HDMI): top = up next, center = QR + B-roll, bottom = tips.
+   Center row fills remaining height so request QR and music video match in presence. */
+#between-songs{
+  position:absolute;inset:0;z-index:40;
+  display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;
+  gap:clamp(8px,1.4vh,16px);
+  background:radial-gradient(ellipse at center,#1a1028 0%,#050508 70%);
+  pointer-events:none;
+  padding:clamp(10px,1.8vh,24px) clamp(20px,3vw,48px) clamp(8px,1.4vh,18px);
+  opacity:0;visibility:hidden;transition:opacity 0.55s ease,visibility 0.55s;
+  overflow:hidden;box-sizing:border-box;
+}
 #between-songs.active{opacity:1;visibility:visible}
-#between-songs .bs-qr-wrap{flex:0 0 min(46vw,calc(88vh - 48px),900px);width:min(46vw,calc(88vh - 48px),900px);height:min(88vh,900px);visibility:hidden}
-#between-songs .bs-details{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:clamp(12px,2vh,28px);text-align:left;padding-right:clamp(8px,2vw,32px);opacity:0;transform:translateX(40px);transition:opacity 0.7s ease 0.35s,transform 0.7s cubic-bezier(0.22,1,0.36,1) 0.35s}
-#between-songs.active .bs-details{opacity:1;transform:translateX(0)}
-#between-songs .bs-label{font-size:clamp(18px,2.4vw,32px);font-weight:800;letter-spacing:6px;text-transform:uppercase;color:var(--accent)}
-#between-songs .bs-singer{font-size:clamp(42px,7vw,120px);font-weight:900;color:var(--white);line-height:1.05;text-shadow:0 0 40px rgba(139,92,246,0.45);max-width:100%;word-wrap:break-word}
-#between-songs .bs-song{font-size:clamp(18px,2.6vw,36px);font-weight:600;color:rgba(255,255,255,0.55);max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;white-space:normal}
-#between-songs .bs-caption{font-size:clamp(14px,1.8vw,24px);font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-top:clamp(4px,1vh,12px)}
-#between-songs .bs-tips{display:flex;flex-direction:column;gap:clamp(2px,0.6vh,8px);margin-top:clamp(8px,1.6vh,20px)}
-#between-songs .bs-tips-cta{font-size:clamp(16px,2vw,28px);font-weight:800;letter-spacing:5px;text-transform:uppercase;color:var(--gold);text-shadow:0 0 18px rgba(240,192,64,0.55);margin-bottom:clamp(2px,0.5vh,6px)}
-#between-songs .bs-tip{font-weight:900;font-size:clamp(30px,4.2vw,64px);line-height:1.15;letter-spacing:0.5px;white-space:nowrap;transform-origin:left center}
+#between-songs .bs-top{
+  flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:clamp(2px,0.5vh,6px);
+  min-width:0;max-width:min(70%,900px);
+  opacity:0;transform:translateY(-12px);
+  transition:opacity 0.55s ease 0.2s,transform 0.55s cubic-bezier(0.22,1,0.36,1) 0.2s;
+}
+#between-songs.active .bs-top{opacity:1;transform:translateY(0)}
+/* DJ file-as controls (HDMI interstitial) — top-right, clickable despite parent pointer-events:none */
+#between-songs .bs-reclass{
+  position:absolute;top:clamp(10px,1.8vh,24px);right:clamp(16px,2.4vw,40px);z-index:60;
+  display:none;flex-direction:column;align-items:stretch;gap:6px;
+  pointer-events:auto;min-width:148px;max-width:min(240px,32vw);
+  padding:10px 10px 8px;border-radius:12px;
+  background:rgba(8,6,16,0.78);border:1px solid rgba(139,92,246,0.35);
+  box-shadow:0 8px 28px rgba(0,0,0,0.45);backdrop-filter:blur(8px);
+  opacity:0;transform:translateY(-8px);
+  transition:opacity 0.4s ease 0.25s,transform 0.4s ease 0.25s;
+}
+#between-songs.active .bs-reclass{display:flex;opacity:1;transform:translateY(0)}
+body.is-monitor #between-songs .bs-reclass{display:none !important}
+#between-songs .bs-reclass-label{
+  font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;
+  color:rgba(255,255,255,0.55);padding:0 2px 2px;
+}
+#between-songs .bs-reclass-btns{display:flex;flex-direction:column;gap:4px}
+#between-songs .bs-reclass-btn{
+  appearance:none;cursor:pointer;border:1px solid rgba(255,255,255,0.12);
+  background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.88);
+  font-size:12px;font-weight:700;letter-spacing:0.3px;text-align:left;
+  padding:7px 10px;border-radius:8px;line-height:1.2;
+  transition:background 0.15s ease,border-color 0.15s ease,color 0.15s ease;
+}
+#between-songs .bs-reclass-btn:hover{background:rgba(139,92,246,0.22);border-color:rgba(139,92,246,0.55);color:#fff}
+#between-songs .bs-reclass-btn.active{
+  background:rgba(139,92,246,0.35);border-color:rgba(167,139,250,0.85);color:#fff;
+  box-shadow:0 0 0 1px rgba(139,92,246,0.35) inset;
+}
+#between-songs .bs-reclass-btn:disabled{opacity:0.45;cursor:wait}
+#between-songs .bs-reclass-status{
+  font-size:10px;font-weight:600;color:rgba(240,192,64,0.9);min-height:1.2em;
+  padding:0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#between-songs.active .bs-top{opacity:1;transform:translateY(0)}
+#between-songs .bs-label{font-size:clamp(13px,1.5vw,22px);font-weight:800;letter-spacing:6px;text-transform:uppercase;color:var(--accent)}
+#between-songs .bs-singer{font-size:clamp(26px,3.6vw,60px);font-weight:900;color:var(--white);line-height:1.05;text-shadow:0 0 40px rgba(139,92,246,0.45);max-width:100%;word-wrap:break-word}
+#between-songs .bs-song{font-size:clamp(13px,1.5vw,22px);font-weight:600;color:rgba(255,255,255,0.55);max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;white-space:normal}
+#between-songs .bs-center{
+  flex:1 1 0;min-height:0;min-width:0;
+  display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:minmax(0,1fr);
+  align-items:stretch;justify-items:stretch;
+  gap:clamp(14px,2.2vw,36px);
+}
+/* QR slot: square matching the full center-row height */
+#between-songs .bs-qr-wrap{
+  height:100%;width:auto;aspect-ratio:1;max-height:100%;
+  max-width:min(46vw, 70vh);justify-self:start;visibility:hidden;
+}
+/* B-roll fills remaining width AND full center-row height (same as QR) */
+#between-songs .bs-broll-wrap{
+  min-width:0;min-height:0;height:100%;position:relative;
+  border-radius:14px;overflow:hidden;
+  box-shadow:0 16px 48px rgba(0,0,0,0.55),0 0 0 1px rgba(255,255,255,0.12);
+  background:#000;
+}
+#between-songs .bs-caption{font-size:clamp(11px,1.1vw,15px);font-weight:800;letter-spacing:2px;text-transform:uppercase;color:rgba(240,192,64,0.85);margin-top:clamp(2px,0.4vh,6px);flex-shrink:0}
+#between-songs .bs-tip-block{
+  flex:0 0 auto;display:grid;grid-template-columns:auto minmax(0,1fr);
+  align-items:end;gap:clamp(14px,2.2vw,36px);
+  padding-top:clamp(2px,0.5vh,8px);padding-bottom:clamp(6px,1vh,12px);max-width:100%;
+  opacity:0;transform:translateY(10px);
+  transition:opacity 0.55s ease 0.35s,transform 0.55s cubic-bezier(0.22,1,0.36,1) 0.35s;
+}
+#between-songs.active .bs-tip-block{opacity:1;transform:translateY(0)}
+#between-songs .bs-tips{display:flex;flex-direction:column;gap:clamp(1px,0.35vh,4px);flex-shrink:0}
+#between-songs .bs-tips-cta{font-size:clamp(12px,1.3vw,18px);font-weight:800;letter-spacing:5px;text-transform:uppercase;color:var(--gold);text-shadow:0 0 18px rgba(240,192,64,0.55);margin-bottom:clamp(1px,0.25vh,3px)}
+#between-songs .bs-tip{font-weight:900;font-size:clamp(18px,2.2vw,34px);line-height:1.12;letter-spacing:0.5px;white-space:nowrap;transform-origin:left center}
 #between-songs .bs-tip .bs-tip-app{font-weight:800;opacity:0.92}
 #between-songs .bs-tip-venmo{color:#2e9fff;text-shadow:0 0 14px rgba(0,140,255,0.8),0 0 44px rgba(0,140,255,0.4);animation:bsTipPulse 2.6s ease-in-out infinite}
 #between-songs .bs-tip-cashapp{color:#2ee56b;text-shadow:0 0 14px rgba(0,214,50,0.8),0 0 44px rgba(0,214,50,0.4);animation:bsTipPulse 2.6s ease-in-out 1.3s infinite}
 @keyframes bsTipPulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.035);filter:brightness(1.3)}}
 body.is-monitor #between-songs .bs-tip{transform-origin:center center}
-#between-songs .bs-tip-qrs{display:flex;flex-direction:row;justify-content:space-between;align-self:stretch;gap:clamp(16px,2.2vw,36px);margin-top:clamp(10px,1.8vh,22px)}
-#between-songs .bs-tip-qr{display:flex;flex-direction:column;align-items:center;gap:clamp(4px,0.8vh,10px)}
-#between-songs .bs-tip-qr-card{width:clamp(110px,16vh,190px);aspect-ratio:1;background:#fff;padding:5%;border-radius:10px;box-sizing:border-box}
+/* Under the B-roll: video title (left) + tip QRs (right) */
+#between-songs .bs-under-broll{
+  display:flex;flex-direction:row;align-items:flex-end;justify-content:space-between;
+  gap:clamp(12px,1.8vw,28px);min-width:0;
+}
+#between-songs .bs-broll-meta{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:2px;padding-bottom:2px}
+#between-songs .bs-broll-now{font-size:clamp(11px,1.1vw,14px);font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--accent)}
+#between-songs .bs-broll-title{
+  font-size:clamp(16px,2vw,28px);font-weight:800;color:var(--white);line-height:1.15;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  text-shadow:0 2px 10px rgba(0,0,0,0.7);
+}
+#between-songs .bs-tip-qrs{
+  display:flex;flex-direction:row;justify-content:flex-end;align-items:flex-end;
+  gap:clamp(12px,1.8vw,24px);flex-shrink:0;
+}
+#between-songs .bs-tip-qr{display:flex;flex-direction:column;align-items:center;gap:clamp(2px,0.45vh,6px)}
+#between-songs .bs-tip-qr-card{
+  width:clamp(60px,7vh,90px);aspect-ratio:1;background:#fff;padding:5%;
+  border-radius:10px;box-sizing:border-box;
+}
 #between-songs .bs-tip-qr-card img{display:block;width:100%;height:100%;object-fit:contain}
-#between-songs .bs-tip-qr-label{font-size:clamp(21px,2.25vw,33px);font-weight:800;letter-spacing:1.5px;text-transform:uppercase;line-height:1.1}
+#between-songs .bs-tip-qr-label{font-size:clamp(12px,1.3vw,18px);font-weight:800;letter-spacing:1.5px;text-transform:uppercase;line-height:1.1}
 #between-songs .bs-tip-qr-venmo .bs-tip-qr-card{box-shadow:0 0 16px rgba(0,140,255,0.55),0 4px 18px rgba(0,0,0,0.5)}
 #between-songs .bs-tip-qr-venmo .bs-tip-qr-label{color:#2e9fff;text-shadow:0 0 12px rgba(0,140,255,0.6)}
 #between-songs .bs-tip-qr-cashapp .bs-tip-qr-card{box-shadow:0 0 16px rgba(0,214,50,0.55),0 4px 18px rgba(0,0,0,0.5)}
 #between-songs .bs-tip-qr-cashapp .bs-tip-qr-label{color:#2ee56b;text-shadow:0 0 12px rgba(0,214,50,0.6)}
 body.is-monitor #between-songs{justify-content:center}
 body.is-monitor #between-songs .bs-qr-wrap{display:none}
-body.is-monitor #between-songs .bs-details{align-items:center;text-align:center;flex:0 1 auto;transition-delay:0s}
+body.is-monitor #between-songs .bs-top{align-items:center;text-align:center}
+body.is-monitor #between-songs .bs-tip-block{justify-content:center}
 
-/* ── Showtime: singer entrance ── */
+/* Interstitial B-roll — fills the center-row slot beside the request QR */
+#broll-pip{
+  position:absolute;inset:0;z-index:1;
+  width:100%;height:100%;max-height:none;border-radius:0;
+  overflow:hidden;pointer-events:none;background:#000;
+  opacity:0;visibility:hidden;transform:scale(0.98);
+  transition:opacity 0.45s ease,visibility 0.45s,transform 0.45s cubic-bezier(0.22,1,0.36,1);
+  box-shadow:none;
+}
+#broll-pip.active{opacity:1;visibility:visible;transform:scale(1)}
+#broll-pip.fading-out{opacity:0;transform:scale(0.99)}
+#broll-pip video{width:100%;height:100%;object-fit:cover;display:block;background:#000}
+#broll-pip .broll-label{
+  position:absolute;left:12px;bottom:10px;z-index:2;
+  font-size:clamp(11px,1.1vw,14px);font-weight:800;letter-spacing:1.5px;text-transform:uppercase;
+  color:rgba(255,255,255,0.9);text-shadow:0 1px 6px rgba(0,0,0,0.9);
+  background:rgba(0,0,0,0.5);padding:4px 10px;border-radius:6px;pointer-events:none;
+}
+body.is-monitor #broll-pip{inset:0;transform:scale(0.98)}
+body.is-monitor #broll-pip.active{transform:scale(1)}
+
+/* legacy has-broll class kept for JS; layout no longer needs side padding */
+#between-songs.has-broll .bs-top{padding-right:0}
 #entrance{position:absolute;inset:0;z-index:75;display:none;flex-direction:column;align-items:center;justify-content:center;gap:clamp(8px,2vh,24px);pointer-events:none;overflow:hidden;background:radial-gradient(ellipse at center,rgba(12,7,24,0.5) 0%,rgba(2,2,6,0.9) 100%);--en-a:#f0c040;--en-b:#fff2b0}
 #entrance.active{display:flex}
 #entrance .en-spot{position:absolute;top:-40%;left:50%;width:52vw;height:170vh;transform-origin:top center;background:linear-gradient(to bottom,rgba(255,255,255,0.2),transparent 65%);filter:blur(26px);animation:enSpot 2.2s ease-in-out infinite alternate;mix-blend-mode:screen}
@@ -587,25 +714,50 @@ body.is-monitor #finale{display:none !important}
     <span class="qr-caption">Request songs</span>
   </div>
   <div id="between-songs" aria-hidden="true">
-    <div class="bs-qr-wrap" id="bs-qr-slot"></div>
-    <div class="bs-details">
+    <div class="bs-reclass" id="bs-reclass" aria-label="File this video">
+      <div class="bs-reclass-label">File as</div>
+      <div class="bs-reclass-btns">
+        <button type="button" class="bs-reclass-btn" data-bucket="karaoke" onclick="reclassifyBroll('karaoke')">Karaoke</button>
+        <button type="button" class="bs-reclass-btn" data-bucket="custom" onclick="reclassifyBroll('custom')">Custom</button>
+        <button type="button" class="bs-reclass-btn active" data-bucket="music" onclick="reclassifyBroll('music')">Music Video</button>
+      </div>
+      <div class="bs-reclass-status" id="bs-reclass-status"></div>
+    </div>
+    <div class="bs-top">
       <div class="bs-label" id="bs-label">Up next</div>
       <div class="bs-singer" id="bs-singer">—</div>
       <div class="bs-song" id="bs-song"></div>
+    </div>
+    <div class="bs-center">
+      <div class="bs-qr-wrap" id="bs-qr-slot"></div>
+      <div class="bs-broll-wrap" id="bs-broll-slot">
+        <div id="broll-pip" aria-hidden="true">
+          <video id="broll-video" playsinline preload="auto"></video>
+          <div class="broll-label">Now spinning</div>
+        </div>
+      </div>
+    </div>
+    <div class="bs-tip-block">
       <div class="bs-tips">
         <div class="bs-tips-cta">Tip your DJ</div>
         <div class="bs-tip bs-tip-venmo"><span class="bs-tip-app">Venmo</span> @karolpdx</div>
         <div class="bs-tip bs-tip-cashapp"><span class="bs-tip-app">CashApp</span> $karolpdx</div>
+        <div class="bs-caption">Scan QR to request a song · karol.rideyrbike.com</div>
       </div>
-      <div class="bs-caption">Scan QR to request a song · karol.rideyrbike.com</div>
-      <div class="bs-tip-qrs">
-        <div class="bs-tip-qr bs-tip-qr-venmo">
-          <div class="bs-tip-qr-card"><img src="venmo-qr.png" alt="Venmo @karolpdx"></div>
-          <div class="bs-tip-qr-label">Venmo</div>
+      <div class="bs-under-broll">
+        <div class="bs-broll-meta">
+          <div class="bs-broll-now">Now spinning</div>
+          <div class="bs-broll-title" id="bs-broll-title">—</div>
         </div>
-        <div class="bs-tip-qr bs-tip-qr-cashapp">
-          <div class="bs-tip-qr-card"><img src="cashapp-qr.png" alt="CashApp $karolpdx"></div>
-          <div class="bs-tip-qr-label">CashApp</div>
+        <div class="bs-tip-qrs">
+          <div class="bs-tip-qr bs-tip-qr-venmo">
+            <div class="bs-tip-qr-card"><img src="venmo-qr.png" alt="Venmo @karolpdx"></div>
+            <div class="bs-tip-qr-label">Venmo</div>
+          </div>
+          <div class="bs-tip-qr bs-tip-qr-cashapp">
+            <div class="bs-tip-qr-card"><img src="cashapp-qr.png" alt="CashApp $karolpdx"></div>
+            <div class="bs-tip-qr-label">CashApp</div>
+          </div>
         </div>
       </div>
     </div>
@@ -677,8 +829,16 @@ let progressTimer = null;
 let youtubeFrame = document.getElementById('youtube-frame');
 let queue = [];
 let currentIndex = -1;
+let playerVolume = 0.55; // synced from main; applied to every karaoke <video>
 let lyricEngine = null;
 let lyricOffset = 0; // Global lyric timing offset in seconds (for manual adjustment slider)
+
+function applyPlayerVolume(el) {
+  if (!el || IS_MONITOR) return;
+  try {
+    el.volume = Math.max(0, Math.min(1, playerVolume));
+  } catch (_) {}
+}
 
 // ── Disposable video management (avoids createMediaElementSource reuse bug) ──
 let currentVideoEl = null;
@@ -716,6 +876,8 @@ function createVideo() {
   if (IS_MONITOR) {
     el.muted = true;
     el.volume = 0;
+  } else {
+    applyPlayerVolume(el);
   }
 
   // Attach event handlers (clean slate, no accumulation)
@@ -763,15 +925,21 @@ updateConnStatus('connected');
 api.on('player-event', function(event) {
   console.log('[player] <-', event.type);
   switch (event.type) {
-    case 'play': handlePlay(event.videoId, event.isYouTube, event.title, event.requester); handleQueueUpdate(event.queue, event.currentIndex); break;
+    case 'play':
+      if (typeof event.volumeLevel === 'number') playerVolume = Math.max(0, Math.min(1, event.volumeLevel));
+      handlePlay(event.videoId, event.isYouTube, event.title, event.requester);
+      handleQueueUpdate(event.queue, event.currentIndex);
+      break;
     case 'pause': handlePause(); break;
     case 'pause-interstitial': handlePauseInterstitial(event); break;
     case 'resume': handleResume(); break;
-    case 'stop': setQrMode('corner'); pauseInterstitialActive = false; hideBetweenSongs(true); handleStop(); break;
+    case 'stop': setQrMode('corner'); pauseInterstitialActive = false; stopBroll(true); hideBetweenSongs(true); handleStop(); break;
     case 'seek': handleSeek(event.time); break;
     case 'sync-clock': handleSyncClock(event.time, event.state); break;
     case 'volume': handleVolume(event.level); break;
     case 'skip': handleSkip(); break;
+    case 'between-songs-hold': /* timer held — keep B-roll spinning */ break;
+    case 'between-songs-resume': /* countdown resumed */ break;
     case 'between-songs': handleBetweenSongs(event); break;
     case 'queue-update': handleQueueUpdate(event.queue, event.currentIndex); break;
     case 'toggle-lyric-slider': if (event.active) {
@@ -818,6 +986,7 @@ function clearQrInlinePos(fly) {
   fly.style.left = '';
   fly.style.right = '';
   fly.style.width = '';
+  fly.style.maxHeight = '';
 }
 
 function setQrMode(mode) {
@@ -830,10 +999,16 @@ function setQrMode(mode) {
       var slotR = slot.getBoundingClientRect();
       // If slot is laid out (between-songs visible), snap to it
       if (slotR.width > 40) {
+        var labelH = 48; // room for "Song Requests" under the card
+        // Slot is now the full center-row height — size the square to fit with label
+        var maxByHeight = Math.max(120, (slotR.height || 0) - labelH - 8);
+        var maxByLayer = Math.max(120, layer.height - (slotR.top - layer.top) - labelH - 12);
+        var maxW = Math.max(120, Math.min(slotR.width || maxByHeight, maxByHeight, maxByLayer));
         fly.style.top = (slotR.top - layer.top) + 'px';
         fly.style.left = (slotR.left - layer.left) + 'px';
         fly.style.right = 'auto';
-        fly.style.width = slotR.width + 'px';
+        fly.style.width = maxW + 'px';
+        fly.style.maxHeight = Math.max(140, (slotR.height || maxByHeight) + 4) + 'px';
       }
     }
     fly.classList.add('mode-hero');
@@ -951,9 +1126,10 @@ function handlePlay(videoId, isYT, title, requester) {
   var start = function() {
     pauseInterstitialActive = false;
     currentVideoId = videoId;
-    isYouTube = isYT !== false;
+    isYouTube = false;
 
     hideBetweenSongs(true);
+    stopBroll(false);
     hideLyrics();
     hideFullLyrics();
     lyricEngine = null;
@@ -969,11 +1145,9 @@ function handlePlay(videoId, isYT, title, requester) {
     updateMarquee(currentSongTitle, requester || '');
     showLoading('Loading...');
 
-    if (isYouTube) {
-      playYouTube(videoId);
-    } else {
-      playLocal(videoId);
-    }
+    // Always prefer local playback. YouTube embeds hit Error 153 in Electron
+    // ("Video player configuration error") — playLocal downloads if needed.
+    playLocal(videoId);
   };
 
   // Trip QR back to corner as the next track starts
@@ -1007,15 +1181,17 @@ function handleBetweenSongs(event) {
   var title = safeTitle(event && event.title, '');
   var labelEl = document.getElementById('bs-label');
   if (labelEl) labelEl.textContent = 'Up next';
-  document.getElementById('bs-singer').textContent = singer || 'Next up';
+  document.getElementById('bs-singer').textContent = (singer && !/^dj$/i.test(singer) && singer !== 'Next up') ? singer : 'Naynay';
   document.getElementById('bs-song').textContent = title || '';
   document.getElementById('between-songs').classList.add('active');
   document.getElementById('between-songs').setAttribute('aria-hidden', 'false');
   videoLayer.classList.add('between-active');
+  document.body.classList.add('interstitial-on');
   if (event && event.queue) handleQueueUpdate(event.queue, event.currentIndex);
   updateMarquee(title || '', singer || '');
   console.log('[player] Between songs:', singer, title);
   updateMicBuddyVisibility();
+  startBroll(event && event.brollVideoId);
 
   // Let layout settle, then prismatic flight corner → hero
   requestAnimationFrame(function() {
@@ -1034,21 +1210,23 @@ function handlePauseInterstitial(event) {
   pauseInterstitialActive = true;
   hideLoading();
   hideLyrics();
-  // Keep video loaded under the overlay so resume can continue mid-track
+  // Keep karaoke video loaded under the overlay so resume can continue mid-track
 
   var singer = (event && event.singer) ? String(event.singer).trim() : '';
   var title = safeTitle(event && event.title, '');
   var label = (event && event.label) ? String(event.label).trim() : 'Up next';
   var labelEl = document.getElementById('bs-label');
   if (labelEl) labelEl.textContent = label || 'Up next';
-  document.getElementById('bs-singer').textContent = singer || 'Paused';
+  document.getElementById('bs-singer').textContent = (singer && !/^dj$/i.test(singer) && singer !== 'Next up') ? singer : (singer === 'Paused' ? 'Paused' : 'Naynay');
   document.getElementById('bs-song').textContent = title || '';
   document.getElementById('between-songs').classList.add('active');
   document.getElementById('between-songs').setAttribute('aria-hidden', 'false');
   videoLayer.classList.add('between-active');
+  document.body.classList.add('interstitial-on');
   if (event && event.queue) handleQueueUpdate(event.queue, event.currentIndex);
   console.log('[player] Pause interstitial:', label, singer, title);
   updateMicBuddyVisibility();
+  startBroll(event && event.brollVideoId);
 
   requestAnimationFrame(function() {
     requestAnimationFrame(function() { tripQr(true); });
@@ -1064,6 +1242,7 @@ function handleResume() {
     var labelEl = document.getElementById('bs-label');
     if (labelEl) labelEl.textContent = 'Up next';
     hideBetweenSongs(true);
+    stopBroll(false);
     if (!isYouTube && currentVideoEl) {
       currentVideoEl.play().catch(function(e) {
         console.error('[player] Resume play failed:', e && e.message);
@@ -1091,19 +1270,401 @@ function hideBetweenSongs(instant) {
   var el = document.getElementById('between-songs');
   if (el) {
     el.classList.remove('active');
+    el.classList.remove('has-broll');
     el.setAttribute('aria-hidden', 'true');
   }
   videoLayer.classList.remove('between-active');
+  document.body.classList.remove('interstitial-on');
   updateMicBuddyVisibility();
+}
+
+// ── Interstitial B-roll (random music video PiP) ──
+let lastBrollId = null;
+let brollFadeRaf = null;
+let brollGen = 0; // bumps on each start/stop so ended handlers don't race
+
+function setBrollTitle(text) {
+  var el = document.getElementById('bs-broll-title');
+  if (!el) return;
+  el.textContent = text || '—';
+  el.title = text || '';
+}
+
+function setBrollReclassStatus(msg, ok) {
+  var el = document.getElementById('bs-reclass-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = ok === false ? '#f87171' : (ok ? '#4ade80' : 'rgba(240,192,64,0.9)');
+}
+
+function setBrollReclassActive(bucket) {
+  var root = document.getElementById('bs-reclass');
+  if (!root) return;
+  var btns = root.querySelectorAll('.bs-reclass-btn');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].classList.toggle('active', btns[i].getAttribute('data-bucket') === bucket);
+  }
+}
+
+var BROLL_RECLASS = {
+  karaoke: { tag: 'karaoke', source: 'manual', label: 'Karaoke', bucket: 'karaoke' },
+  custom: { tag: 'karaoke', source: 'karaoke-maker', label: 'Custom', bucket: 'custom' },
+  music: { tag: 'music', source: 'manual', label: 'Music Video', bucket: 'music' },
+};
+var brollReclassBusy = false;
+
+async function reclassifyBroll(bucket) {
+  if (IS_MONITOR || brollReclassBusy) return;
+  var target = BROLL_RECLASS[bucket];
+  var videoId = lastBrollId;
+  if (!target || !videoId) {
+    setBrollReclassStatus('No video loaded', false);
+    return;
+  }
+  if (!api.library || !api.library.reclassify) {
+    setBrollReclassStatus('Reclassify unavailable', false);
+    return;
+  }
+  brollReclassBusy = true;
+  var root = document.getElementById('bs-reclass');
+  if (root) {
+    var btns = root.querySelectorAll('.bs-reclass-btn');
+    for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+  }
+  setBrollReclassStatus('Saving…');
+  try {
+    var r = await api.library.reclassify(videoId, target.tag, target.source);
+    if (!r || r.ok === false) {
+      setBrollReclassStatus((r && r.error) || 'Failed', false);
+      return;
+    }
+    // Keep base / -karaoke siblings in sync (same as controller)
+    var base = String(videoId).replace(/-karaoke$/, '');
+    var sibling = videoId === base ? base + '-karaoke' : base;
+    if (sibling !== videoId) {
+      try { await api.library.reclassify(sibling, target.tag, target.source); } catch (_) {}
+    }
+    setBrollReclassActive(target.bucket);
+    var note = r.moved ? ('→ ' + target.label + ' (moved)') : ('→ ' + target.label);
+    setBrollReclassStatus(note, true);
+    // Left the Music Videos pool — skip to next from the start
+    if (target.tag !== 'music' && target.tag !== 'song') {
+      setTimeout(function() {
+        if (!document.getElementById('between-songs')?.classList.contains('active')) return;
+        startBroll(null, { fromStart: true });
+      }, 350);
+    }
+  } catch (e) {
+    setBrollReclassStatus((e && e.message) || 'Error', false);
+  } finally {
+    brollReclassBusy = false;
+    if (root) {
+      var btns2 = root.querySelectorAll('.bs-reclass-btn');
+      for (var j = 0; j < btns2.length; j++) btns2[j].disabled = false;
+    }
+  }
+}
+
+async function resolveBrollTitle(videoId) {
+  if (!videoId) return '';
+  try {
+    if (api.library && api.library.resolveTitles) {
+      var res = await api.library.resolveTitles([videoId]);
+      var t = res && res.titles && res.titles[videoId];
+      if (t && String(t).trim()) return String(t).trim();
+    }
+  } catch (_) {}
+  return '';
+}
+
+function fadeBrollVolume(el, from, to, ms) {
+  return new Promise(function(resolve) {
+    if (!el) return resolve();
+    if (brollFadeRaf) cancelAnimationFrame(brollFadeRaf);
+    var start = performance.now();
+    el.volume = Math.max(0, Math.min(1, from));
+    function step(now) {
+      var t = Math.min(1, (now - start) / Math.max(1, ms));
+      el.volume = Math.max(0, Math.min(1, from + (to - from) * t));
+      if (t < 1) brollFadeRaf = requestAnimationFrame(step);
+      else { brollFadeRaf = null; resolve(); }
+    }
+    brollFadeRaf = requestAnimationFrame(step);
+  });
+}
+
+async function pickRandomMusicVideoId(preferred) {
+  if (preferred && typeof preferred === 'string') {
+    try {
+      var prefPath = await api.library.filePath(preferred);
+      if (prefPath) { lastBrollId = preferred; return { videoId: preferred, title: '' }; }
+    } catch (_) {}
+  }
+  // Ask main for a pick — never pull the full tags map into the player (too heavy).
+  try {
+    if (api.library.randomMusic) {
+      var r = await api.library.randomMusic();
+      var id = r && r.videoId;
+      if (id) {
+        lastBrollId = id;
+        return { videoId: id, title: (r && r.title) || '' };
+      }
+    }
+  } catch (e) {
+    console.warn('[player] broll randomMusic failed:', e && e.message);
+  }
+  return null;
+}
+
+async function startBroll(preferredId, opts) {
+  var wrap = document.getElementById('broll-pip');
+  var vid = document.getElementById('broll-video');
+  var bs = document.getElementById('between-songs');
+  if (!wrap || !vid) return;
+  opts = opts || {};
+  var fromStart = !!opts.fromStart;
+
+  var gen = ++brollGen;
+
+  // Tear down any previous broll without waiting
+  try {
+    vid.onended = null;
+    vid.pause();
+    vid.removeAttribute('src');
+    vid.load();
+  } catch (_) {}
+  wrap.classList.remove('active', 'fading-out');
+  wrap.setAttribute('aria-hidden', 'true');
+  setBrollTitle('…');
+  setBrollReclassStatus('');
+  setBrollReclassActive('music');
+
+  var id = preferredId || null;
+  var knownTitle = '';
+  if (!id) {
+    var pick = await pickRandomMusicVideoId(null);
+    if (pick) { id = pick.videoId; knownTitle = pick.title || ''; }
+  } else {
+    // Validate preferred; fall back to main pick if missing on disk
+    try {
+      var okPath = await api.library.filePath(id);
+      if (!okPath) {
+        var fb = await pickRandomMusicVideoId(null);
+        if (fb) { id = fb.videoId; knownTitle = fb.title || ''; }
+        else id = null;
+      }
+    } catch (_) {
+      var fb2 = await pickRandomMusicVideoId(null);
+      if (fb2) { id = fb2.videoId; knownTitle = fb2.title || ''; }
+      else id = null;
+    }
+  }
+  if (gen !== brollGen) return; // superseded
+  if (!id) {
+    console.warn('[player] No local music video available for interstitial broll');
+    setBrollTitle('—');
+    return;
+  }
+  lastBrollId = id;
+
+  if (knownTitle) setBrollTitle(knownTitle);
+  // Resolve / refresh title in parallel with media load
+  resolveBrollTitle(id).then(function(title) {
+    if (gen !== brollGen) return;
+    setBrollTitle(title || knownTitle || safeTitle('', id) || id);
+  });
+
+  // Prefer karol-file:// for B-roll so mid-track seeks work (HTTP stream often
+  // reports seekable=[0,0] until fully buffered). Fall back to range stream.
+  var localPath = null;
+  try { localPath = await api.library.filePath(id); } catch (_) {}
+  if (gen !== brollGen) return;
+  if (localPath) {
+    vid.src = 'karol-file://' + encodeURI(localPath);
+  } else {
+    vid.src = 'http://127.0.0.1:3131/api/library/stream/' + encodeURIComponent(id);
+  }
+  vid.loop = false; // advance to a new random pick when this one ends
+  vid.muted = !!IS_MONITOR;
+  vid.volume = 0;
+  // Show the PiP shell immediately so the interstitial never looks empty
+  wrap.classList.add('active');
+  wrap.setAttribute('aria-hidden', 'false');
+  if (bs) bs.classList.add('has-broll');
+
+  var started = false;
+  var seekTarget = 0;
+
+  function pickBrollStartTime(dur) {
+    dur = Number(dur) || 0;
+    // Random start in the first 2/3 — never in the last third — then play out to the end
+    // so `ended` can advance to the next random Music Video.
+    if (dur > 12) {
+      var maxStart = dur * (2 / 3);
+      var minStart = Math.min(dur * 0.05, maxStart * 0.25);
+      return minStart + Math.random() * Math.max(0.5, maxStart - minStart);
+    }
+    if (dur > 3) return Math.random() * (dur * (2 / 3));
+    return 0;
+  }
+
+  function seekBrollThenContinue(target) {
+    if (gen !== brollGen) return Promise.resolve();
+    target = Number(target) || 0;
+    if (target <= 0.35) return Promise.resolve();
+    return new Promise(function(resolve) {
+      var settled = false;
+      var finish = function() {
+        if (settled) return;
+        settled = true;
+        vid.removeEventListener('seeked', onSeeked);
+        resolve();
+      };
+      var onSeeked = function() { finish(); };
+      vid.addEventListener('seeked', onSeeked);
+      try {
+        if (typeof vid.fastSeek === 'function') vid.fastSeek(target);
+        else vid.currentTime = target;
+      } catch (_) {
+        try { vid.currentTime = target; } catch (__) {}
+      }
+      // If the engine ignored the seek (common before/around play on some streams), retry
+      setTimeout(function() {
+        if (settled || gen !== brollGen) return;
+        var now = Number(vid.currentTime) || 0;
+        if (Math.abs(now - target) > 1.25) {
+          try { vid.currentTime = target; } catch (_) {}
+          setTimeout(finish, 900);
+        } else {
+          finish();
+        }
+      }, 700);
+      setTimeout(finish, 2500);
+    });
+  }
+
+  var finishStart = function() {
+    if (started || gen !== brollGen) return;
+    started = true;
+    // Pick mid-point here (not only in onMeta) so a slow-metadata timeout
+    // can't start playback at 0 before seekTarget is set.
+    if (!fromStart) {
+      var durNow = Number(vid.duration) || 0;
+      if (seekTarget <= 0.35 && durNow > 3) seekTarget = pickBrollStartTime(durNow);
+    } else {
+      seekTarget = 0;
+    }
+    vid.play().then(function() {
+      if (gen !== brollGen) return;
+      var doSeek = function() {
+        return seekBrollThenContinue(seekTarget).then(function() {
+          if (gen !== brollGen) return;
+          // One more nudge if we still look like we never left the intro
+          var t = Number(vid.currentTime) || 0;
+          var d = Number(vid.duration) || 0;
+          if (!fromStart && d > 12 && t < Math.min(4, d * 0.04) && seekTarget > 4) {
+            return seekBrollThenContinue(seekTarget);
+          }
+        }).then(function() {
+          if (gen !== brollGen) return;
+          if (!IS_MONITOR) fadeBrollVolume(vid, 0, Math.max(0.05, playerVolume * 0.85), 550);
+          console.log('[player] B-roll started:', id, fromStart ? 'fromStart' : 'mid',
+            'at', Math.round(vid.currentTime) + 's /', Math.round(vid.duration || 0) + 's',
+            '(target', Math.round(seekTarget) + 's)');
+        });
+      };
+      // Tiny delay so play() has advanced past the first frame before seek
+      return new Promise(function(r) { setTimeout(r, 60); }).then(doSeek);
+    }).catch(function(e) {
+      console.warn('[player] B-roll play failed:', e && e.message);
+    });
+  };
+
+  var onMeta = function() {
+    vid.removeEventListener('loadedmetadata', onMeta);
+    if (gen !== brollGen) return;
+    // First clip of an interstitial: random mid-track. Later clips (after end): start at 0.
+    if (!fromStart) seekTarget = pickBrollStartTime(vid.duration);
+    else seekTarget = 0;
+    finishStart();
+  };
+  vid.addEventListener('loadedmetadata', onMeta);
+  // Also catch canplay — some local files skip a useful loadedmetadata timing window
+  vid.addEventListener('canplay', function onCanPlay() {
+    vid.removeEventListener('canplay', onCanPlay);
+    if (gen !== brollGen || started) return;
+    if (!fromStart && seekTarget <= 0.35) seekTarget = pickBrollStartTime(vid.duration);
+    finishStart();
+  });
+  vid.addEventListener('error', function() {
+    if (gen !== brollGen) return;
+    console.warn('[player] B-roll media error for', id, '— picking another');
+    // Try a different track; keep mid-seek behavior for interstitial "first feel"
+    // unless this start was explicitly fromStart (follow-on clips).
+    setTimeout(function() {
+      if (gen !== brollGen) return;
+      if (!document.getElementById('between-songs')?.classList.contains('active')) return;
+      startBroll(null, fromStart ? { fromStart: true } : null);
+    }, 400);
+  }, { once: true });
+  vid.onended = function() {
+    if (gen !== brollGen) return;
+    if (!document.getElementById('between-songs')?.classList.contains('active')) return;
+    console.log('[player] B-roll ended — next random from start');
+    startBroll(null, { fromStart: true });
+  };
+  // If metadata is slow, still try to play — finishStart will pick seekTarget from duration
+  setTimeout(function() {
+    if (started || gen !== brollGen) return;
+    finishStart();
+  }, 2500);
+}
+
+function stopBroll(instant) {
+  brollGen++; // cancel in-flight start / ended handlers
+  var wrap = document.getElementById('broll-pip');
+  var vid = document.getElementById('broll-video');
+  var bs = document.getElementById('between-songs');
+  if (bs) bs.classList.remove('has-broll');
+  setBrollTitle('—');
+  if (!vid) return Promise.resolve();
+
+  // Drop ended/error handlers immediately so teardown can't spawn a fromStart follow-up
+  try { vid.onended = null; } catch (_) {}
+
+  var cleanup = function() {
+    if (wrap) {
+      wrap.classList.remove('active', 'fading-out');
+      wrap.setAttribute('aria-hidden', 'true');
+    }
+    try {
+      vid.onended = null;
+      vid.pause();
+      vid.removeAttribute('src');
+      vid.load();
+    } catch (_) {}
+  };
+
+  if (instant) {
+    cleanup();
+    return Promise.resolve();
+  }
+  if (wrap) wrap.classList.add('fading-out');
+  var from = typeof vid.volume === 'number' ? vid.volume : 0;
+  return fadeBrollVolume(vid, from, 0, 320).then(cleanup).catch(cleanup);
 }
 
 function playYouTube(videoId) {
   youtubeFrame.style.display = 'block';
-  // youtube-nocookie + explicit referrerpolicy avoids YouTube Error 153
+  // youtube-nocookie + explicit referrerpolicy + origin avoids YouTube Error 153
   // ("Video player configuration error") in Electron embeds.
+  youtubeFrame.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
   youtubeFrame.referrerPolicy = 'strict-origin-when-cross-origin';
+  youtubeFrame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+  var origin = encodeURIComponent('https://www.youtube.com');
   youtubeFrame.src = 'https://www.youtube-nocookie.com/embed/' + videoId
-    + '?autoplay=1&controls=0&disablekb=1&fs=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1';
+    + '?autoplay=1&controls=0&disablekb=1&fs=0&modestbranding=1&rel=0'
+    + '&iv_load_policy=3&playsinline=1&enablejsapi=1&origin=' + origin;
 
   playerState = 'playing';
   hideLoading();
@@ -1117,18 +1678,57 @@ async function playLocal(videoId) {
   youtubeFrame.style.display = 'none';
   youtubeFrame.src = '';
 
-  var filePath = await api.library.filePath(videoId);
-  if (!filePath) {
-    // No local file and no R2 copy — stream from YouTube instead of erroring.
-    // Covers remote-only Music Videos entries (and any lost media).
-    var ytBase = String(videoId || '').replace(/-karaoke$/, '');
-    if (/^[A-Za-z0-9_-]{11}$/.test(ytBase)) {
-      console.warn('[player] No local media for ' + videoId + ' — falling back to YouTube embed');
-      isYouTube = true;
-      playYouTube(ytBase);
-      return;
+  var ytBase = String(videoId || '').replace(/-karaoke$/, '');
+  var streamId = videoId;
+
+  async function resolveLocalPath() {
+    var p = await api.library.filePath(videoId);
+    if (p) { streamId = videoId; return p; }
+    if (ytBase && ytBase !== videoId) {
+      p = await api.library.filePath(ytBase);
+      if (p) { streamId = ytBase; return p; }
     }
-    showErrorOverlay('Video file not found: ' + videoId);
+    return null;
+  }
+
+  var filePath = await resolveLocalPath();
+  if (!filePath) {
+    // Prefer downloading locally — YouTube embeds hit Error 153 in Electron.
+    if (/^[A-Za-z0-9_-]{11}$/.test(ytBase) && api.downloads && typeof api.downloads.start === 'function') {
+      try {
+        showLoading('Downloading for reliable playback…');
+        console.warn('[player] No local media for ' + videoId + ' — starting local download');
+        var downloadPromise = api.downloads.start(ytBase, false).catch(function(e) {
+          console.warn('[player] download.start failed:', e && e.message);
+          return null;
+        });
+        for (var i = 0; i < 120; i++) {
+          filePath = await resolveLocalPath();
+          if (filePath) break;
+          try {
+            var st = await api.downloads.status(ytBase);
+            if (st && typeof st.progress === 'number' && st.progress > 0) {
+              showLoading('Downloading… ' + Math.round(st.progress) + '%');
+            } else if (i % 5 === 4) {
+              showLoading('Still downloading… ' + (i + 1) + 's');
+            }
+          } catch (_) {
+            if (i % 5 === 4) showLoading('Still downloading… ' + (i + 1) + 's');
+          }
+          await new Promise(function(r) { setTimeout(r, 1000); });
+        }
+        await downloadPromise;
+        if (!filePath) filePath = await resolveLocalPath();
+      } catch (e) {
+        console.warn('[player] Local download trigger failed:', e && e.message);
+      }
+    }
+  }
+
+  if (!filePath) {
+    // Do not fall back to YouTube embed — Error 153 is worse than a clear message.
+    console.error('[player] No local media for ' + videoId + ' — refusing YouTube embed');
+    showErrorOverlay('Video not downloaded yet. Wait for download, then play again.');
     reportState({ state: 'error', error: 'File not found' });
     return;
   }
@@ -1143,8 +1743,13 @@ async function playLocal(videoId) {
   // No Web Audio processing — audio passes through natively in stereo
   // to whatever output device is selected (BlackHole → Ableton)
 
-  // Set source and start loading
-  currentVideoEl.src = 'karol-file://' + filePath;
+  // Prefer the local HTTP range stream over karol-file://.
+  // On external USB drives, karol-file:// has stalled at t=0 for some
+  // music-video MP4s (metadata loads, play() resolves, currentTime never advances).
+  // /api/library/stream serves the same file with proper Accept-Ranges.
+  var streamUrl = 'http://127.0.0.1:3131/api/library/stream/' + encodeURIComponent(streamId);
+  currentVideoEl.src = streamUrl;
+  applyPlayerVolume(currentVideoEl);
 
   // ── 10-second load timeout: if video doesn't start, auto-skip ──
   loadTimeoutId = setTimeout(function() {
@@ -1258,11 +1863,20 @@ function handleSyncClock(time, state) {
 }
 
 function handleVolume(level) {
+  if (typeof level === 'number' && isFinite(level)) {
+    playerVolume = Math.max(0, Math.min(1, level));
+  }
   if (IS_MONITOR) {
     if (currentVideoEl) { currentVideoEl.muted = true; currentVideoEl.volume = 0; }
     return;
   }
-  if (!isYouTube && currentVideoEl) currentVideoEl.volume = Math.max(0, Math.min(1, level));
+  applyPlayerVolume(currentVideoEl);
+  // Keep interstitial B-roll in the same ballpark (slightly under karaoke)
+  var broll = document.getElementById('broll-video');
+  if (broll && !broll.paused) {
+    try { broll.volume = Math.max(0, Math.min(1, playerVolume * 0.85)); } catch (_) {}
+  }
+  console.log('[player] Volume set to', playerVolume);
 }
 
 // ── Audio stability anchor ──
@@ -2069,25 +2683,62 @@ function playFxSound(kind) {
   var now = ctx.currentTime;
   try {
     if (kind === 'airhorn') {
-      // Classic reggaeton horn: detuned saws, three stabs, pitch drop on the last
+      // Classic meme airhorn rhythm: bee · be be be be · beeeow
       var master = ctx.createGain();
-      master.gain.setValueAtTime(0.16, now);
+      master.gain.setValueAtTime(0.26, now);
       master.connect(ctx.destination);
-      [0, 0.22, 0.44].forEach(function(t, i) {
-        var last = i === 2;
-        [440, 446].forEach(function(freq) {
+
+      var shaper = ctx.createWaveShaper();
+      var curve = new Float32Array(256);
+      for (var ci = 0; ci < 256; ci++) {
+        var x = (ci / 128) - 1;
+        curve[ci] = Math.tanh(x * 3.4) * 0.95;
+      }
+      shaper.curve = curve;
+      shaper.oversample = '2x';
+      shaper.connect(master);
+
+      var bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 820;
+      bp.Q.value = 1.6;
+      bp.connect(shaper);
+
+      function toot(t0, dur, endRatio) {
+        endRatio = endRatio || 1;
+        [
+          { freq: 392, type: 'square',   gain: 0.42 },
+          { freq: 406, type: 'sawtooth', gain: 0.34 },
+          { freq: 418, type: 'square',   gain: 0.28 },
+          { freq: 784, type: 'sawtooth', gain: 0.12 },
+        ].forEach(function(v) {
           var o = ctx.createOscillator();
           var g = ctx.createGain();
-          o.type = 'sawtooth';
-          o.frequency.setValueAtTime(freq, now + t);
-          if (last) o.frequency.exponentialRampToValueAtTime(freq * 0.6, now + t + 0.55);
-          g.gain.setValueAtTime(0.0001, now + t);
-          g.gain.exponentialRampToValueAtTime(0.5, now + t + 0.02);
-          g.gain.exponentialRampToValueAtTime(0.0001, now + t + (last ? 0.6 : 0.16));
-          o.connect(g); g.connect(master);
-          o.start(now + t); o.stop(now + t + (last ? 0.7 : 0.2));
+          o.type = v.type;
+          o.frequency.setValueAtTime(v.freq, now + t0);
+          if (endRatio !== 1) {
+            o.frequency.exponentialRampToValueAtTime(Math.max(40, v.freq * endRatio), now + t0 + dur);
+          }
+          g.gain.setValueAtTime(0.0001, now + t0);
+          g.gain.exponentialRampToValueAtTime(v.gain, now + t0 + 0.012);
+          g.gain.setValueAtTime(v.gain * 0.85, now + t0 + Math.max(0.03, dur * 0.55));
+          g.gain.exponentialRampToValueAtTime(0.0001, now + t0 + dur);
+          o.connect(g);
+          g.connect(bp);
+          o.start(now + t0);
+          o.stop(now + t0 + dur + 0.02);
         });
-      });
+      }
+
+      // bee
+      toot(0.00, 0.18, 1);
+      // be be be be
+      toot(0.24, 0.09, 1);
+      toot(0.38, 0.09, 1);
+      toot(0.52, 0.09, 1);
+      toot(0.66, 0.09, 1);
+      // beeeow — long falling blast
+      toot(0.82, 0.72, 0.55);
     } else if (kind === 'sendit') {
       // White-noise riser into a sub boom
       var dur = 1.1;
@@ -2383,7 +3034,7 @@ function updateConnStatus(status) {
 // ── Marquee ──
 
 function updateMarquee(title, requester) {
-  document.getElementById('qm-singer').textContent = requester || 'DJ';
+  document.getElementById('qm-singer').textContent = (requester && !/^dj$/i.test(String(requester).trim())) ? requester : 'Naynay';
   document.getElementById('qm-song').textContent = title || '\u2014';
   document.getElementById('queue-marquee').classList.remove('hidden');
   renderMarquee();

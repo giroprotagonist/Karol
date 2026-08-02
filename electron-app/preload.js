@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('karolAPI', {
     prev: () => ipcRenderer.send('transport-prev'),
     seek: (time) => ipcRenderer.send('transport-seek', time),
     volume: (level) => ipcRenderer.send('transport-volume', level),
+    toggleGapHold: () => ipcRenderer.invoke('transport-toggle-gap-hold'),
+    gapState: () => ipcRenderer.invoke('transport-gap-state'),
   },
 
   // ── Player commands (forwarded to player window) ──
@@ -59,6 +61,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
     filePath: (videoId) => ipcRenderer.invoke('library-file-path', videoId),
     scan: () => ipcRenderer.invoke('library-scan'),
     resolveTitles: (videoIds) => ipcRenderer.invoke('library-resolve-titles', videoIds),
+    randomMusic: () => ipcRenderer.invoke('library-random-music'),
   },
 
   // ── Downloads ──
@@ -97,6 +100,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
       'player-status', 'queue-update', 'player-event',
       'download-progress', 'library-scan-progress', 'health-report',
       'monitor-mode', 'lyrics-updated', 'drive-status',
+      'interstitial-state',
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (_event, ...args) => callback(...args));
@@ -112,6 +116,12 @@ contextBridge.exposeInMainWorld('karolAPI', {
     getDisplayInfo: () => ipcRenderer.invoke('display-info'),
     connectionInfo: () => ipcRenderer.invoke('connection-info'),
     powerStatus: () => ipcRenderer.invoke('karaoke-power-status'),
+  },
+
+  // ── Settings (interstitial length, etc.) ──
+  settings: {
+    get: () => ipcRenderer.invoke('settings-get'),
+    set: (patch) => ipcRenderer.invoke('settings-set', patch),
   },
 
   // ── Health ──

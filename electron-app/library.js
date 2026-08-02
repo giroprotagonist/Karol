@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execFile } = require('child_process');
 
 // Resolve modules in both dev (repo checkout) and packaged Electron layouts.
@@ -55,8 +56,33 @@ const TAGS_PATH = path.join(LIBRARY_DIR, 'tags.json');
 const CACHE_FILE = '/tmp/karol-library-cache.json'; // Raw JSON cache written by library-scan-worker.js
 const SCRIPTS_DIR = path.resolve(__dirname, '..', 'scripts');
 
-// All library directories to search for files
-const LIBRARY_SEARCH_DIRS = [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR];
+/** Old Deskreen app kept Music Videos on the Mac — still where most of the ~600 live. */
+const LEGACY_SONGS_DIR_CANDIDATES = [
+  path.join(os.homedir(), 'Documents', 'GitHub', 'deskreen', '.deskreen', 'library', 'songs'),
+  path.resolve(__dirname, '..', '..', 'deskreen', '.deskreen', 'library', 'songs'),
+  path.resolve(__dirname, '..', '.deskreen', 'library', 'songs'),
+];
+function resolveExistingDirs(candidates) {
+  const out = [];
+  const seen = new Set();
+  for (const d of candidates) {
+    try {
+      const abs = path.resolve(d);
+      if (seen.has(abs)) continue;
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) continue;
+      seen.add(abs);
+      out.push(abs);
+    } catch (_) {}
+  }
+  return out;
+}
+const LEGACY_SONGS_DIRS = resolveExistingDirs(LEGACY_SONGS_DIR_CANDIDATES);
+if (LEGACY_SONGS_DIRS.length) {
+  console.log('[library] Legacy Deskreen songs dirs:', LEGACY_SONGS_DIRS.join(', '));
+}
+
+// All library directories to search for files (USB first, then legacy Mac songs/)
+const LIBRARY_SEARCH_DIRS = [LIBRARY_DIR, LIBRARY_KARAOKE_DIR, LIBRARY_SONGS_DIR, ...LEGACY_SONGS_DIRS];
 const VIDEO_EXTS = ['.mp4', '.mkv', '.mp3', '.webm'];
 
 /**
@@ -396,11 +422,12 @@ function getVideoPath(videoId) {
       const exact = path.join(dir, videoId + ext);
       if (fs.existsSync(exact)) return exact;
     }
+    // Exact stem only — do NOT prefix-match (id must not resolve to id-karaoke.mp4)
     try {
       const files = fs.readdirSync(dir);
       for (const ext of VIDEO_EXTS) {
-        const match = files.find(f => f.startsWith(videoId) && f.endsWith(ext));
-        if (match) return path.join(dir, match);
+        const want = videoId + ext;
+        if (files.includes(want)) return path.join(dir, want);
       }
     } catch (e) { /* ignore */ }
     return null;
@@ -968,7 +995,8 @@ function setTag(videoId, tag) {
 // DJ reclassification: unlike setTag/mergeTagMeta (which preserve provenance /
 // only fill empties), this OVERWRITES tag and source as requested — moving a
 // track between Karaoke / Custom / Music Video buckets is an explicit intent.
-// Other fields (title, artist, year, …) are preserved.
+// Other fields (title, artist, year, …) are preserved. Also moves on-disk media
+// (+ sidecars) into the matching library folder when needed.
 function reclassify(videoId, { tag, source } = {}) {
   if (!videoId || !tag) return { ok: false, error: 'videoId and tag required' };
   const tags = loadTags();
@@ -979,13 +1007,135 @@ function reclassify(videoId, { tag, source } = {}) {
   saveTags(tags);
   // Stale-mark the list cache so the next scan republishes the new tag
   __libraryListCache.ts = 0;
+
+  let move = { moved: false };
+  try {
+    move = moveMediaForTag(videoId, tag) || move;
+  } catch (e) {
+    console.warn('[library] reclassify move failed:', videoId, e && e.message);
+    move = { moved: false, error: e && e.message };
+  }
+
   // Durable MySQL write, immediate + best-effort (same paths the tag sync
   // uses): library_tags for base ids, song_catalog tag/source via
   // read-modify-write so upsert_batch doesn't blank other columns.
   _syncReclassifyToMysql(videoId, next).catch((e) => {
     console.error('[library/tags] reclassify MySQL sync failed:', e.message);
   });
-  return { ok: true, videoId, tag: next.tag, source: next.source || '' };
+  return {
+    ok: true,
+    videoId,
+    tag: next.tag,
+    source: next.source || '',
+    moved: !!move.moved,
+    from: move.from || '',
+    to: move.to || '',
+    moveError: move.error || '',
+  };
+}
+
+function _isMusicLibraryDir(dir) {
+  if (!dir) return false;
+  const abs = path.resolve(dir);
+  if (abs === path.resolve(LIBRARY_SONGS_DIR)) return true;
+  for (const d of LEGACY_SONGS_DIRS || []) {
+    try { if (abs === path.resolve(d)) return true; } catch (_) {}
+  }
+  return false;
+}
+
+function _isKaraokeLibraryDir(dir) {
+  if (!dir) return false;
+  try { return path.resolve(dir) === path.resolve(LIBRARY_KARAOKE_DIR); } catch (_) { return false; }
+}
+
+function _targetDirForTag(tag) {
+  if (tag === 'karaoke') return LIBRARY_KARAOKE_DIR;
+  if (tag === 'music' || tag === 'song') return LIBRARY_SONGS_DIR;
+  return LIBRARY_DIR;
+}
+
+/** Move videoId media (+ common sidecars) into the folder for `tag`. */
+function moveMediaForTag(videoId, tag) {
+  const destDir = _targetDirForTag(tag);
+  if (!destDir) return { moved: false, reason: 'no_dest' };
+
+  let srcPath = null;
+  try {
+    srcPath = getFilePath(videoId);
+  } catch (_) {}
+  if (!srcPath || !fs.existsSync(srcPath)) {
+    try {
+      const p = getVideoPath(videoId);
+      if (p && fs.existsSync(p)) srcPath = p;
+    } catch (_) {}
+  }
+  if (!srcPath || !fs.existsSync(srcPath)) return { moved: false, reason: 'not_found' };
+
+  const srcDir = path.dirname(srcPath);
+  // Already in a correct-type folder — leave it (don't shuffle USB ↔ Mac songs/)
+  if (tag === 'karaoke' || tag === 'custom') {
+    if (_isKaraokeLibraryDir(srcDir)) return { moved: false, reason: 'already_there', path: srcPath };
+  } else if (tag === 'music' || tag === 'song') {
+    if (_isMusicLibraryDir(srcDir)) return { moved: false, reason: 'already_there', path: srcPath };
+  } else if (path.resolve(srcDir) === path.resolve(destDir)) {
+    return { moved: false, reason: 'already_there', path: srcPath };
+  }
+
+  try { fs.mkdirSync(destDir, { recursive: true }); } catch (_) {}
+
+  const stem = path.basename(srcPath, path.extname(srcPath));
+  let names = [];
+  try { names = fs.readdirSync(srcDir); } catch (_) { names = [path.basename(srcPath)]; }
+  const toMove = names.filter((name) => {
+    if (!name || name.startsWith('._')) return false;
+    if (name === path.basename(srcPath)) return true;
+    // Same stem sidecars: id.info.json, id.webp, id-vocals.wav, etc.
+    return name === stem || name.startsWith(stem + '.') || name.startsWith(stem + '-');
+  });
+
+  const movedFiles = [];
+  for (const name of toMove) {
+    const from = path.join(srcDir, name);
+    const to = path.join(destDir, name);
+    if (path.resolve(from) === path.resolve(to)) continue;
+    try {
+      if (fs.existsSync(to)) {
+        // Prefer keeping dest copy; remove stray source duplicate
+        try { fs.unlinkSync(from); } catch (_) {}
+        continue;
+      }
+      fs.renameSync(from, to);
+      movedFiles.push(name);
+    } catch (e) {
+      // Cross-device: copy + unlink
+      try {
+        fs.copyFileSync(from, to);
+        fs.unlinkSync(from);
+        movedFiles.push(name);
+      } catch (e2) {
+        console.warn('[library] move failed:', from, '→', to, e2 && e2.message);
+        return {
+          moved: movedFiles.length > 0,
+          from: srcDir,
+          to: destDir,
+          files: movedFiles,
+          error: e2 && e2.message,
+        };
+      }
+    }
+  }
+
+  if (movedFiles.length) {
+    console.log('[library] Moved', videoId, '(' + movedFiles.length + ' files)', srcDir, '→', destDir);
+  }
+  return {
+    moved: movedFiles.length > 0,
+    from: srcDir,
+    to: destDir,
+    files: movedFiles,
+    reason: movedFiles.length ? 'moved' : 'nothing',
+  };
 }
 
 async function _syncReclassifyToMysql(videoId, entry) {
@@ -1088,6 +1238,8 @@ module.exports = {
   LIBRARY_DIR,
   LIBRARY_KARAOKE_DIR,
   LIBRARY_SONGS_DIR,
+  LEGACY_SONGS_DIRS,
+  LIBRARY_SEARCH_DIRS,
   DOWNLOADS_DIR,
   ARCHIVE_PATH,
   TAGS_PATH,
