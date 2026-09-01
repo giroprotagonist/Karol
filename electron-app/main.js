@@ -2890,12 +2890,15 @@ function findLocalMusicFile(base) {
   return null;
 }
 
-function isMusicVideoTagEntry(entry) {
+function isMusicVideoTagEntry(entry, key, tags) {
   if (!entry) return false;
   const tag = typeof entry === 'object' ? entry.tag : entry;
   const source = typeof entry === 'object' ? entry.source : '';
   if (source === 'karaoke-maker') return false;
-  return tag === 'music' || tag === 'song';
+  if (tag !== 'music' && tag !== 'song') return false;
+  const km = tags && key && tags[key + '-karaoke'];
+  if (km && km.source === 'karaoke-maker' && !source) return false;
+  return true;
 }
 
 function listMusicVideoIds() {
@@ -2905,7 +2908,7 @@ function listMusicVideoIds() {
   const tags = library.getTags() || {};
   for (const key of Object.keys(tags)) {
     if (/-karaoke$/.test(key)) continue;
-    if (!isMusicVideoTagEntry(tags[key])) continue;
+    if (!isMusicVideoTagEntry(tags[key], key, tags)) continue;
     const base = String(key).replace(/-karaoke$/, '');
     if (!/^[A-Za-z0-9_-]{11}$/.test(base) || seen.has(base)) continue;
     seen.add(base);

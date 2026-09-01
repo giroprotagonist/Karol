@@ -5574,34 +5574,35 @@ def step_register(
         **({"rating": existing["rating"]} if existing.get("rating") else {}),
     }
 
-    # Dual-presence: keep the original MV under songs/ as Music Videos (tag
-    # music) while karaoke lives as {id}-karaoke. Archive alone used to mark
-    # the id "downloaded" without a songs/ file → playlist sync skipped it.
-    songs_dir = LIBRARY_DIR / "songs"
-    songs_mp4 = songs_dir / f"{video_id}.mp4"
-    try:
-        src_mp4 = Path(mp4_path)
-        if src_mp4.exists() and src_mp4.stat().st_size > 100_000:
-            # Prefer a non-karaoke original; skip if source is already the karaoke render
-            if "-karaoke" not in src_mp4.stem:
-                if not songs_mp4.exists() or songs_mp4.stat().st_size < 100_000:
-                    songs_dir.mkdir(parents=True, exist_ok=True)
-                    _atomic_publish(src_mp4, songs_mp4)
-                    log("library", f"Preserved Music Video → {songs_mp4}")
-                base = tags.get(video_id) if isinstance(tags.get(video_id), dict) else {}
-                if not isinstance(base, dict):
-                    base = {}
-                if base.get("tag") not in ("music", "song"):
+    # Dual-presence: only keep the original under songs/ when it was already a
+    # Music Video (tag music/song). Random karaoke queue requests must not also
+    # land in the Music Videos tab / jukebox pool.
+    existing_base = tags.get(video_id) if isinstance(tags.get(video_id), dict) else {}
+    if not isinstance(existing_base, dict):
+        existing_base = {}
+    preserve_mv = existing_base.get("tag") in ("music", "song")
+    if preserve_mv:
+        songs_dir = LIBRARY_DIR / "songs"
+        songs_mp4 = songs_dir / f"{video_id}.mp4"
+        try:
+            src_mp4 = Path(mp4_path)
+            if src_mp4.exists() and src_mp4.stat().st_size > 100_000:
+                # Prefer a non-karaoke original; skip if source is already the karaoke render
+                if "-karaoke" not in src_mp4.stem:
+                    if not songs_mp4.exists() or songs_mp4.stat().st_size < 100_000:
+                        songs_dir.mkdir(parents=True, exist_ok=True)
+                        _atomic_publish(src_mp4, songs_mp4)
+                        log("library", f"Preserved Music Video → {songs_mp4}")
                     tags[video_id] = {
-                        **base,
-                        "tag": "music",
-                        "artist": base.get("artist") or artist,
-                        "title": base.get("title") or title,
-                        "year": base.get("year", ""),
-                        "source": "" if base.get("source") == "karaoke-maker" else base.get("source", ""),
+                        **existing_base,
+                        "tag": existing_base.get("tag") or "music",
+                        "artist": existing_base.get("artist") or artist,
+                        "title": existing_base.get("title") or title,
+                        "year": existing_base.get("year", ""),
+                        "source": "" if existing_base.get("source") == "karaoke-maker" else existing_base.get("source", ""),
                     }
-    except OSError as e:
-        log("library", f"Music Video preserve warning: {e}")
+        except OSError as e:
+            log("library", f"Music Video preserve warning: {e}")
 
     TAGS_PATH.write_text(json.dumps(tags, indent=2))
     log("library", "Updated tags.json")

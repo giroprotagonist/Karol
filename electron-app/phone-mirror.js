@@ -269,14 +269,10 @@ function pickRouting() {
   const inputs = sasList('input');
   const house = sasCurrent('output') || outputs.find((n) => /BlackHole 2ch/i.test(n)) || null;
   const bh2Out = outputs.find((n) => /^BlackHole 2ch$/i.test(n));
-  const bh16Out = outputs.find((n) => /BlackHole 16ch/i.test(n));
   const hasInput = (name) => !!(name && inputs.some((i) => i === name || i.toLowerCase() === name.toLowerCase()));
 
   let tap = null;
-  if (bh16Out && house && bh16Out !== house && hasInput(bh16Out)) tap = bh16Out;
-  else if (bh2Out && house && bh2Out !== house && hasInput(bh2Out)) tap = bh2Out;
-  else if (bh16Out && house && /BlackHole 2ch/i.test(house) && hasInput(bh16Out)) tap = bh16Out;
-  else if (bh2Out && house && /BlackHole 16ch/i.test(house) && hasInput(bh2Out)) tap = bh2Out;
+  if (bh2Out && house && bh2Out !== house && hasInput(bh2Out)) tap = bh2Out;
 
   if (tap && house && tap !== house) {
     return { mode: 'loopback', tap, house };

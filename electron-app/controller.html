@@ -682,6 +682,7 @@ async function refreshCustomVideoIds() {
       } else if ((entry.tag === 'music' || entry.tag === 'song') && !/-karaoke$/.test(key)) {
         // Regular downloaded music videos: tagged music/song, never a
         // pipeline '-karaoke' variant, never a karaoke-maker product.
+        if (isAccidentalMusicTwin(key, tags)) continue;
         mvNext.add(key);
         mvMeta[key] = { title: entry.title || '', artist: entry.artist || '', year: entry.year || '',
                         upload_date: entry.upload_date || '',
@@ -758,6 +759,16 @@ function isKaraokeTabMember(v) {
   return effectiveTag(v) === 'karaoke' && effectiveSource(v) !== 'karaoke-maker';
 }
 
+// Pipeline karaoke can leave a songs/ twin tagged music with no source when
+// the DJ only wanted a singer-queue track — not a Music Video.
+function isAccidentalMusicTwin(videoId, tagsMap) {
+  var base = String(videoId || '').replace(/-karaoke$/, '');
+  var src = tagsMap || tagMetaById;
+  var km = src[base + '-karaoke'];
+  var baseMeta = src[base] || {};
+  return !!(km && km.source === 'karaoke-maker' && !baseMeta.source);
+}
+
 // Rows for the Music Videos tab: local library rows first (playable from
 // disk), then remote-only entries from tags/MySQL that play via YouTube.
 function buildMusicVideoRows() {
@@ -771,8 +782,9 @@ function buildMusicVideoRows() {
     var eSrc = effectiveSource(v);
     // Never list pipeline karaoke variants or karaoke-maker rows here.
     if (/-karaoke$/.test(v.videoId) || eSrc === 'karaoke-maker') continue;
-    var isMember = musicVideoIds.has(v.videoId) ||
-      ((eTag === 'music' || eTag === 'song') && !/-karaoke$/.test(v.videoId));
+    var isMember = (musicVideoIds.has(v.videoId) ||
+      ((eTag === 'music' || eTag === 'song') && !/-karaoke$/.test(v.videoId)))
+      && !isAccidentalMusicTwin(v.videoId);
     if (isMember && !localIds.has(v.videoId)) {
       localIds.add(v.videoId);
       rows.push(v);

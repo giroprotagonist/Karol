@@ -1734,6 +1734,20 @@ function _buildCacheRowFromDisk(videoId) {
     source = '';
   }
 
+  const hasKaraoke = !isKaraokeVariant && (
+    fs.existsSync(path.join(LIBRARY_KARAOKE_DIR, id + '-karaoke.mp4'))
+    || fs.existsSync(path.join(LIBRARY_DIR, id + '-karaoke.mp4'))
+  );
+  let rowTag = tagEntry.tag;
+  if (!rowTag) {
+    if (isKaraokeVariant) rowTag = 'karaoke';
+    else if (hasKaraoke && sibling.source === 'karaoke-maker' && !own.source) rowTag = 'karaoke';
+    else rowTag = 'music';
+  } else if (!isKaraokeVariant && (rowTag === 'music' || rowTag === 'song')
+    && hasKaraoke && sibling.source === 'karaoke-maker' && !own.source) {
+    rowTag = 'karaoke';
+  }
+
   return {
     videoId: id,
     title: bestTitle.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\\/g, '\\\\'),
@@ -1743,16 +1757,13 @@ function _buildCacheRowFromDisk(videoId) {
     thumbnail: String((meta && meta.thumbnail) || '').replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault'),
     upload_date: tagEntry.upload_date || (meta && meta.upload_date) || '',
     cached: true,
-    tag: isKaraokeVariant ? 'karaoke' : (tagEntry.tag || 'music'),
+    tag: isKaraokeVariant ? 'karaoke' : rowTag,
     year: tagEntry.year || String(tagEntry.upload_date || (meta && meta.upload_date) || '').slice(0, 4),
     artist: tagEntry.artist || (meta && meta.uploader) || '',
     source,
     isKaraokeVariant,
     baseVideoId,
-    hasKaraoke: !isKaraokeVariant && (
-      fs.existsSync(path.join(LIBRARY_KARAOKE_DIR, id + '-karaoke.mp4'))
-      || fs.existsSync(path.join(LIBRARY_DIR, id + '-karaoke.mp4'))
-    ),
+    hasKaraoke,
     rating,
   };
 }

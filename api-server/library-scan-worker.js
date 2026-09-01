@@ -203,6 +203,16 @@ for (const videoId of Object.keys(fileMap)) {
   } else if (source === 'karaoke-maker') {
     source = '';
   }
+  const hasKaraoke = !isKaraokeVariant && !!fileMap[videoId + '-karaoke'];
+  let rowTag = tagEntry.tag;
+  if (!rowTag) {
+    if (isKaraokeVariant) rowTag = 'karaoke';
+    else if (hasKaraoke && sibling.source === 'karaoke-maker' && !(own.source)) rowTag = 'karaoke';
+    else rowTag = 'music';
+  } else if (!isKaraokeVariant && (rowTag === 'music' || rowTag === 'song')
+    && hasKaraoke && sibling.source === 'karaoke-maker' && !own.source) {
+    rowTag = 'karaoke';
+  }
   videos.push({
     videoId,
     title: rawTitle,
@@ -212,13 +222,13 @@ for (const videoId of Object.keys(fileMap)) {
     thumbnail: (meta?.thumbnail || '').replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault'),
     upload_date: tagEntry.upload_date || meta?.upload_date || '',
     cached: true,
-    tag: isKaraokeVariant ? 'karaoke' : (tagEntry.tag || 'music'),
+    tag: isKaraokeVariant ? 'karaoke' : rowTag,
     year: tagEntry.year || String(tagEntry.upload_date || meta?.upload_date || '').slice(0, 4),
     artist: tagEntry.artist || '',
     source,
     isKaraokeVariant,
     baseVideoId,
-    hasKaraoke: !isKaraokeVariant && !!fileMap[videoId + '-karaoke'],
+    hasKaraoke,
     rating: (function () {
       var n = Number(tagEntry.rating);
       if (!Number.isFinite(n) || n <= 0) {

@@ -745,14 +745,28 @@ body.is-monitor #finale{display:none !important}
 .rx{position:absolute;bottom:-8vh;left:var(--x);font-size:var(--sz);opacity:0;animation:rxFloat var(--dur) ease-out both;filter:drop-shadow(0 2px 8px rgba(0,0,0,0.6))}
 @keyframes rxFloat{0%{opacity:0;transform:translate(0,0) scale(0.4)}10%{opacity:1;transform:translate(calc(var(--drift) * 0.2),-12vh) scale(1.1)}50%{transform:translate(calc(var(--drift) * 0.7),-52vh) scale(1)}100%{opacity:0;transform:translate(var(--drift),-102vh) scale(0.85)}}
 
-#lyric-slider{position:absolute;bottom:0;left:0;width:100%;z-index:25;background:linear-gradient(180deg,rgba(10,10,18,0),rgba(10,10,18,0.95) 15%,rgba(10,10,18,0.95) 100%);padding:28px 40px 22px;display:none;flex-direction:column;gap:12px;pointer-events:all}
+#lyric-slider{
+  position:absolute;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--marquee-h) + 14px);
+  width:min(920px, calc(100% - 40px));
+  z-index:70;
+  background:rgba(8,8,16,0.97);
+  border:2px solid rgba(139,92,246,0.55);
+  border-radius:14px;
+  box-shadow:0 8px 40px rgba(0,0,0,0.65);
+  padding:16px 28px 18px;
+  display:none;flex-direction:column;gap:10px;pointer-events:all;
+  backdrop-filter:blur(8px);
+}
 #lyric-slider.active{display:flex}
-#lyric-slider label{font-size:14px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);font-weight:700;text-align:center}
-#lyric-slider .slider-row{display:flex;align-items:center;gap:16px}
-#lyric-slider input[type=range]{flex:1;-webkit-appearance:none;height:8px;border-radius:4px;background:rgba(255,255,255,0.15);outline:none}
-#lyric-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:36px;height:36px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 16px rgba(139,92,246,0.6);border:2px solid #fff}
-#lyric-slider .offset-val{font-size:22px;font-weight:800;color:var(--white);min-width:72px;text-align:center}
-#lyric-slider .btn-row{display:flex;gap:8px;justify-content:center}
+#lyric-slider label{font-size:15px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);font-weight:800;text-align:center}
+#lyric-slider .slider-row{display:flex;align-items:center;gap:14px}
+#lyric-slider input[type=range]{flex:1;-webkit-appearance:none;height:10px;border-radius:5px;background:linear-gradient(90deg,rgba(239,68,68,0.35) 0%,rgba(255,255,255,0.2) 50%,rgba(16,185,129,0.35) 100%);outline:none}
+#lyric-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 16px rgba(139,92,246,0.6);border:3px solid #fff}
+#lyric-slider .offset-val{font-size:30px;font-weight:900;color:var(--gold);min-width:96px;text-align:center;text-shadow:0 0 12px rgba(240,192,64,0.35);font-variant-numeric:tabular-nums}
+#lyric-slider .slider-scale{display:flex;justify-content:space-between;align-items:center;padding:0 52px 0 72px;font-size:13px;font-weight:700;color:rgba(255,255,255,0.5);letter-spacing:0.5px}
+#lyric-slider .slider-scale .scale-center{color:rgba(255,255,255,0.75)}
+#lyric-slider .btn-row{display:flex;gap:10px;justify-content:center;margin-top:2px}
 #lyric-slider button{padding:10px 28px;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;transition:all .2s}
 #lyric-slider .btn-save{background:var(--accent);color:#fff}
 #lyric-slider .btn-save:hover{background:#a78bfa;transform:scale(1.03)}
@@ -775,6 +789,11 @@ body.is-monitor #finale{display:none !important}
       <button class="btn-reset" style="padding:8px 14px;font-size:13px" onclick="resetLyricOffset()">Reset</button>
       <input type="range" min="-30" max="30" step="0.1" value="0" id="lyric-slider-input" oninput="onSliderInput()">
       <span class="offset-val" id="lyric-offset-display">0.0s</span>
+    </div>
+    <div class="slider-scale" aria-hidden="true">
+      <span>−30s (earlier)</span>
+      <span class="scale-center">0s</span>
+      <span>+30s (later)</span>
     </div>
     <div class="btn-row">
       <button class="btn-save" onclick="saveLyricOffset()">Save Offset</button>
@@ -1085,88 +1104,158 @@ function applyPlayerVolume(el) {
   } catch (_) {}
 }
 
-// ── Live vocal stem mix (sidecar WAV over instrumental karaoke.mp4) ──
+// ── Live stem mix (Demucs WAV pair — avoids AAC-in-MP4 vs PCM vocal misalignment) ──
 let vocalStemEl = null;
+let instrumentalStemEl = null;
 let vocalMixLevel = 0; // 0 = pure instrumental karaoke; 1 = full guide vocals
 let vocalStemVideoId = null;
+let hasVocalStem = false;
+let hasInstrumentalStem = false;
 let vocalDriftTimer = null;
+// When forced to layer vocals over karaoke.mp4 AAC, pull the PCM stem earlier.
+const VOCAL_STEM_AAC_LEAD_SEC = 0.11;
 
-function destroyVocalStem() {
+function destroyStemMix() {
   if (vocalDriftTimer) { clearInterval(vocalDriftTimer); vocalDriftTimer = null; }
+  [vocalStemEl, instrumentalStemEl].forEach(function(el) {
+    if (!el) return;
+    try {
+      el.pause();
+      el.removeAttribute('src');
+      el.load();
+      if (el.parentNode) el.parentNode.removeChild(el);
+    } catch (_) {}
+  });
+  vocalStemEl = null;
+  instrumentalStemEl = null;
+  vocalStemVideoId = null;
+  hasVocalStem = false;
+  hasInstrumentalStem = false;
+  if (currentVideoEl && !IS_MONITOR) {
+    try { currentVideoEl.muted = false; } catch (_) {}
+    applyPlayerVolume(currentVideoEl);
+  }
+}
+
+function stemMixUsesWavPair() {
+  return !!(hasVocalStem && hasInstrumentalStem && vocalMixLevel > 0.001);
+}
+
+function stemTargetTime(videoTime) {
+  var t = Math.max(0, Number(videoTime) || 0);
+  if (hasVocalStem && !hasInstrumentalStem && vocalMixLevel > 0.001) {
+    return Math.max(0, t - VOCAL_STEM_AAC_LEAD_SEC);
+  }
+  return t;
+}
+
+function applyStemMixRouting() {
+  if (IS_MONITOR) return;
+  var useWavPair = stemMixUsesWavPair();
+  if (currentVideoEl) {
+    try {
+      currentVideoEl.muted = !!useWavPair;
+      if (!useWavPair) applyPlayerVolume(currentVideoEl);
+    } catch (_) {}
+  }
+  var master = Math.max(0, Math.min(1, playerVolume));
+  var vocalGain = Math.max(0, Math.min(1, vocalMixLevel));
+  if (instrumentalStemEl) {
+    try {
+      instrumentalStemEl.volume = master;
+      instrumentalStemEl.muted = !useWavPair;
+    } catch (_) {}
+  }
   if (vocalStemEl) {
     try {
-      vocalStemEl.pause();
-      vocalStemEl.removeAttribute('src');
-      vocalStemEl.load();
-      if (vocalStemEl.parentNode) vocalStemEl.parentNode.removeChild(vocalStemEl);
+      vocalStemEl.volume = master * vocalGain;
+      vocalStemEl.muted = !useWavPair || vocalGain <= 0.001;
     } catch (_) {}
-    vocalStemEl = null;
   }
-  vocalStemVideoId = null;
 }
 
 function applyVocalMixGain() {
-  if (!vocalStemEl || IS_MONITOR) return;
-  try {
-    vocalStemEl.volume = Math.max(0, Math.min(1, vocalMixLevel)) * Math.max(0, Math.min(1, playerVolume));
-    vocalStemEl.muted = vocalMixLevel <= 0.001;
-  } catch (_) {}
+  applyStemMixRouting();
 }
 
-function syncVocalStemFromVideo() {
-  if (!vocalStemEl || !currentVideoEl || IS_MONITOR) return;
-  try {
-    var t = currentVideoEl.currentTime || 0;
-    if (Math.abs((vocalStemEl.currentTime || 0) - t) > 0.12) {
-      vocalStemEl.currentTime = t;
-    }
-    if (currentVideoEl.paused) {
-      if (!vocalStemEl.paused) vocalStemEl.pause();
-    } else if (vocalStemEl.paused && vocalMixLevel > 0.001) {
-      vocalStemEl.play().catch(function() {});
-    }
-  } catch (_) {}
+function syncStemMixFromVideo() {
+  if (!currentVideoEl || IS_MONITOR) return;
+  var t = currentVideoEl.currentTime || 0;
+  var target = stemTargetTime(t);
+  var useWavPair = stemMixUsesWavPair();
+  var active = useWavPair || (hasVocalStem && vocalMixLevel > 0.001);
+  if (!active) return;
+  [instrumentalStemEl, vocalStemEl].forEach(function(el) {
+    if (!el) return;
+    try {
+      var want = (el === vocalStemEl) ? target : t;
+      if (Math.abs((el.currentTime || 0) - want) > 0.05) el.currentTime = want;
+      if (currentVideoEl.paused) {
+        if (!el.paused) el.pause();
+      } else if (el.paused) {
+        el.play().catch(function() {});
+      }
+    } catch (_) {}
+  });
 }
 
-async function setupVocalStem(streamId) {
-  destroyVocalStem();
-  if (IS_MONITOR || !streamId) return;
-  var base = String(streamId).replace(/-karaoke$/, '');
-  // Probe via lyrics payload / status — stem 404 is fine
-  var url = 'http://127.0.0.1:3131/api/library/stem/' + encodeURIComponent(base) + '/vocals';
-  try {
-    var head = await fetch(url, { method: 'HEAD' });
-    if (!head.ok) {
-      console.log('[player] No vocal stem for', base);
-      return;
-    }
-  } catch (_) {
-    return;
-  }
+function createStemAudio(url) {
   var el = document.createElement('audio');
   el.preload = 'auto';
   el.crossOrigin = 'anonymous';
   el.src = url;
   el.style.display = 'none';
   document.body.appendChild(el);
-  vocalStemEl = el;
-  vocalStemVideoId = base;
-  applyVocalMixGain();
+  return el;
+}
+
+async function stemHeadOk(role, base) {
+  var url = 'http://127.0.0.1:3131/api/library/stem/' + encodeURIComponent(base) + '/' + role;
   try {
-    if (currentVideoEl) el.currentTime = currentVideoEl.currentTime || 0;
+    var head = await fetch(url, { method: 'HEAD' });
+    return head.ok ? url : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function setupStemMix(streamId) {
+  destroyStemMix();
+  if (IS_MONITOR || !streamId) return;
+  var base = String(streamId).replace(/-karaoke$/, '');
+  var vocalsUrl = await stemHeadOk('vocals', base);
+  if (!vocalsUrl) {
+    console.log('[player] No vocal stem for', base);
+    return;
+  }
+  var instrumentalUrl = await stemHeadOk('instrumental', base);
+  vocalStemEl = createStemAudio(vocalsUrl);
+  hasVocalStem = true;
+  if (instrumentalUrl) {
+    instrumentalStemEl = createStemAudio(instrumentalUrl);
+    hasInstrumentalStem = true;
+  }
+  vocalStemVideoId = base;
+  applyStemMixRouting();
+  var t0 = stemTargetTime(currentVideoEl ? (currentVideoEl.currentTime || 0) : 0);
+  try {
+    if (instrumentalStemEl && currentVideoEl) instrumentalStemEl.currentTime = currentVideoEl.currentTime || 0;
+    if (vocalStemEl) vocalStemEl.currentTime = t0;
   } catch (_) {}
   if (currentVideoEl && !currentVideoEl.paused && vocalMixLevel > 0.001) {
-    el.play().catch(function() {});
+    if (instrumentalStemEl) instrumentalStemEl.play().catch(function() {});
+    if (vocalStemEl) vocalStemEl.play().catch(function() {});
   }
   if (vocalDriftTimer) clearInterval(vocalDriftTimer);
-  vocalDriftTimer = setInterval(syncVocalStemFromVideo, 500);
-  console.log('[player] Vocal stem ready for', base);
+  vocalDriftTimer = setInterval(syncStemMixFromVideo, 120);
+  console.log('[player] Stem mix ready for', base,
+    hasInstrumentalStem ? '(WAV pair)' : '(vocals over AAC fallback)');
 }
 
 function setVocalMix(level) {
   vocalMixLevel = Math.max(0, Math.min(1, Number(level) || 0));
-  applyVocalMixGain();
-  syncVocalStemFromVideo();
+  applyStemMixRouting();
+  syncStemMixFromVideo();
 }
 
 // ── Disposable video management (avoids createMediaElementSource reuse bug) ──
@@ -1180,7 +1269,7 @@ function destroyVideo() {
   if (loadTimeoutId) { clearTimeout(loadTimeoutId); loadTimeoutId = null; }
 
   stopMicBuddyAudio();
-  destroyVocalStem();
+  destroyStemMix();
 
   // Remove old video element from DOM
   if (currentVideoEl) {
@@ -1355,7 +1444,7 @@ api.on('player-event', function(event) {
       if (event.videoId && currentVideoId) {
         var cur = String(currentVideoId).replace(/-karaoke$/, '');
         var ready = String(event.videoId).replace(/-karaoke$/, '');
-        if (cur === ready) setupVocalStem(ready);
+        if (cur === ready) setupStemMix(ready);
       }
       break;
     case 'skip': handleSkip(); break;
@@ -1737,7 +1826,7 @@ function handleResume() {
         console.error('[player] Resume play failed:', e && e.message);
       });
       startMicBuddyAudio(currentVideoEl);
-      syncVocalStemFromVideo();
+      syncStemMixFromVideo();
     }
     playerState = 'playing';
     startProgressTimer();
@@ -2746,7 +2835,7 @@ async function playLocal(videoId, gen) {
     });
     startMicBuddyAudio(currentVideoEl);
     updateMicBuddyVisibility();
-    setupVocalStem(streamId);
+    setupStemMix(streamId);
     console.log('[player] Video play() resolved gen=', gen);
   } catch(err) {
     if (!stillCurrent()) return;
@@ -2823,6 +2912,7 @@ function handlePause() {
   userPaused = true;
   if (!isYouTube && currentVideoEl) currentVideoEl.pause();
   if (vocalStemEl) try { vocalStemEl.pause(); } catch (_) {}
+  if (instrumentalStemEl) try { instrumentalStemEl.pause(); } catch (_) {}
   updateMicBuddyVisibility();
 }
 
@@ -2851,7 +2941,10 @@ function handleSkip() {
 function handleSeek(time) {
   if (!isYouTube && currentVideoEl) currentVideoEl.currentTime = time;
   if (vocalStemEl) {
-    try { vocalStemEl.currentTime = time; } catch (_) {}
+    try { vocalStemEl.currentTime = stemTargetTime(time); } catch (_) {}
+  }
+  if (instrumentalStemEl) {
+    try { instrumentalStemEl.currentTime = time; } catch (_) {}
   }
 }
 
