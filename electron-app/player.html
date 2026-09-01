@@ -1451,6 +1451,7 @@ api.on('player-event', function(event) {
     case 'between-songs-hold': /* timer held — keep B-roll spinning */ break;
     case 'between-songs-resume': /* countdown resumed */ break;
     case 'between-songs': handleBetweenSongs(event); break;
+    case 'between-songs-update': handleBetweenSongsUpdate(event); break;
     case 'gap-content-switch': handleGapContentSwitch(event); break;
     case 'gap-mix': applyGapMixFromEvent(event); break;
     case 'phone-mirror-fade-out': stopPhoneMirrorAudio(false); stopPhoneMirrorCapture(); applyPhoneMirrorOverlay({ active: false }); break;
@@ -1495,6 +1496,15 @@ var QR_TRIP_MS = 2200;
 var qrTripAnim = null;
 var qrMode = 'corner'; // corner | hero
 var pauseInterstitialActive = false;
+
+function isGapUiActive() {
+  var el = document.getElementById('between-songs');
+  return !!(
+    (el && el.classList.contains('active'))
+    || document.body.classList.contains('interstitial-on')
+    || pauseInterstitialActive
+  );
+}
 
 function getQrFly() { return document.getElementById('qr-fly'); }
 
@@ -1654,10 +1664,11 @@ function safeTitle(title, videoId) {
 
 function handlePlay(videoId, isYT, title, requester, meta) {
   meta = meta || {};
+  var gapUiActive = isGapUiActive();
   // Guard: never tear down + restart the same video once it has real progress
   if (currentVideoId === videoId && currentVideoEl) {
     var ct = currentVideoEl.currentTime || 0;
-    if (ct >= 1) {
+    if (ct >= 1 && !gapUiActive) {
       if (playerState === 'paused' || currentVideoEl.paused) {
         currentVideoEl.play().catch(function() {});
         playerState = 'playing';
@@ -1771,6 +1782,18 @@ function handleBetweenSongs(event) {
   requestAnimationFrame(function() {
     requestAnimationFrame(function() { tripQr(true); });
   });
+}
+
+/** Queue edit during Gap — refresh up-next labels only (B-roll keeps playing). */
+function handleBetweenSongsUpdate(event) {
+  var el = document.getElementById('between-songs');
+  if (!el || !el.classList.contains('active')) return;
+  var singer = (event && event.singer) ? String(event.singer).trim() : '';
+  var title = safeTitle(event && event.title, '');
+  document.getElementById('bs-singer').textContent = (singer && !/^dj$/i.test(singer) && singer !== 'Next up') ? singer : 'Naynay';
+  document.getElementById('bs-song').textContent = title || '';
+  if (event && event.queue) handleQueueUpdate(event.queue, event.currentIndex);
+  updateMarquee(title || '', singer || '');
 }
 
 /** Pause current video and show between-songs-style interstitial (does NOT advance queue). */

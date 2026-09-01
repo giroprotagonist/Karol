@@ -3,7 +3,7 @@
  * Gap Phone Mirror — USB/wireless scrcpy over the player B-roll slot + optional
  * BlackHole loopback for faded audio (Ableton setups with a second BH device).
  *
- * The HDMI player uses alwaysOnTop 'screen-saver', so we must drop that level
+ * The HDMI player uses alwaysOnTop 'floating', so we must drop that level
  * while mirroring or the scrcpy window stays invisible behind the player.
  */
 
@@ -334,7 +334,7 @@ function restorePlayerAlwaysOnTop() {
  * NSWindow setStyleMask crashes (EXC_BREAKPOINT) on pause.
  *
  * Prefer laptop-hosted scrcpy + desktopCapturer when Screen Recording is
- * granted. HDMI overlay mode drops the player from 'screen-saver' so the
+ * granted. HDMI overlay mode drops the player from floating AOT so the
  * always-on-top scrcpy window can sit in the phone slot on the external display.
  */
 function lowerPlayerForMirror(playWin) {
@@ -348,7 +348,7 @@ function lowerPlayerForMirror(playWin) {
     restorePlayerLayer = () => {
       try {
         if (playWin && !(typeof playWin.isDestroyed === 'function' && playWin.isDestroyed())) {
-          playWin.setAlwaysOnTop(true, 'screen-saver');
+          playWin.setAlwaysOnTop(true, 'floating');
         }
       } catch (_) {
         try { playWin.setAlwaysOnTop(true); } catch (__) {}
