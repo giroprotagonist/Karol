@@ -113,9 +113,9 @@ function probeDrive() {
     }
     out.mounted = true;
     try {
+      // accessSync only — never readdir here. ExFAT USB readdir can hang the
+      // Electron main process for minutes and block API/window startup.
       fs.accessSync(LIBRARY_DIR, fs.constants.R_OK);
-      // Cheap readability probe — do NOT readdir karaoke/ (20k+ entries) here.
-      fs.readdirSync(LIBRARY_DIR, { withFileTypes: false }).slice(0, 1);
       out.readable = true;
     } catch (e) {
       out.errorCode = e.code || '';
@@ -144,8 +144,8 @@ function ensureLibraryDirs() {
   return true;
 }
 
-// Ensure directories exist only when the external volume is actually mounted.
-ensureLibraryDirs();
+// Do NOT call ensureLibraryDirs() at module load — mkdir on a stalled ExFAT
+// volume blocks Electron before app.whenReady (and before the API can fork).
 
 // ── Internal state ──
 let __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
@@ -206,7 +206,8 @@ function countDiskMedia(force) {
     try {
       if (!fs.existsSync(dir)) { diskByFolder[key] = 0; continue; }
       for (const f of fs.readdirSync(dir)) {
-        if (mediaExt.test(f) && !f.startsWith('._')) n++;
+        if (f.startsWith('._') || f === '.DS_Store') continue;
+        if (mediaExt.test(f)) n++;
       }
     } catch { n = 0; }
     diskByFolder[key] = n;
@@ -268,8 +269,9 @@ function refreshDiskStats(opts = {}) {
   if (mounted && readable && recount) {
     disk = countDiskMedia(true);
   } else if (mounted && readable && !__diskCountCache.ts) {
-    // Kick a background count once; don't block this call
-    scheduleDiskCount(false);
+    // Do NOT auto-kick disk counts on ExFAT/USB — readdirSync of karaoke/
+    // can freeze the Electron main process (and IPC) for minutes.
+    // Disk counts run only when explicitly requested (Rescan / recount:true).
   }
   const catalogCount = catalogCountFromMemoryOrDisk();
   let status = 'idle';
@@ -418,30 +420,34 @@ function _findInLibraryDirs(predicate) {
   return null;
 }
 
+/**
+ * Search order for a media id. Karaoke variants live under karaoke/;
+ * base (Music Video) ids prefer songs/ so a leftover pipeline input
+ * `karaoke/{id}.mp4` never shadows the real MV in songs/.
+ */
+function _mediaSearchDirsForId(videoId) {
+  const id = String(videoId || '');
+  if (/-karaoke$/.test(id)) {
+    return [LIBRARY_KARAOKE_DIR, LIBRARY_DIR, LIBRARY_SONGS_DIR, ...LEGACY_SONGS_DIRS];
+  }
+  return [LIBRARY_SONGS_DIR, ...LEGACY_SONGS_DIRS, LIBRARY_DIR, LIBRARY_KARAOKE_DIR];
+}
+
 function getVideoPath(videoId) {
   const MIN_BYTES = 50_000; // skip 0-byte / truncated ghosts that poison USB root
-  const found = _findInLibraryDirs((dir) => {
+  const id = String(videoId || '');
+  for (const dir of _mediaSearchDirsForId(id)) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+    } catch (_) { continue; }
     for (const ext of VIDEO_EXTS) {
-      const exact = path.join(dir, videoId + ext);
+      const exact = path.join(dir, id + ext);
       try {
         if (fs.existsSync(exact) && fs.statSync(exact).size >= MIN_BYTES) return exact;
       } catch (_) { /* ignore */ }
     }
-    // Exact stem only — do NOT prefix-match (id must not resolve to id-karaoke.mp4)
-    try {
-      const files = fs.readdirSync(dir);
-      for (const ext of VIDEO_EXTS) {
-        const want = videoId + ext;
-        if (!files.includes(want)) continue;
-        const full = path.join(dir, want);
-        try {
-          if (fs.statSync(full).size >= MIN_BYTES) return full;
-        } catch (_) { /* ignore */ }
-      }
-    } catch (e) { /* ignore */ }
-    return null;
-  });
-  return found || path.join(LIBRARY_DIR, videoId + '.mp4');
+  }
+  return path.join(LIBRARY_DIR, id + '.mp4');
 }
 
 function getFilePath(videoId) {
@@ -501,13 +507,12 @@ function getMetadata(videoId) {
 // ── LRC Words Repair ──
 // Ensures line.words[] arrays match line.text.  If text was corrected
 // without rebuilding words[], the player renders stale wrong lyrics.
-function _repairAndReturn(lrc) {
-  if (!lrc || !lrc.lines) return lrc;
-  // Force-aligned / manually-edited LRCs already have consistent text/words — don't destroy timings
-  if (lrc.alignMode === 'reconcile+force') return lrc;
-  if (lrc.manuallyEdited || String(lrc.alignMode || '').includes('|edited')) return lrc;
+function _repairLinesArray(lines, alignMode, manuallyEdited) {
+  if (!Array.isArray(lines)) return 0;
+  if (alignMode === 'reconcile+force') return 0;
+  if (manuallyEdited || String(alignMode || '').includes('|edited')) return 0;
   let fixed = 0;
-  for (const line of lrc.lines) {
+  for (const line of lines) {
     const text = (line.text || '').trim();
     const words = line.words || [];
     if (!words.length || !text) continue;
@@ -533,24 +538,219 @@ function _repairAndReturn(lrc) {
       fixed++;
     }
   }
-  if (fixed) console.log('[library] Repaired', fixed, 'stale word arrays in lyrics');
+  return fixed;
+}
+
+/**
+ * Resolve primary/secondary/tertiary lyric tracks for multi-line display.
+ * Backward compatible: legacy files with only top-level `lines` → primary only.
+ *
+ * Visual stack (HDMI): tertiary ABOVE primary (e.g. Thai script), primary
+ * (sing/highlight line, e.g. RTGS), secondary BELOW (e.g. English).
+ */
+function resolveLyricDisplay(lrc) {
+  if (!lrc || typeof lrc !== 'object') {
+    return {
+      primaryLines: [], secondaryLines: null, tertiaryLines: null,
+      primaryKey: null, secondaryKey: null, tertiaryKey: null, display: null,
+    };
+  }
+  const tracks = lrc.tracks && typeof lrc.tracks === 'object' ? lrc.tracks : null;
+  const display = lrc.display && typeof lrc.display === 'object'
+    ? lrc.display
+    : (tracks ? { primary: 'sung', secondary: 'english' } : null);
+
+  if (!tracks) {
+    return {
+      primaryLines: Array.isArray(lrc.lines) ? lrc.lines : [],
+      secondaryLines: null,
+      tertiaryLines: null,
+      primaryKey: null,
+      secondaryKey: null,
+      tertiaryKey: null,
+      display: null,
+    };
+  }
+
+  // Prefer explicit display keys; fall back sensibly for Asian / Latin mixes
+  let primaryKey = display && display.primary;
+  let secondaryKey = display && display.secondary;
+  let tertiaryKey = display && display.tertiary;
+  if (!primaryKey || !tracks[primaryKey]) {
+    if (tracks.romanized) primaryKey = 'romanized';
+    else if (tracks.sung) primaryKey = 'sung';
+    else if (tracks.english) primaryKey = 'english';
+    else primaryKey = Object.keys(tracks)[0] || null;
+  }
+  if (!secondaryKey || !tracks[secondaryKey] || secondaryKey === primaryKey) {
+    if (tracks.english && primaryKey !== 'english') secondaryKey = 'english';
+    else if (tracks.sung && primaryKey !== 'sung') secondaryKey = 'sung';
+    else secondaryKey = null;
+  }
+  if (!tertiaryKey || !tracks[tertiaryKey]
+      || tertiaryKey === primaryKey || tertiaryKey === secondaryKey) {
+    // Auto tertiary: native/sung Thai (or other native script) above RTGS+English
+    if (primaryKey === 'romanized') {
+      if (tracks.native && secondaryKey !== 'native') tertiaryKey = 'native';
+      else if (tracks.sung && secondaryKey !== 'sung') tertiaryKey = 'sung';
+      else tertiaryKey = null;
+    } else {
+      tertiaryKey = null;
+    }
+  }
+
+  const primaryLines = (primaryKey && tracks[primaryKey] && Array.isArray(tracks[primaryKey].lines))
+    ? tracks[primaryKey].lines
+    : (Array.isArray(lrc.lines) ? lrc.lines : []);
+  const secondaryLines = (secondaryKey && tracks[secondaryKey] && Array.isArray(tracks[secondaryKey].lines)
+    && tracks[secondaryKey].lines.length)
+    ? tracks[secondaryKey].lines
+    : null;
+  const tertiaryLines = (tertiaryKey && tracks[tertiaryKey] && Array.isArray(tracks[tertiaryKey].lines)
+    && tracks[tertiaryKey].lines.length)
+    ? tracks[tertiaryKey].lines
+    : null;
+
+  return {
+    primaryLines,
+    secondaryLines,
+    tertiaryLines,
+    primaryKey,
+    secondaryKey,
+    tertiaryKey,
+    display: { primary: primaryKey, secondary: secondaryKey, tertiary: tertiaryKey || null },
+  };
+}
+
+/**
+ * Normalize an LRC object for consumers: set top-level `lines` to the primary
+ * track (legacy) and attach secondary/tertiary lines for the player.
+ */
+function normalizeLyricTracks(lrc) {
+  if (!lrc || typeof lrc !== 'object') return lrc;
+  const resolved = resolveLyricDisplay(lrc);
+  // Mirror primary into top-level lines for older callers
+  lrc.lines = resolved.primaryLines || [];
+  lrc.secondaryLines = resolved.secondaryLines;
+  lrc.tertiaryLines = resolved.tertiaryLines;
+  lrc.display = resolved.display || lrc.display || null;
+  lrc.primaryTrack = resolved.primaryKey;
+  lrc.secondaryTrack = resolved.secondaryKey;
+  lrc.tertiaryTrack = resolved.tertiaryKey;
   return lrc;
+}
+
+/**
+ * Merge a newly generated single-track LRC into an existing multi-track file
+ * without destroying other tracks. `trackKey` defaults to 'sung'.
+ */
+function mergeLyricTrack(existingLrc, incomingLrc, trackKey, opts) {
+  const key = trackKey || 'sung';
+  const options = opts || {};
+  const base = existingLrc && typeof existingLrc === 'object'
+    ? JSON.parse(JSON.stringify(existingLrc))
+    : {};
+  const incoming = incomingLrc && typeof incomingLrc === 'object' ? incomingLrc : {};
+  const incomingLines = Array.isArray(incoming.lines) ? incoming.lines : [];
+
+  if (!base.tracks || typeof base.tracks !== 'object') base.tracks = {};
+
+  // Migrate legacy top-level lines into a track once, if needed
+  if (Array.isArray(base.lines) && base.lines.length && !Object.keys(base.tracks).length) {
+    const legacyKey = options.legacyAs || 'english';
+    base.tracks[legacyKey] = {
+      lang: legacyKey === 'english' ? 'en' : '',
+      label: legacyKey === 'english' ? 'English' : 'As sung',
+      role: legacyKey === 'english' ? 'translation' : 'primary',
+      lines: base.lines,
+      alignMode: base.alignMode || base.source || '',
+    };
+  }
+
+  // Never clobber a protected track unless explicitly forced
+  const protectEnglish = options.protectEnglish !== false;
+  if (protectEnglish && key === 'english' && base.tracks.english
+      && Array.isArray(base.tracks.english.lines) && base.tracks.english.lines.length
+      && !options.force) {
+    return normalizeLyricTracks(base);
+  }
+
+  base.tracks[key] = {
+    lang: options.lang || (key === 'english' ? 'en' : (base.tracks[key] && base.tracks[key].lang) || ''),
+    label: options.label || (key === 'english' ? 'English' : key === 'romanized' ? 'Romanized' : 'As sung'),
+    role: options.role || (key === 'english' ? 'translation' : 'primary'),
+    lines: incomingLines,
+    alignMode: incoming.alignMode || incoming.source || '',
+  };
+
+  // Carry metadata
+  if (incoming.videoId) base.videoId = incoming.videoId;
+  if (incoming.duration != null) base.duration = incoming.duration;
+  if (incoming.title) base.title = base.title || incoming.title;
+  if (incoming.artist) base.artist = base.artist || incoming.artist;
+  if (incoming.lrclibId != null && key !== 'english') base.lrclibId = incoming.lrclibId;
+
+  const displayPrimary = options.displayPrimary
+    || (key === 'romanized' ? 'romanized' : (key === 'sung' ? 'sung' : (base.display && base.display.primary) || key));
+  const displaySecondary = options.displaySecondary != null
+    ? options.displaySecondary
+    : (base.tracks.english && displayPrimary !== 'english' ? 'english' : null);
+  const displayTertiary = options.displayTertiary != null
+    ? options.displayTertiary
+    : (base.display && base.display.tertiary) || null;
+  base.display = {
+    primary: displayPrimary,
+    secondary: displaySecondary,
+    tertiary: displayTertiary,
+  };
+
+  // Top-level alignMode reflects primary track provenance
+  const primaryTrack = base.tracks[displayPrimary];
+  if (primaryTrack && primaryTrack.alignMode) {
+    base.alignMode = primaryTrack.alignMode;
+    base.source = primaryTrack.alignMode;
+  }
+
+  return normalizeLyricTracks(base);
+}
+
+function _repairAndReturn(lrc) {
+  if (!lrc) return lrc;
+  let fixed = 0;
+  fixed += _repairLinesArray(lrc.lines, lrc.alignMode, lrc.manuallyEdited);
+  if (lrc.tracks && typeof lrc.tracks === 'object') {
+    for (const key of Object.keys(lrc.tracks)) {
+      const tr = lrc.tracks[key];
+      if (!tr || !Array.isArray(tr.lines)) continue;
+      fixed += _repairLinesArray(tr.lines, tr.alignMode || lrc.alignMode, lrc.manuallyEdited);
+    }
+  }
+  if (fixed) console.log('[library] Repaired', fixed, 'stale word arrays in lyrics');
+  return normalizeLyricTracks(lrc);
 }
 
 function getLyrics(videoId) {
   try {
+    let data = null;
     const lrcPath = path.join(LIBRARY_DIR, videoId + '.lrc.json');
     if (fs.existsSync(lrcPath)) {
-      return _repairAndReturn(JSON.parse(fs.readFileSync(lrcPath, 'utf8')));
+      data = _repairAndReturn(JSON.parse(fs.readFileSync(lrcPath, 'utf8')));
+    } else {
+      const karaokeLrc = path.join(LIBRARY_KARAOKE_DIR, videoId + '.lrc.json');
+      if (fs.existsSync(karaokeLrc)) {
+        data = _repairAndReturn(JSON.parse(fs.readFileSync(karaokeLrc, 'utf8')));
+      } else {
+        const karaokeLrcAlt = path.join(LIBRARY_KARAOKE_DIR, videoId + '-karaoke.lrc.json');
+        if (fs.existsSync(karaokeLrcAlt)) {
+          data = _repairAndReturn(JSON.parse(fs.readFileSync(karaokeLrcAlt, 'utf8')));
+        }
+      }
     }
-    // Check karaoke dir — try videoId.lrc.json and videoId-karaoke.lrc.json
-    const karaokeLrc = path.join(LIBRARY_KARAOKE_DIR, videoId + '.lrc.json');
-    if (fs.existsSync(karaokeLrc)) {
-      return _repairAndReturn(JSON.parse(fs.readFileSync(karaokeLrc, 'utf8')));
-    }
-    const karaokeLrcAlt = path.join(LIBRARY_KARAOKE_DIR, videoId + '-karaoke.lrc.json');
-    if (fs.existsSync(karaokeLrcAlt)) {
-      return _repairAndReturn(JSON.parse(fs.readFileSync(karaokeLrcAlt, 'utf8')));
+    if (data) {
+      const stems = getStemPaths(videoId);
+      data.vocalMixAvailable = !!stems.vocalMixAvailable;
+      data.hasVocals = !!stems.hasVocals;
+      return data;
     }
   } catch (e) { /* ignore */ }
   return null;
@@ -617,6 +817,9 @@ function getLyricProvenance(videoId) {
   } else if ((data.lines || []).length) {
     source = 'unknown';
     label = 'Lyrics';
+  } else if (data.tracks && Object.keys(data.tracks).some(k => (data.tracks[k].lines || []).length)) {
+    source = 'multi_track';
+    label = 'Multi-track';
   } else {
     return { hasLyrics: false, source: '', label: 'No lyrics', alignMode: mode, path: lrcPath };
   }
@@ -624,15 +827,18 @@ function getLyricProvenance(videoId) {
     label = label + ' · edited';
     source = source + '_edited';
   }
+  const resolved = resolveLyricDisplay(data);
   return {
     hasLyrics: true,
     source,
     label,
     alignMode: data.alignMode || data.source || '',
     lrclibId: data.lrclibId || null,
-    lineCount: (data.lines || []).length,
+    lineCount: (resolved.primaryLines || data.lines || []).length,
     path: lrcPath,
     manuallyEdited: edited,
+    primaryTrack: resolved.primaryKey,
+    secondaryTrack: resolved.secondaryKey,
   };
 }
 
@@ -683,7 +889,11 @@ function saveLyricsLines(videoId, editedLines) {
   } catch (e) {
     return { ok: false, error: 'Failed to read LRC: ' + e.message };
   }
-  const existing = data.lines || [];
+  const resolved = resolveLyricDisplay(data);
+  const primaryKey = resolved.primaryKey;
+  const existing = resolved.primaryLines.length
+    ? resolved.primaryLines
+    : (data.lines || []);
   if (editedLines.length !== existing.length) {
     return {
       ok: false,
@@ -711,6 +921,19 @@ function saveLyricsLines(videoId, editedLines) {
   });
 
   data.lines = newLines;
+  if (primaryKey) {
+    if (!data.tracks) data.tracks = {};
+    if (!data.tracks[primaryKey]) {
+      data.tracks[primaryKey] = {
+        lang: primaryKey === 'english' ? 'en' : '',
+        label: primaryKey === 'english' ? 'English' : primaryKey === 'romanized' ? 'Romanized' : 'As sung',
+        role: primaryKey === 'english' ? 'translation' : 'primary',
+        lines: newLines,
+      };
+    } else {
+      data.tracks[primaryKey].lines = newLines;
+    }
+  }
   data.manuallyEdited = true;
   data.editedAt = new Date().toISOString();
   // Keep provenance readable but mark as edited
@@ -719,7 +942,7 @@ function saveLyricsLines(videoId, editedLines) {
   data.source = data.alignMode;
 
   try {
-    fs.writeFileSync(lrcPath, JSON.stringify(data, null, 2), 'utf8');
+    fs.writeFileSync(lrcPath, JSON.stringify(normalizeLyricTracks(data), null, 2), 'utf8');
   } catch (e) {
     return { ok: false, error: 'Failed to write LRC: ' + e.message };
   }
@@ -731,17 +954,48 @@ function saveLyricsLines(videoId, editedLines) {
   };
 }
 
+function getStemPaths(videoId) {
+  const base = String(videoId || '').replace(/-karaoke$/, '');
+  const vocals = path.join(LIBRARY_KARAOKE_DIR, base + '-karaoke-vocals.wav');
+  const instrumental = path.join(LIBRARY_KARAOKE_DIR, base + '-instrumental.wav');
+  let hasVocals = false;
+  let hasInstrumental = false;
+  try { hasVocals = fs.existsSync(vocals) && fs.statSync(vocals).size > 10000; } catch (_) {}
+  try { hasInstrumental = fs.existsSync(instrumental) && fs.statSync(instrumental).size > 10000; } catch (_) {}
+  // Bundle hint (optional)
+  try {
+    const bundlePath = path.join(LIBRARY_KARAOKE_DIR, base + '-karaoke.bundle.json');
+    if (fs.existsSync(bundlePath)) {
+      const b = JSON.parse(fs.readFileSync(bundlePath, 'utf8'));
+      if (b.hasVocals) hasVocals = hasVocals || !!b.hasVocals;
+      if (b.hasInstrumental) hasInstrumental = hasInstrumental || !!b.hasInstrumental;
+    }
+  } catch (_) {}
+  return {
+    videoId: base,
+    vocals: hasVocals ? vocals : null,
+    instrumental: hasInstrumental ? instrumental : null,
+    hasVocals,
+    hasInstrumental,
+    vocalMixAvailable: hasVocals,
+  };
+}
+
 function getStatus(videoId) {
   const mp4 = getVideoPath(videoId);
   const exists = fs.existsSync(mp4);
   const info = exists ? getMetadata(videoId) : null;
   const lyrics = exists ? getLyrics(videoId) : null;
+  const stems = getStemPaths(videoId);
   return {
     exists,
     path: exists ? mp4 : null,
     size: exists ? fs.statSync(mp4).size : 0,
     metadata: info,
     hasLyrics: !!lyrics,
+    vocalMixAvailable: !!stems.vocalMixAvailable,
+    hasVocals: !!stems.hasVocals,
+    hasInstrumental: !!stems.hasInstrumental,
   };
 }
 
@@ -753,12 +1007,28 @@ function tryLoadCacheFromDisk() {
     const rawJson = fs.readFileSync(CACHE_FILE, 'utf8');
     const result = JSON.parse(rawJson);
     if (result && result.ok && result.count > 0) {
+      attachRatingsFromTags(result.videos || []);
       __libraryListCache = { ts: Date.now(), data: result, rawJson, archiveMtime: result.archiveMtime || 0 };
       console.log('[library] Loaded from disk: ' + result.count + ' videos');
       return true;
     }
   } catch (e) { console.error('[library] Failed to load cache:', e.message); }
   return false;
+}
+
+/** Stamp 1–5 star ratings from tags.json onto library list rows (in place). */
+function attachRatingsFromTags(videos) {
+  if (!Array.isArray(videos) || !videos.length) return videos;
+  let tags;
+  try { tags = loadTags(); } catch (_) { return videos; }
+  for (const v of videos) {
+    const vid = String(v.videoId || '');
+    const base = vid.replace(/-karaoke$/, '');
+    const entry = tags[vid] || tags[base + '-karaoke'] || tags[base] || {};
+    const n = Number(entry.rating);
+    v.rating = (Number.isFinite(n) && n > 0) ? Math.max(1, Math.min(5, Math.round(n))) : null;
+  }
+  return videos;
 }
 
 function buildLibraryCache() {
@@ -889,7 +1159,7 @@ function init(force) {
         driveReadable: status.driveReadable,
         message: 'Loaded library cache — ' + (__libraryListCache.data.count || 0).toLocaleString() + ' videos',
       });
-      scheduleDiskCount(false);
+      // No scheduleDiskCount here — USB readdir freezes main/IPC.
       resolve(getScanStatus());
     }
   });
@@ -904,7 +1174,18 @@ function list(opts) {
     if (__libraryScanInFlight) {
       return { ok: false, error: 'Library scan in progress — retry in a few seconds', scanning: true };
     }
-    return { ok: false, error: 'Library not loaded yet — click Rescan', scanning: false };
+    const probe = probeDrive();
+    if (probe.mounted && probe.readable) {
+      console.log('[library] maxone ready — auto-starting background scan');
+      buildLibraryCache();
+      return { ok: false, error: 'Library scan in progress — retry in a few seconds', scanning: true };
+    }
+    const errMsg = probe.ghost
+      ? 'Ghost folder at /Volumes/maxone — delete it and remount the drive'
+      : (!probe.mounted
+        ? 'Plug in maxone (/Volumes/maxone), then click Rescan'
+        : 'maxone mounted but not readable — enable Removable Volumes for Karol in System Settings');
+    return { ok: false, error: errMsg, scanning: false };
   }
 
   const q = (opts.q || '').toLowerCase();
@@ -1043,6 +1324,145 @@ function reclassify(videoId, { tag, source } = {}) {
   };
 }
 
+/** Strip one or more trailing `-karaoke` suffixes (guards against double-append bugs). */
+function normalizeVideoIdBase(videoId) {
+  return String(videoId || '').replace(/(-karaoke)+$/g, '');
+}
+
+/**
+ * Resolve which tags.json key owns a karaoke/custom track's metadata.
+ * Prefers the `-karaoke` pipeline key when present.
+ */
+function resolveTagKey(videoId) {
+  const tags = loadTags();
+  const id = String(videoId || '');
+  const base = normalizeVideoIdBase(id);
+  const karaokeKey = base + '-karaoke';
+  // Prefer the pipeline `-karaoke` key (where Custom metadata lives)
+  if (tags[karaokeKey]) return karaokeKey;
+  if (tags[base]) return base;
+  // Accept an existing exact key only if it is not a mangled multi-suffix leftover
+  if (tags[id] && !/(-karaoke){2,}$/.test(id)) return id;
+  return karaokeKey;
+}
+
+/** Mangled keys from older save bugs: base + two or more `-karaoke` suffixes. */
+function _mangledOffsetKeys(tags, base) {
+  const b = String(base || '');
+  if (!b) return [];
+  const re = new RegExp('^' + b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(-karaoke){2,}$');
+  return Object.keys(tags || {}).filter((k) => re.test(k));
+}
+
+/**
+ * Read durable lyric timing offset (seconds). Migrates offsets saved under
+ * mangled `…-karaoke-karaoke…` keys onto the canonical tags entry.
+ */
+function getLyricOffset(videoId) {
+  const tags = loadTags();
+  const base = normalizeVideoIdBase(videoId);
+  const key = resolveTagKey(videoId);
+  let offset = Number(tags[key] && tags[key].lyricOffset);
+  if (!Number.isFinite(offset)) offset = 0;
+
+  let dirty = false;
+  for (const mk of _mangledOffsetKeys(tags, base)) {
+    const n = Number(tags[mk] && tags[mk].lyricOffset);
+    if (!offset && Number.isFinite(n) && n !== 0) {
+      offset = n;
+      const existing = tags[key] || { tag: 'karaoke', year: '', artist: '', source: 'karaoke-maker' };
+      tags[key] = { ...existing, lyricOffset: n };
+    }
+    delete tags[mk];
+    dirty = true;
+  }
+  if (dirty) saveTags(tags);
+
+  return { ok: true, offset: offset || 0, videoId: key, baseVideoId: base };
+}
+
+/**
+ * Persist lyric timing offset on the canonical tags.json key the player reads.
+ * Does not mutate LRC timestamps — offset is applied at playback time.
+ */
+function setLyricOffset(videoId, offset) {
+  const id = String(videoId || '');
+  if (!id) return { ok: false, error: 'videoId required' };
+  let n = Number(offset);
+  if (!Number.isFinite(n)) return { ok: false, error: 'offset must be a number' };
+  // Clamp to slider range used by the player UI
+  n = Math.max(-30, Math.min(30, Math.round(n * 10) / 10));
+
+  const tags = loadTags();
+  const base = normalizeVideoIdBase(id);
+  const key = resolveTagKey(id);
+  const existing = tags[key] || { tag: 'karaoke', year: '', artist: '', source: 'karaoke-maker' };
+  const next = { ...existing };
+  if (Math.abs(n) < 0.05) {
+    delete next.lyricOffset;
+    n = 0;
+  } else {
+    next.lyricOffset = n;
+  }
+  tags[key] = next;
+
+  // Drop legacy mangled keys so restart cannot revive a stale wrong-key value
+  for (const mk of _mangledOffsetKeys(tags, base)) {
+    if (mk !== key) delete tags[mk];
+  }
+  saveTags(tags);
+  return { ok: true, offset: n, videoId: key, baseVideoId: base };
+}
+
+/**
+ * Set a 0–5 star rating on a custom karaoke track (stored in tags.json).
+ * 0 clears the rating. Writes onto the `-karaoke` key when that entry exists.
+ */
+function setRating(videoId, rating) {
+  const id = String(videoId || '');
+  if (!id) return { ok: false, error: 'videoId required' };
+  let n = Number(rating);
+  if (!Number.isFinite(n)) return { ok: false, error: 'rating must be a number' };
+  n = Math.max(0, Math.min(5, Math.round(n)));
+
+  const tags = loadTags();
+  const key = resolveTagKey(id);
+  const existing = tags[key] || { tag: 'karaoke', year: '', artist: '', source: 'karaoke-maker' };
+  const next = { ...existing };
+  if (n === 0) {
+    delete next.rating;
+  } else {
+    next.rating = n;
+  }
+  tags[key] = next;
+  saveTags(tags);
+  // Keep in-memory library rows in sync so the controller sees the new rating
+  // without waiting for a full rescan.
+  try {
+    const videos = (__libraryListCache.data && __libraryListCache.data.videos) || [];
+    const base = id.replace(/-karaoke$/, '');
+    for (const v of videos) {
+      const vid = String(v.videoId || '');
+      if (vid === id || vid === key || vid === base || vid === base + '-karaoke') {
+        v.rating = n || null;
+      }
+    }
+  } catch (_) {}
+  return { ok: true, videoId: key, rating: n || null, baseVideoId: id.replace(/-karaoke$/, '') };
+}
+
+function getRating(videoId) {
+  const tags = loadTags();
+  const key = resolveTagKey(videoId);
+  const entry = tags[key] || tags[String(videoId || '')] || {};
+  const n = Number(entry.rating);
+  return {
+    ok: true,
+    videoId: key,
+    rating: (Number.isFinite(n) && n > 0) ? Math.max(1, Math.min(5, Math.round(n))) : null,
+  };
+}
+
 function _isMusicLibraryDir(dir) {
   if (!dir) return false;
   const abs = path.resolve(dir);
@@ -1103,6 +1523,13 @@ function moveMediaForTag(videoId, tag) {
     return name === stem || name.startsWith(stem + '.') || name.startsWith(stem + '-');
   });
 
+  // Dual-presence: Music Videos stay in songs/ even when a karaoke/custom
+  // variant is registered. Reclassifying to karaoke used to *move* the MV out
+  // of songs/, leaving an archive ghost (yt-dlp skips, Music Videos empty).
+  // Copy into karaoke/ and leave songs/ intact.
+  const preserveSongsCopy =
+    (tag === 'karaoke' || tag === 'custom') && _isMusicLibraryDir(srcDir);
+
   const movedFiles = [];
   for (const name of toMove) {
     const from = path.join(srcDir, name);
@@ -1110,17 +1537,23 @@ function moveMediaForTag(videoId, tag) {
     if (path.resolve(from) === path.resolve(to)) continue;
     try {
       if (fs.existsSync(to)) {
-        // Prefer keeping dest copy; remove stray source duplicate
-        try { fs.unlinkSync(from); } catch (_) {}
+        // Dest already has this file — only delete source when we are truly moving
+        if (!preserveSongsCopy) {
+          try { fs.unlinkSync(from); } catch (_) {}
+        }
         continue;
       }
-      fs.renameSync(from, to);
+      if (preserveSongsCopy) {
+        fs.copyFileSync(from, to);
+      } else {
+        fs.renameSync(from, to);
+      }
       movedFiles.push(name);
     } catch (e) {
-      // Cross-device: copy + unlink
+      // Cross-device (or copy-preserve path): copy; unlink only when moving
       try {
         fs.copyFileSync(from, to);
-        fs.unlinkSync(from);
+        if (!preserveSongsCopy) fs.unlinkSync(from);
         movedFiles.push(name);
       } catch (e2) {
         console.warn('[library] move failed:', from, '→', to, e2 && e2.message);
@@ -1130,20 +1563,30 @@ function moveMediaForTag(videoId, tag) {
           to: destDir,
           files: movedFiles,
           error: e2 && e2.message,
+          preservedSongs: !!preserveSongsCopy,
         };
       }
     }
   }
 
   if (movedFiles.length) {
-    console.log('[library] Moved', videoId, '(' + movedFiles.length + ' files)', srcDir, '→', destDir);
+    console.log(
+      '[library]',
+      preserveSongsCopy ? 'Copied (kept songs/)' : 'Moved',
+      videoId,
+      '(' + movedFiles.length + ' files)',
+      srcDir,
+      '→',
+      destDir,
+    );
   }
   return {
     moved: movedFiles.length > 0,
     from: srcDir,
     to: destDir,
     files: movedFiles,
-    reason: movedFiles.length ? 'moved' : 'nothing',
+    reason: movedFiles.length ? (preserveSongsCopy ? 'copied_preserved_songs' : 'moved') : 'nothing',
+    preservedSongs: !!preserveSongsCopy,
   };
 }
 
@@ -1212,6 +1655,173 @@ function invalidateListCache() {
   __libraryListCache = { ts: 0, data: null, rawJson: null, archiveMtime: 0 };
 }
 
+/**
+ * Build one library-list row from on-disk media + tags.json (same shape as
+ * library-scan-worker). Returns null when there is no playable mp4 / metadata.
+ */
+function _buildCacheRowFromDisk(videoId) {
+  const id = String(videoId || '');
+  if (!id) return null;
+  const isKaraokeVariant = /-karaoke$/.test(id);
+  const baseVideoId = isKaraokeVariant ? id.replace(/-karaoke$/, '') : id;
+  if (!/^[A-Za-z0-9_-]{11}$/.test(baseVideoId)) return null;
+
+  let mediaPath = null;
+  for (const ext of VIDEO_EXTS) {
+    for (const dir of _mediaSearchDirsForId(id)) {
+      const p = path.join(dir, id + ext);
+      try {
+        if (fs.existsSync(p) && fs.statSync(p).size >= 50_000) {
+          mediaPath = p;
+          break;
+        }
+      } catch (_) { /* ignore */ }
+    }
+    if (mediaPath) break;
+  }
+  if (!mediaPath) return null;
+
+  let meta = null;
+  try {
+    const infoPath = getInfoPath(id);
+    if (infoPath && fs.existsSync(infoPath)) meta = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+  } catch (_) { /* ignore */ }
+  if (!meta?.title && isKaraokeVariant) {
+    try {
+      const baseInfo = getInfoPath(baseVideoId);
+      if (baseInfo && fs.existsSync(baseInfo)) meta = JSON.parse(fs.readFileSync(baseInfo, 'utf8'));
+    } catch (_) { /* ignore */ }
+  }
+
+  const tags = loadTags();
+  // Never let the '-karaoke' tag's source/tag bleed onto the base Music Video
+  // row — that made Custom show both `{id}` and `{id}-karaoke` as duplicates.
+  const own = tags[id] || {};
+  const sibling = tags[isKaraokeVariant ? baseVideoId : (id + '-karaoke')] || {};
+  const tagEntry = isKaraokeVariant
+    ? { ...sibling, ...own }
+    : { ...own };
+  if (!isKaraokeVariant) {
+    if (!tagEntry.title && sibling.title) tagEntry.title = sibling.title;
+    if (!tagEntry.artist && sibling.artist) tagEntry.artist = sibling.artist;
+    if (!tagEntry.year && sibling.year) tagEntry.year = sibling.year;
+    if (!tagEntry.upload_date && sibling.upload_date) tagEntry.upload_date = sibling.upload_date;
+    if (!tagEntry.duration && sibling.duration) tagEntry.duration = sibling.duration;
+  }
+  const tagTitle = ((tags[id] || {}).title
+    || (tags[baseVideoId + '-karaoke'] || {}).title
+    || (tags[baseVideoId] || {}).title || '').trim();
+  const bestTitle = ((meta && meta.title) || '').trim() || tagTitle || id;
+  if (!bestTitle && !(meta && meta.thumbnail)) return null;
+
+  let size = 0;
+  try { size = fs.statSync(mediaPath).size; } catch (_) { /* ignore */ }
+
+  let rating = null;
+  const n = Number(tagEntry.rating);
+  if (Number.isFinite(n) && n > 0) {
+    rating = Math.max(1, Math.min(5, Math.round(n)));
+  } else {
+    const sn = Number(sibling.rating);
+    if (Number.isFinite(sn) && sn > 0) rating = Math.max(1, Math.min(5, Math.round(sn)));
+  }
+
+  // Base Music Video rows must not inherit karaoke-maker provenance.
+  let source = tagEntry.source || '';
+  if (isKaraokeVariant) {
+    source = source || 'karaoke-maker';
+  } else if (source === 'karaoke-maker') {
+    source = '';
+  }
+
+  return {
+    videoId: id,
+    title: bestTitle.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\\/g, '\\\\'),
+    duration: (meta && meta.duration) || tagEntry.duration || 0,
+    size,
+    subtitles: (meta && meta.subtitles) ? Object.keys(meta.subtitles) : [],
+    thumbnail: String((meta && meta.thumbnail) || '').replace(/\/(maxres|hq|sd|mq)default/, '/mqdefault'),
+    upload_date: tagEntry.upload_date || (meta && meta.upload_date) || '',
+    cached: true,
+    tag: isKaraokeVariant ? 'karaoke' : (tagEntry.tag || 'music'),
+    year: tagEntry.year || String(tagEntry.upload_date || (meta && meta.upload_date) || '').slice(0, 4),
+    artist: tagEntry.artist || (meta && meta.uploader) || '',
+    source,
+    isKaraokeVariant,
+    baseVideoId,
+    hasKaraoke: !isKaraokeVariant && (
+      fs.existsSync(path.join(LIBRARY_KARAOKE_DIR, id + '-karaoke.mp4'))
+      || fs.existsSync(path.join(LIBRARY_DIR, id + '-karaoke.mp4'))
+    ),
+    rating,
+  };
+}
+
+/**
+ * Upsert one (or more) video ids into the in-memory + /tmp library cache
+ * without a full USB walk. Used after karaoke-maker / download completes so
+ * Custom / Music tabs show the new track immediately.
+ *
+ * For a base youtube id, also upserts the `-karaoke` variant when that mp4 exists.
+ */
+function upsertLibraryCacheEntry(videoId) {
+  const base = normalizeVideoIdBase(videoId);
+  if (!base) return { ok: false, error: 'videoId required', upserted: [] };
+
+  if (!__libraryListCache.data) tryLoadCacheFromDisk();
+  if (!__libraryListCache.data || !Array.isArray(__libraryListCache.data.videos)) {
+    // No cache yet — leave a full scan to populate; do not invent a partial catalog.
+    return { ok: false, error: 'library cache not loaded', upserted: [] };
+  }
+
+  const ids = [base];
+  const karaokeId = base + '-karaoke';
+  try {
+    if (fs.existsSync(path.join(LIBRARY_KARAOKE_DIR, karaokeId + '.mp4'))
+        || fs.existsSync(path.join(LIBRARY_DIR, karaokeId + '.mp4'))) {
+      ids.push(karaokeId);
+    }
+  } catch (_) { /* ignore */ }
+
+  const videos = __libraryListCache.data.videos;
+  const byId = new Map();
+  for (let i = 0; i < videos.length; i++) {
+    const vid = videos[i] && videos[i].videoId;
+    if (vid) byId.set(vid, i);
+  }
+
+  const upserted = [];
+  for (const id of ids) {
+    const row = _buildCacheRowFromDisk(id);
+    if (!row) continue;
+    if (id === base && row.hasKaraoke === false && ids.includes(karaokeId)) {
+      row.hasKaraoke = true;
+    }
+    const idx = byId.get(id);
+    if (idx != null) {
+      videos[idx] = { ...videos[idx], ...row };
+    } else {
+      byId.set(id, videos.length);
+      videos.push(row);
+    }
+    upserted.push(id);
+  }
+
+  if (!upserted.length) return { ok: false, error: 'no playable media on disk', upserted: [] };
+
+  __libraryListCache.data.count = videos.length;
+  __libraryListCache.ts = Date.now();
+  try {
+    const rawJson = JSON.stringify(__libraryListCache.data);
+    __libraryListCache.rawJson = rawJson;
+    fs.writeFileSync(CACHE_FILE, rawJson, 'utf8');
+  } catch (e) {
+    console.warn('[library] upsertLibraryCacheEntry: disk write failed:', e.message);
+  }
+  console.log('[library] Upserted cache entries:', upserted.join(', '));
+  return { ok: true, upserted, count: videos.length };
+}
+
 module.exports = {
   init,
   list,
@@ -1220,6 +1830,12 @@ module.exports = {
   mergeTagMetaBatch,
   setTag,
   reclassify,
+  setRating,
+  getRating,
+  resolveTagKey,
+  normalizeVideoIdBase,
+  getLyricOffset,
+  setLyricOffset,
   getMetadata,
   getVideoPath,
   getFilePath,
@@ -1230,13 +1846,18 @@ module.exports = {
   getLyricProvenance,
   getLrcJsonPath,
   saveLyricsLines,
+  resolveLyricDisplay,
+  normalizeLyricTracks,
+  mergeLyricTrack,
   getStatus,
+  getStemPaths,
   getDownloadDir,
   scanSummary,
   isDriveMounted,
   probeDrive,
   ensureLibraryDirs,
   invalidateListCache,
+  upsertLibraryCacheEntry,
   setScanListener,
   getScanStatus,
   refreshDiskStats,

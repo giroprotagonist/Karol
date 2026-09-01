@@ -1,7 +1,7 @@
 // Karol Electron — Stable Architecture
 // Absolute paths for modules, preload, and HTML to avoid resolution issues.
 
-const { app, BrowserWindow, ipcMain, screen, protocol, session, powerSaveBlocker, powerMonitor, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, protocol, session, powerSaveBlocker, powerMonitor, nativeImage, shell, desktopCapturer, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, fork } = require('child_process');
@@ -14,6 +14,71 @@ const APP_ICON_PATH = [
   path.join(__dirname, 'build', 'icon-1024.png'),
 ].find((p) => fs.existsSync(p));
 const APP_ICON = APP_ICON_PATH ? nativeImage.createFromPath(APP_ICON_PATH) : null;
+
+/** Load translation / LLM keys into process.env if missing (LaunchAgent + .karol). */
+function loadKarolSecretEnv() {
+  const want = ['DEEPL_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'OPENAI_API_BASE', 'DEEPL_API_URL'];
+  function applyFromPlist(plistPath) {
+    try {
+      if (!fs.existsSync(plistPath)) return;
+      const { execFileSync } = require('child_process');
+      for (const key of want) {
+        if (process.env[key]) continue;
+        try {
+          const val = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :EnvironmentVariables:' + key, plistPath], { encoding: 'utf8' }).trim();
+          if (val && val !== 'Print: Entry, :EnvironmentVariables:' + key + ', Does Not Exist') {
+            process.env[key] = val;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+  applyFromPlist(path.join(os.homedir(), 'Library/LaunchAgents/com.rideyrbike.dispatch-local.plist'));
+  applyFromPlist(path.join(os.homedir(), 'Library/LaunchAgents/com.karol-api.plist'));
+  // Optional dotenv-style file: KEY=value lines
+  const envFiles = [
+    path.join(os.homedir(), '.karol', 'secrets.env'),
+    path.resolve(__dirname, '..', '.karol', 'secrets.env'),
+  ];
+  for (const envFile of envFiles) {
+    try {
+      if (!fs.existsSync(envFile)) continue;
+      const text = fs.readFileSync(envFile, 'utf8');
+      for (const line of text.split('\n')) {
+        const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+        if (!m) continue;
+        if (!process.env[m[1]] && want.includes(m[1])) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+      }
+    } catch (_) {}
+  }
+}
+loadKarolSecretEnv();
+
+/** Audio chain setup (BlackHole 44100 / output routing). */
+let karolAudio = null;
+try {
+  const audioSetupPaths = [
+    path.join(process.resourcesPath, 'scripts', 'karol-audio-setup.js'),
+    path.resolve(__dirname, '..', 'scripts', 'karol-audio-setup.js'),
+  ];
+  for (const p of audioSetupPaths) {
+    if (fs.existsSync(p)) {
+      karolAudio = require(p);
+      break;
+    }
+  }
+} catch (e) {
+  console.warn('[karol-audio] setup module failed:', e && e.message);
+}
+
+/** GUI/Dock launches omit Homebrew from PATH — fix once for all child processes. */
+(function ensureHomebrewOnPath() {
+  const hb = '/opt/homebrew/bin';
+  const cur = process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin';
+  if (!cur.split(':').includes(hb)) {
+    process.env.PATH = hb + ':' + cur;
+  }
+})();
 
 // Custom media scheme must be privileged BEFORE ready so <video> can stream
 // (HTTP range). Without stream:true, large local MP4s often stall at t=0.
@@ -69,6 +134,11 @@ try { library = require(path.join(BASE, 'library')); } catch (e) { console.error
 // ── Downloads / Pipeline ──
 let downloads = null;
 try { downloads = require(path.join(BASE, 'downloads')); } catch (e) { console.error('[karol] downloads FAIL:', e.message); }
+
+// ── Gap Phone Mirror (USB scrcpy + BlackHole audio) ──
+let phoneMirror = null;
+try { phoneMirror = require(path.join(BASE, 'phone-mirror')); }
+catch (e) { console.error('[karol] phone-mirror FAIL:', e.message); }
 
 // ── MySQL proxy client (durable jobs / request state) ──
 let mysql = null;
@@ -215,19 +285,26 @@ function processNextKaraokeJob() {
 
   // Find the first non-error job
   const entry = karaokeQueue.shift();
-  const { videoId, url, requester, isReLyric, forceWhisper, karaokeMatch, lyricsText, whisperModel } = entry;
+  const { videoId, url, requester, isReLyric, forceWhisper, karaokeMatch, lyricsText, whisperModel, lyricsTrack, mode, language, romanize } = entry;
+  const isRetime = mode === 'retime' || !!entry.retimeKeepText;
+  const isStems = mode === 'stems' || !!entry.rebuildStemsOnly;
 
   karaokeRunning = true;
-  console.log('[karol] Karaoke queue: starting', videoId, '(remaining:', karaokeQueue.length, ')');
+  console.log('[karol] Karaoke queue: starting', videoId, '(remaining:', karaokeQueue.length, ')', isRetime ? '[retime]' : (isStems ? '[stems]' : ''));
   if (!isReLyric) {
     upsertLocalJob(videoId, { status: 'running', stage: 'downloading' });
     syncJobToMysql(videoId, { status: 'downloading', stage: 'downloading', progress: 0 });
   }
 
-  const startLabel = isReLyric
-    ? ('Re-Lyric: ' + videoId + (whisperModel ? ' [' + whisperModel + ']' : '') + (lyricsText ? ' [+lyrics]' : ''))
-    : (requester ? requester + ': ' + (url || videoId) : (url || videoId));
-  processingJobs[videoId] = { status: 'downloading', progress: 0, label: startLabel, url: url, karaokify: true, requester: requester, isReLyric: !!isReLyric };
+  const effectiveWhisperModel = whisperModel || ((isReLyric || isRetime) && !isStems ? 'large-v3' : null);
+  const startLabel = isStems
+    ? ('Rebuild stems: ' + videoId)
+    : (isRetime
+      ? ('Re-time: ' + videoId + (effectiveWhisperModel ? ' [' + effectiveWhisperModel + ']' : ''))
+      : (isReLyric
+        ? ('Re-Lyric: ' + videoId + (effectiveWhisperModel ? ' [' + effectiveWhisperModel + ']' : '') + (lyricsText ? ' [+lyrics]' : ''))
+        : (requester ? requester + ': ' + (url || videoId) : (url || videoId))));
+  processingJobs[videoId] = { status: isStems ? 'demucs' : (isRetime ? 'aligning' : 'downloading'), progress: 0, label: startLabel, url: url, karaokify: true, requester: requester, isReLyric: !!isReLyric, mode: mode || null };
   // Recalculate queue positions for remaining entries
   for (let i = 0; i < karaokeQueue.length; i++) {
     const e = karaokeQueue[i];
@@ -245,12 +322,35 @@ function processNextKaraokeJob() {
     return;
   }
 
-  downloads.start(videoId, true, url, { isReLyric: entry.isReLyric, forceWhisper: entry.forceWhisper, karaokeMatch: karaokeMatch, lyricsText: lyricsText, whisperModel: whisperModel })
+  downloads.start(videoId, true, url, {
+    isReLyric: entry.isReLyric,
+    forceWhisper: entry.forceWhisper,
+    karaokeMatch: karaokeMatch,
+    lyricsText: lyricsText,
+    whisperModel: effectiveWhisperModel,
+    lyricsTrack: lyricsTrack || (entry.isReLyric ? 'sung' : 'sung'),
+    mode: mode || (isRetime ? 'retime' : (isStems ? 'stems' : 'rebuild')),
+    retimeKeepText: isRetime,
+    rebuildStemsOnly: isStems,
+    language: language || null,
+    romanize: romanize || null,
+  })
     .then((result) => {
       if (result.karaokeDone) {
-        const doneLabel = isReLyric ? ('Re-Lyric done: ' + videoId) : videoId;
-        processingJobs[videoId] = { status: 'done', progress: 100, label: doneLabel, url: url, karaokify: true, requester: requester, isReLyric: !!isReLyric };
+        const doneLabel = isStems
+          ? ('Stems done: ' + videoId)
+          : (isRetime
+            ? ('Re-time done: ' + videoId)
+            : (isReLyric ? ('Re-Lyric done: ' + videoId) : videoId));
+        processingJobs[videoId] = { status: 'done', progress: 100, label: doneLabel, url: url, karaokify: true, requester: requester, isReLyric: !!isReLyric, mode: mode || null };
         console.log('[karol] Pipeline complete:', videoId, result.message || '');
+        if (isReLyric || isRetime || isStems) {
+          try { notifyPlayer({ type: 'lyrics-reload', videoId }); } catch (_) {}
+          if (isStems) {
+            try { notifyPlayer({ type: 'stems-ready', videoId }); } catch (_) {}
+            try { notifyCtrl('stems-ready', { videoId }); } catch (_) {}
+          }
+        }
         // Resolve a real title (pipeline info.json / tags.json) and update /
         // insert into the DJ queue for the singer — never a bare video id.
         let resolvedTitle = resolveTitleLocal(videoId) || TITLE_PLACEHOLDER;
@@ -276,11 +376,24 @@ function processNextKaraokeJob() {
           notifyPlayerQueue();
           console.log('[karol] Queue updated after karaoke ready:', playId, resolvedTitle, requester);
         }
-        if (library && typeof library.init === 'function') {
-          library.init(true).then(() => {
-            notifyCtrl('library-scan-progress', { videoId, status: 'done' });
-          });
+        // One new karaoke file must NOT force a full ExFAT library walk —
+        // that looked like "why is it rescanning?" mid-show and dual-scanned
+        // with the API worker until the Mac crawled. Instead, upsert just this
+        // track into the library cache so the Custom tab shows it immediately.
+        try {
+          if (library && typeof library.upsertLibraryCacheEntry === 'function') {
+            library.upsertLibraryCacheEntry(videoId);
+          }
+        } catch (e) {
+          console.warn('[karol] Cache upsert after karaoke failed:', e && e.message);
         }
+        notifyCtrl('library-scan-progress', { videoId, status: 'done' });
+        try {
+          if (library && typeof library.list === 'function') {
+            const cur = library.list({}) || {};
+            if (!cur.ok && typeof library.init === 'function') library.init(false);
+          }
+        } catch (_) {}
         if (!isReLyric) {
           upsertLocalJob(videoId, { status: 'done', stage: 'done' });
           syncJobToMysql(videoId, { status: 'done', stage: 'done', progress: 100 });
@@ -688,11 +801,22 @@ function startDirectDownload(videoId, url, tag = 'music') {
             setTimeout(() => { fixBareIdQueueTitles('download-done:' + videoId).catch(() => {}); }, 500);
           }
         } catch (e) {}
-        if (library && typeof library.init === 'function') {
-          library.init(true).then(() => {
-            notifyCtrl('library-scan-progress', { videoId, status: 'done' });
-          });
+        // Same as karaoke-done: do not force a full USB rescan per download;
+        // upsert the new file into the library cache instead.
+        try {
+          if (library && typeof library.upsertLibraryCacheEntry === 'function') {
+            library.upsertLibraryCacheEntry(videoId);
+          }
+        } catch (e) {
+          console.warn('[karol] Cache upsert after download failed:', e && e.message);
         }
+        notifyCtrl('library-scan-progress', { videoId, status: 'done' });
+        try {
+          if (library && typeof library.list === 'function') {
+            const cur = library.list({}) || {};
+            if (!cur.ok && typeof library.init === 'function') library.init(false);
+          }
+        } catch (_) {}
       } else {
         processingJobs[videoId] = { status: 'error', progress: 50, label: videoId, errorMessage: 'Download failed', karaokify: false, url: url, tag: tag };
       }
@@ -751,6 +875,15 @@ function normalizeQueueSinger(requester) {
   return displaySingerName(requester);
 }
 let skipRequested = false;
+/** Suppress duplicate natural-end advances (destroyVideo / gap teardown can re-fire ended). */
+let lastAdvanceAtMs = 0;
+const ADVANCE_DEBOUNCE_MS = 1800;
+/** True once the current feature track has reported real progress (t >= 1s). */
+let featureTrackEverProgressed = false;
+/** Absolute ms — ignore player `ended` until this time (teardown / play-now races). */
+let ignoreEndedUntilMs = 0;
+/** Bumps on every sendPlay so delayed error→advance timers cannot skip a newer track. */
+let playEpoch = 0;
 
 // ── State persistence ──
 const STATE_FILE = path.join('/tmp', 'karol-state.json');
@@ -803,7 +936,6 @@ async function runHealthCheck() {
       if (results.drive) {
         try {
           fs.accessSync(path.join(drivePath, 'Deskreen'), fs.constants.R_OK);
-          fs.readdirSync(path.join(drivePath, 'Deskreen'));
           results.driveReadable = true;
         } catch {
           results.driveReadable = false;
@@ -832,7 +964,7 @@ async function runHealthCheck() {
   try {
     if (library && typeof library.refreshDiskStats === 'function') {
       results.libraryScan = library.refreshDiskStats({ recount: false });
-      if (typeof library.scheduleDiskCount === 'function') library.scheduleDiskCount(false);
+      // Never scheduleDiskCount here — USB readdir freezes IPC.
     } else if (library && typeof library.getScanStatus === 'function') {
       results.libraryScan = library.getScanStatus();
     }
@@ -849,6 +981,36 @@ async function runHealthCheck() {
   }
   // API server health
   results.apiServer = (apiServerProcess && apiServerProcess.connected) ? true : false;
+
+  // UMC404HD + USB keep-awake (hub must stay powered for drive + interface)
+  try {
+    const { execFileSync } = require('child_process');
+    const sas = process.env.SWITCH_AUDIO_SOURCE || '/opt/homebrew/bin/SwitchAudioSource';
+    let umc = false;
+    try {
+      if (fs.existsSync(sas)) {
+        const out = execFileSync(sas, ['-a'], { encoding: 'utf8', timeout: 3000 });
+        umc = /UMC404HD/i.test(out);
+      }
+    } catch (_) {}
+    results.umc = umc;
+  } catch { results.umc = false; }
+  try {
+    const statusPath = '/tmp/karol-usb-keepawake.status';
+    results.usbKeepAwakeAgent = false;
+    results.usbKeepAwakeStatus = null;
+    if (fs.existsSync(statusPath)) {
+      const st = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+      results.usbKeepAwakeStatus = st;
+      const ageMs = Date.now() - Date.parse(st.ts || 0);
+      results.usbKeepAwakeAgent = Number.isFinite(ageMs) && ageMs < 60_000;
+    }
+    results.usbKeepAwakeApp = usbKeepAwakeBlockerId !== null
+      && powerSaveBlocker.isStarted(usbKeepAwakeBlockerId);
+  } catch {
+    results.usbKeepAwakeAgent = false;
+    results.usbKeepAwakeApp = false;
+  }
 
   // Clean stale temp dirs (>24h old)
   try {
@@ -876,6 +1038,9 @@ async function runHealthCheck() {
 let ctrlWin = null;
 let playWin = null;
 let monitorWin = null;
+/** Thin screen-saver-level strip covering the macOS menu bar on the HDMI display.
+ *  Needed when the player drops alwaysOnTop for scrcpy overlay (menu bar would otherwise show). */
+let menuBarCoverWin = null;
 let monitorModeEnabled = false;
 let karaokePowerBlockerId = null;
 let usbKeepAwakeBlockerId = null;
@@ -905,7 +1070,7 @@ function isExternalDriveMounted() {
   }
 }
 
-/** Keep the Mac / USB bus from idling out the hub + external drive. */
+/** Keep the Mac / USB bus from idling out the hub + external drive (+ UMC on that hub). */
 function startUsbKeepAwake() {
   if (usbKeepAwakeBlockerId === null
       || !powerSaveBlocker.isStarted(usbKeepAwakeBlockerId)) {
@@ -917,21 +1082,27 @@ function startUsbKeepAwake() {
     try {
       const drivePath = getExternalDrivePath();
       if (!isExternalDriveMounted()) return;
-      // Light I/O so the hub/drive stay asserted as in-use
+      // Light I/O only — never readdir (ExFAT scandir can freeze the main process).
       fs.statSync(drivePath);
-      const tagsPath = path.join(drivePath, 'Deskreen', 'tags.json');
+      const deskreen = path.join(drivePath, 'Deskreen');
+      const tagsPath = path.join(deskreen, 'tags.json');
+      const keepalivePath = path.join(deskreen, '.karol-keepawake');
       if (fs.existsSync(tagsPath)) {
         const fd = fs.openSync(tagsPath, 'r');
         const buf = Buffer.alloc(64);
         fs.readSync(fd, buf, 0, 64, 0);
         fs.closeSync(fd);
-      } else {
-        fs.readdirSync(drivePath);
+      }
+      // Karol.app usually has Removable Volumes TCC; LaunchAgent often does not.
+      try {
+        fs.writeFileSync(keepalivePath, new Date().toISOString() + '\n', 'utf8');
+      } catch (_) {
+        try { fs.utimesSync(keepalivePath, new Date(), new Date()); } catch (_) {}
       }
     } catch (e) {
       // Drive may have been unplugged mid-interval
     }
-  }, 25_000);
+  }, 15_000);
   if (typeof usbKeepAwakeTimer.unref === 'function') usbKeepAwakeTimer.unref();
 }
 
@@ -998,12 +1169,16 @@ function startExternalDriveWatch() {
   if (driveWatchTimer) return;
   lastDriveMounted = isExternalDriveMounted();
   console.log('[karol] External drive watch:', lastDriveMounted ? 'mounted' : 'NOT mounted', getExternalDrivePath());
-  if (lastDriveMounted) {
-    try {
-      if (library && typeof library.ensureLibraryDirs === 'function') library.ensureLibraryDirs();
-    } catch {}
-  }
+  // Skip ensureLibraryDirs here — USB mkdir can hang the main process.
   maybePromptRemovableVolumeAccess();
+  if (lastDriveMounted && library && typeof library.list === 'function') {
+    try {
+      const cur = library.list({}) || {};
+      if (!cur.ok && typeof library.refreshDiskStats === 'function') {
+        library.refreshDiskStats({ recount: false });
+      }
+    } catch (_) {}
+  }
   driveWatchTimer = setInterval(() => {
     const mounted = isExternalDriveMounted();
     if (mounted === lastDriveMounted) return;
@@ -1068,9 +1243,56 @@ function onWindowClose(e) {
   }
 }
 
-function resolveVid(videoId) {
+function resolveVid(videoId, opts) {
   // Strip existing -karaoke suffix so we can re-check cleanly
-  const baseId = videoId.replace(/-karaoke$/, '');
+  const raw = String(videoId || '');
+  const baseId = raw.replace(/-karaoke$/, '');
+  if (!baseId) return raw;
+  const preferMusic = !!(opts && opts.preferMusic);
+
+  // Explicit karaoke id → keep karaoke (Custom / singer queue), unless caller
+  // forced a Music Video play.
+  if (/-karaoke$/.test(raw) && !preferMusic) return raw;
+
+  // Music Videos / DJ B-roll: if tags say music/song and songs/ (or a
+  // non-karaoke local MV) exists, do NOT remap to the instrumental karaoke.
+  // Dual-presence tracks (MV in songs/ + karaoke/{id}-karaoke.mp4) used to
+  // always play the karaoke when opened from the Music Videos tab.
+  try {
+    if (library) {
+      let tag = '';
+      let source = '';
+      try {
+        const tags = typeof library.getTags === 'function' ? (library.getTags() || {}) : {};
+        const entry = tags[baseId];
+        if (typeof entry === 'string') tag = entry;
+        else if (entry && typeof entry === 'object') {
+          tag = entry.tag || '';
+          source = entry.source || '';
+        }
+      } catch (_) { /* ignore */ }
+      const isMusic = preferMusic
+        || ((tag === 'music' || tag === 'song') && source !== 'karaoke-maker');
+      if (isMusic) {
+        const songsDir = library.LIBRARY_SONGS_DIR;
+        const songsMp4 = songsDir ? path.join(songsDir, baseId + '.mp4') : null;
+        if (songsMp4 && fs.existsSync(songsMp4) && fs.statSync(songsMp4).size >= 50_000) {
+          return baseId;
+        }
+        // Fallback: any non-karaoke path (getVideoPath prefers songs/ now)
+        try {
+          const p = typeof library.getVideoPath === 'function' ? library.getVideoPath(baseId) : null;
+          if (p && fs.existsSync(p) && fs.statSync(p).size >= 50_000
+              && !/-karaoke\.mp4$/i.test(p)) {
+            return baseId;
+          }
+        } catch (_) { /* ignore */ }
+        if (preferMusic) return baseId;
+      }
+    }
+  } catch (_) { /* ignore */ }
+
+  // Default for singing: prefer pipeline karaoke when present.
   try {
     if (library && fs.existsSync(path.join(library.LIBRARY_KARAOKE_DIR, baseId + '-karaoke.mp4'))) {
       return baseId + '-karaoke';
@@ -1230,11 +1452,15 @@ function handlePlayerCrash() {
         pendingPlay = null;
         const resume = () => {
           if (queue.length > 0 && queueIndex >= 0 && queueIndex < queue.length) {
+            const row = queue[queueIndex];
+            const karaoke = isKaraokeQueueItem(row);
             sendToPlayers('player-event', {
-              type: 'play', videoId: queue[queueIndex].videoId,
-              isYouTube: false, title: displayTitle(queue[queueIndex]),
-              requester: queue[queueIndex].singer || queue[queueIndex].requester,
+              type: 'play', videoId: row.videoId,
+              isYouTube: false, title: displayTitle(row),
+              requester: row.singer || row.requester,
               queue: queue, currentIndex: queueIndex,
+              karaoke,
+              fromJukebox: !karaoke,
             });
           }
         };
@@ -1256,26 +1482,240 @@ function getExternalDisplay() {
   return externals[0];
 }
 
+/** Height of the menu-bar region on a display (bounds vs workArea). */
+function menuBarHeightForDisplay(display) {
+  if (!display || !display.bounds) return 0;
+  const b = display.bounds;
+  const wa = display.workArea || b;
+  // Menu bar sits at the top of the display when workArea.y is below bounds.y
+  const top = Math.max(0, Math.round((wa.y || 0) - (b.y || 0)));
+  if (top > 0) return Math.min(48, top);
+  // Some arrangements report equal y but a shorter workArea height
+  const bottomDock = Math.max(0, Math.round((b.y + b.height) - (wa.y + wa.height)));
+  const inferred = Math.max(0, Math.round(b.height - wa.height - bottomDock));
+  return Math.min(48, inferred);
+}
+
+/**
+ * Legacy black "menu cover" strip caused a visible top bar once menu-bar
+ * auto-hide was enabled. Keep the helper as a destroy-only no-op so callers
+ * don't recreate it; HDMI uses autohide + exact display.bounds instead.
+ * Never toggles setSimpleFullScreen / setFullScreen for phone mirror.
+ */
+function destroyMenuBarCoverWindow() {
+  if (!menuBarCoverWin || menuBarCoverWin.isDestroyed()) {
+    menuBarCoverWin = null;
+    return;
+  }
+  try { menuBarCoverWin.destroy(); } catch (_) {}
+  menuBarCoverWin = null;
+}
+
+function ensureMenuBarCover(reason) {
+  if (menuBarCoverWin && !menuBarCoverWin.isDestroyed()) {
+    destroyMenuBarCoverWindow();
+    if (reason) console.log('[karol] Menu bar cover removed', reason || '');
+  }
+  return false;
+}
+
+let menuBarCoverTimer = null;
+/** Previous System Events "autohide menu bar" value — restore on quit. */
+let savedMenuBarAutohide = null;
+
+function setSystemMenuBarAutohide(hide) {
+  try {
+    const { execFileSync } = require('child_process');
+    if (savedMenuBarAutohide === null) {
+      try {
+        const cur = execFileSync('/usr/bin/osascript', [
+          '-e', 'tell application "System Events" to get autohide menu bar of dock preferences',
+        ], { encoding: 'utf8', timeout: 4000 }).trim().toLowerCase();
+        savedMenuBarAutohide = cur === 'true';
+      } catch (_) {
+        savedMenuBarAutohide = false;
+      }
+    }
+    execFileSync('/usr/bin/osascript', [
+      '-e', `tell application "System Events" to set autohide menu bar of dock preferences to ${hide ? 'true' : 'false'}`,
+    ], { encoding: 'utf8', timeout: 4000 });
+    return true;
+  } catch (e) {
+    console.warn('[karol] menu bar autohide failed:', e && e.message);
+    return false;
+  }
+}
+
+function enableKaraokeMenuBarHide() {
+  setSystemMenuBarAutohide(true);
+}
+
+function restoreKaraokeMenuBarHide() {
+  if (savedMenuBarAutohide === null) return;
+  try {
+    const { execFileSync } = require('child_process');
+    execFileSync('/usr/bin/osascript', [
+      '-e', `tell application "System Events" to set autohide menu bar of dock preferences to ${savedMenuBarAutohide ? 'true' : 'false'}`,
+    ], { encoding: 'utf8', timeout: 4000 });
+  } catch (_) {}
+  savedMenuBarAutohide = null;
+}
+
+function startMenuBarCoverWatch() {
+  // Keep autohide on; never recreate the black cover strip.
+  if (menuBarCoverTimer) return;
+  destroyMenuBarCoverWindow();
+  menuBarCoverTimer = setInterval(() => {
+    if (!playWin || playWin.isDestroyed()) {
+      stopMenuBarCoverWatch();
+      destroyMenuBarCoverWindow();
+      return;
+    }
+    if (!getExternalDisplay()) return;
+    destroyMenuBarCoverWindow();
+    enableKaraokeMenuBarHide();
+  }, 4000);
+}
+function stopMenuBarCoverWatch() {
+  if (menuBarCoverTimer) {
+    clearInterval(menuBarCoverTimer);
+    menuBarCoverTimer = null;
+  }
+}
+
+function destroyMenuBarCover() {
+  stopMenuBarCoverWatch();
+  destroyMenuBarCoverWindow();
+}
+
+let placePlayerLockUntilMs = 0;
+let placePlayerDebounceTimer = null;
+let lastPlacedDisplayKey = '';
+
+function displayBoundsKey(bounds) {
+  if (!bounds) return '';
+  return [bounds.x, bounds.y, bounds.width, bounds.height].join(',');
+}
+
+function boundsMatchExact(a, b, tol) {
+  const t = tol == null ? 2 : tol;
+  if (!a || !b) return false;
+  return Math.abs(a.x - b.x) <= t
+    && Math.abs(a.y - b.y) <= t
+    && Math.abs(a.width - b.width) <= t
+    && Math.abs(a.height - b.height) <= t;
+}
+
+function playerCenterOnDisplay(win, display) {
+  if (!win || !display || !display.bounds) return false;
+  try {
+    const b = win.getBounds();
+    const cx = b.x + b.width / 2;
+    const cy = b.y + b.height / 2;
+    const d = display.bounds;
+    return cx >= d.x && cx < d.x + d.width && cy >= d.y && cy < d.y + d.height;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Cover the dedicated HDMI karaoke display edge-to-edge using full
+ * display.bounds (not workArea). Avoid macOS simpleFullscreen / Spaces
+ * fullscreen — on arranged externals those can seat the window with a
+ * Y offset (wallpaper peek). Never toggle FS modes from phone-mirror paths.
+ */
 function placePlayerOnExternalDisplay(reason) {
   if (!playWin || playWin.isDestroyed()) return false;
+  const now = Date.now();
+  // Our own setBounds can fire display-metrics-changed on macOS.
+  if (now < placePlayerLockUntilMs && reason === 'display-metrics-changed') {
+    return false;
+  }
   const ext = getExternalDisplay();
   if (!ext) {
     console.log('[karol] No external display for player' + (reason ? ` (${reason})` : ''));
     return false;
   }
+  const target = {
+    x: Math.round(ext.bounds.x),
+    y: Math.round(ext.bounds.y),
+    width: Math.round(ext.bounds.width),
+    height: Math.round(ext.bounds.height),
+  };
+  const key = String(ext.id) + '@' + displayBoundsKey(target);
+  let cur;
+  try { cur = playWin.getBounds(); } catch (_) { cur = null; }
+  const alreadyThere = playerCenterOnDisplay(playWin, ext) && boundsMatchExact(cur, target);
+  if (alreadyThere && (reason === 'display-metrics-changed' || key === lastPlacedDisplayKey)) {
+    lastPlacedDisplayKey = key;
+    return true;
+  }
   try {
-    if (playWin.isFullScreen()) playWin.setFullScreen(false);
-    playWin.setBounds(ext.bounds);
-    playWin.setFullScreen(true);
-    playWin.setAlwaysOnTop(true, 'screen-saver');
+    placePlayerLockUntilMs = now + 2500;
+    // Exit leftover FS/SFS from older builds once, then pin exact bounds.
+    // Do not re-enter FS — frameless + exact bounds covers HDMI flush.
+    if (playWin.isFullScreen && playWin.isFullScreen()) {
+      try { playWin.setFullScreen(false); } catch (_) {}
+    }
+    if (typeof playWin.isSimpleFullScreen === 'function' && playWin.isSimpleFullScreen()) {
+      try { playWin.setSimpleFullScreen(false); } catch (_) {}
+    }
+    playWin.setBounds(target, false);
+    try {
+      // Content bounds = full display (frameless). Re-assert both APIs —
+      // setBounds alone can leave a 1–2px wallpaper hairline on arranged HDMI.
+      if (typeof playWin.setContentBounds === 'function') {
+        playWin.setContentBounds(target);
+      }
+    } catch (_) {}
+    // Keep always-on-top off while HDMI phone overlay is active so scrcpy stays visible
+    try {
+      if (phoneMirrorOverlayActive) playWin.setAlwaysOnTop(false);
+      else playWin.setAlwaysOnTop(true, 'screen-saver');
+    } catch (_) {
+      try { playWin.setAlwaysOnTop(!phoneMirrorOverlayActive); } catch (__) {}
+    }
+    try {
+      playWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    } catch (_) {}
     playWin.show();
+    // Cover menu bar on HDMI (player AOT may be dropped during phone overlay)
+    ensureMenuBarCover(reason || 'place-player');
+    enableKaraokeMenuBarHide();
+    startMenuBarCoverWatch();
+    // Re-assert after macOS settles (SFS exit / multi-display arrange).
+    setTimeout(() => {
+      if (!playWin || playWin.isDestroyed()) return;
+      try {
+        const b = playWin.getBounds();
+        if (!boundsMatchExact(b, target)) {
+          playWin.setBounds(target, false);
+          if (typeof playWin.setContentBounds === 'function') {
+            try { playWin.setContentBounds(target); } catch (_) {}
+          }
+          console.log('[karol] Player bounds re-asserted', target);
+        }
+      } catch (_) {}
+      ensureMenuBarCover('re-assert');
+      enableKaraokeMenuBarHide();
+    }, 350);
+    lastPlacedDisplayKey = key;
     console.log('[karol] Player → external display', ext.label || ext.id,
-      `${ext.bounds.width}x${ext.bounds.height}` + (reason ? ` (${reason})` : ''));
+      `${target.width}x${target.height} @${target.x},${target.y}` + (reason ? ` (${reason})` : ''));
     return true;
   } catch (e) {
     console.error('[karol] placePlayerOnExternalDisplay failed:', e.message);
     return false;
   }
+}
+
+function schedulePlacePlayerOnExternalDisplay(reason) {
+  if (placePlayerDebounceTimer) clearTimeout(placePlayerDebounceTimer);
+  placePlayerDebounceTimer = setTimeout(() => {
+    placePlayerDebounceTimer = null;
+    placePlayerOnExternalDisplay(reason);
+  }, reason === 'display-metrics-changed' ? 1000 : 50);
 }
 
 function sendToPlayers(channel, msg) {
@@ -1326,10 +1766,13 @@ function createMonitor() {
     if (queueIndex >= 0 && queueIndex < queue.length) {
       const item = queue[queueIndex];
       const resolved = resolveVid(item.videoId);
+      const karaoke = isKaraokeQueueItem(item);
       monitorWin.webContents.send('player-event', {
         type: 'play', videoId: resolved, isYouTube: false,
         title: displayTitle(item), requester: item.singer || item.requester,
         queue, currentIndex: queueIndex,
+        karaoke,
+        fromJukebox: !karaoke,
       });
       if (playback.state === 'paused') {
         setTimeout(() => {
@@ -1376,15 +1819,37 @@ function createPlayer() {
 
   console.log('[karol] Creating player window...');
   const ext = getExternalDisplay();
-  const bounds = ext ? ext.bounds : { x: 0, y: 0, width: 1280, height: 720 };
-  playWin = new BrowserWindow({
-    ...windowIconOpts(),
-    x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
-    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
-    title: 'Karol Player', backgroundColor: '#000000', show: true,
-    fullscreen: !!ext,
-    alwaysOnTop: !!ext,
-  });
+  const bounds = ext
+    ? {
+        x: Math.round(ext.bounds.x),
+        y: Math.round(ext.bounds.y),
+        width: Math.round(ext.bounds.width),
+        height: Math.round(ext.bounds.height),
+      }
+    : { x: 0, y: 0, width: 1280, height: 720 };
+  try {
+    playWin = new BrowserWindow({
+      ...windowIconOpts(),
+      x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+      webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
+      title: 'Karol Player', backgroundColor: '#000000', show: true,
+      // Frameless edge-to-edge on HDMI — no title bar inset, no Spaces fullscreen.
+      frame: !ext,
+      fullscreen: false,
+      fullscreenable: false,
+      enableLargerThanScreen: true,
+      hasShadow: false,
+      alwaysOnTop: !!ext,
+    });
+  } catch (e) {
+    console.error('[karol] createPlayer BrowserWindow failed:', e && e.message);
+    return;
+  }
+  try {
+    if (ext && typeof playWin.setWindowButtonVisibility === 'function') {
+      playWin.setWindowButtonVisibility(false);
+    }
+  } catch (_) {}
   updateKaraokePowerPolicy('player-opened');
 
   playWin.webContents.on('console-message', (event, level, message) => {
@@ -1405,6 +1870,8 @@ function createPlayer() {
       sendToPlayers('player-event', {
         type: 'play', videoId: p.videoId, isYouTube: false, title: p.title, requester: p.requester,
         queue: queue, currentIndex: queueIndex,
+        karaoke: !!p.karaoke,
+        fromJukebox: !p.karaoke,
       });
     }
   });
@@ -1465,6 +1932,7 @@ function buildPhoneQueueItem(item, index) {
       : 'queued',
     requester: item.singer || item.requester || '',
     channelTitle: item.singer || item.requester || '',
+    fromJukebox: !!item.fromJukebox,
   };
 }
 
@@ -1484,6 +1952,8 @@ function buildPhoneQueueState() {
     currentTime: playback.currentTime || 0,
     duration: playback.duration || 0,
     shuffleEnabled: !!queueShuffle,
+    jukebox: jukeboxSummary(),
+    ...showModePayload(),
     ...getKaraokePowerStatus(),
   };
 }
@@ -1540,6 +2010,13 @@ function handleDjApi(action, payload) {
         queueLength: queue.length,
         currentTitle: queueIndex >= 0 && queue[queueIndex] ? displayTitle(queue[queueIndex]) : '',
         volumeLevel,
+        ...getInterstitialState(),
+        ...showModePayload(),
+        interstitialMessage: (betweenSongsTimer || betweenSongsHeld || betweenSongsPendingItem)
+          ? 'Gap & HOLD: use the laptop controller'
+          : (showMode() === 'dj'
+            ? 'DJ mode — singers join at next Gap'
+            : null),
         ...getKaraokePowerStatus(),
       };
     case 'now-playing':
@@ -1553,19 +2030,13 @@ function handleDjApi(action, payload) {
         const m = String(payload.url).match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
         if (m) payload.videoId = m[1];
       }
-      const vid = resolveVid(payload.videoId || videoId);
-      if (!vid) return { ok: false, error: 'No videoId' };
-      const title = bestTitleFor(vid, payload.title);
-      const who = normalizeQueueSinger(requester);
-      queue.push({ videoId: vid, title, singer: who, requester: who });
-      if (queueIndex < 0) {
-        queueIndex = queue.length - 1;
-        sendPlay(vid, title, who);
-      }
-      saveState();
-      notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-      notifyPlayerQueue();
-      return { ok: true, videoId: vid, state: buildPhoneQueueState() };
+      const r = enqueueKaraokeItem({
+        videoId: payload.videoId || videoId,
+        title: payload.title,
+        requester,
+      });
+      if (!r.ok) return r;
+      return { ok: true, videoId: r.videoId, state: buildPhoneQueueState(), ...showModePayload() };
     }
     case 'play-now': {
       const vid = resolveVid(payload.videoId);
@@ -1583,7 +2054,7 @@ function handleDjApi(action, payload) {
       clearBetweenSongsTimer();
       queueIndex = queue.length - 1;
       saveState();
-      sendPlay(vid, title, who);
+      sendPlay(vid, title, who, { force: true });
       notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
       notifyPlayerQueue();
       return { ok: true, state: buildPhoneQueueState() };
@@ -1594,23 +2065,37 @@ function handleDjApi(action, payload) {
       if (idx == null || idx < 0 || idx >= queue.length) return { ok: false, error: 'Invalid index' };
       // Close the durable request so lease expiry can't resurrect it
       updateMysqlRequestStatus(queue[idx], 'ended', 'removed from queue');
-      if (idx === queueIndex) {
-        queue.splice(idx, 1);
-        if (queue.length === 0) {
-          queueIndex = -1;
-          notifyPlayer({ type: 'stop' });
-        } else {
-          queueIndex = queueIndex >= queue.length ? 0 : queueIndex;
+      const removingCurrent = idx === queueIndex;
+      queue.splice(idx, 1);
+      if (idx < queueIndex) queueIndex--;
+      else if (removingCurrent) {
+        const karaoke = pendingKaraokeItems();
+        if (karaoke.length) {
+          queue = karaoke;
+          queueIndex = 0;
           clearBetweenSongsTimer();
-          sendPlay(queue[queueIndex].videoId, queue[queueIndex].title, queue[queueIndex].singer);
+          sendPlay(queue[0].videoId, queue[0].title, queue[0].singer);
+        } else if (jukeboxActive()) {
+          const deckItem = selectNextJukeboxItem(1);
+          if (deckItem) {
+            const row = makeJukeboxQueueRow(deckItem);
+            queue = [row];
+            queueIndex = 0;
+            clearBetweenSongsTimer();
+            sendPlay(row.videoId, row.title, row.singer);
+            saveSettings();
+          } else {
+            idleStopShow();
+            return { ok: true, state: buildPhoneQueueState() };
+          }
+        } else {
+          queueIndex = -1;
+          clearBetweenSongsTimer();
+          notifyPlayer({ type: 'stop' });
         }
-      } else {
-        queue.splice(idx, 1);
-        if (idx < queueIndex) queueIndex--;
       }
       saveState();
-      notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-      notifyPlayerQueue();
+      notifyShowUpdate();
       return { ok: true, state: buildPhoneQueueState() };
     }
     case 'queue-clear':
@@ -1621,10 +2106,10 @@ function handleDjApi(action, payload) {
       shufflePlayedIds.clear();
       playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
       clearBetweenSongsTimer();
+      saveSettings();
       saveState();
       notifyPlayer({ type: 'stop' });
-      notifyCtrl('queue-update', { queue: [], currentIndex: -1, shuffleEnabled: !!queueShuffle, jukebox: null });
-      notifyPlayerQueue();
+      notifyShowUpdate();
       return { ok: true, state: buildPhoneQueueState() };
     case 'queue-reorder': {
       const from = payload.fromIndex ?? payload.from;
@@ -1650,7 +2135,7 @@ function handleDjApi(action, payload) {
       clearBetweenSongsTimer();
       queueIndex = idx;
       saveState();
-      sendPlay(queue[idx].videoId, queue[idx].title, queue[idx].singer || queue[idx].requester);
+      sendPlay(queue[idx].videoId, queue[idx].title, queue[idx].singer || queue[idx].requester, { force: true });
       notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
       notifyPlayerQueue();
       return { ok: true, state: buildPhoneQueueState(), nowPlaying: buildPhoneNowPlaying() };
@@ -1723,15 +2208,54 @@ function updateMysqlRequestStatus(item, status, error) {
   }
 }
 
-function sendPlay(videoId, title, requester) {
+let lastSendPlayAtMs = 0;
+let lastSendPlayId = '';
+
+function sendPlay(videoId, title, requester, opts) {
+  const force = !!(opts && opts.force);
+  const resolvedEarly = resolveVid(videoId);
+  // Never bounce a healthy in-progress track back to 0 (retry storms looked like
+  // "random restarts"). Explicit force=true for real Play Now / skip targets.
+  if (!force && featureTrackEverProgressed && playback.state === 'playing') {
+    const cur = resolveVid(playback.videoId || '');
+    if (cur && resolvedEarly && cur === resolvedEarly && (playback.currentTime || 0) >= 1) {
+      console.warn('[karol] Ignoring redundant sendPlay for in-progress', resolvedEarly, 't=', playback.currentTime);
+      return;
+    }
+  }
+  // Debounce duplicate play of the same id (async player races looked like fighting).
+  const now = Date.now();
+  if (!force && resolvedEarly && resolvedEarly === lastSendPlayId && (now - lastSendPlayAtMs) < 2500) {
+    console.warn('[karol] Ignoring debounced sendPlay for', resolvedEarly);
+    return;
+  }
+  lastSendPlayAtMs = now;
+  lastSendPlayId = resolvedEarly || String(videoId || '');
   clearBetweenSongsTimer();
+  // Tear down phone mirror before feature track (restore BlackHole → Ableton path).
+  try { if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror(); } catch (_) {}
+  try { sendToPlayers('player-event', { type: 'phone-mirror-capture-stop' }); } catch (_) {}
+  featureTrackEverProgressed = false;
+  skipRequested = true;
+  playEpoch += 1;
+  // Teardown of the previous <video> can emit ended/paused under the new id.
+  // Hold the gate long enough that those cannot cascade into advanceShow.
+  ignoreEndedUntilMs = Date.now() + 5000;
+  playback.currentTime = 0;
+  playback.duration = 0;
+  playback.state = 'playing';
+  playback.videoId = resolvedEarly || String(videoId || '');
   if (!playWin || playWin.isDestroyed()) {
-    pendingPlay = { videoId, title, requester };
+    const curItem = (queueIndex >= 0 && queueIndex < queue.length) ? queue[queueIndex] : null;
+    const karaoke = !!(opts && opts.karaoke != null)
+      ? !!opts.karaoke
+      : !!(curItem && isKaraokeQueueItem(curItem));
+    pendingPlay = { videoId, title, requester, karaoke };
     createPlayer();
     return;
   }
   // Resolve to the best available file (karaoke vs regular)
-  const resolved = resolveVid(videoId);
+  const resolved = resolvedEarly || resolveVid(videoId);
   // If the resolved ID differs from what's in the queue, update the queue entry
   if (resolved !== videoId && queueIndex >= 0 && queueIndex < queue.length) {
     const item = queue[queueIndex];
@@ -1753,6 +2277,11 @@ function sendPlay(videoId, title, requester) {
   } catch (e) {
     console.warn('[karol] sendPlay download check failed:', e && e.message);
   }
+  // Karaoke flag drives singer entrance only — jukebox/DJ never gets "give it up for"
+  const curItem = (queueIndex >= 0 && queueIndex < queue.length) ? queue[queueIndex] : null;
+  const karaoke = !!(opts && opts.karaoke != null)
+    ? !!opts.karaoke
+    : !!(curItem && isKaraokeQueueItem(curItem));
   // Send play + full queue snapshot so player + monitor can render immediately
   sendToPlayers('player-event', {
     type: 'play', videoId: resolved, isYouTube: false,
@@ -1760,6 +2289,8 @@ function sendPlay(videoId, title, requester) {
     requester: requester || '',
     volumeLevel: volumeLevel,
     queue: queue, currentIndex: queueIndex,
+    karaoke,
+    fromJukebox: !karaoke,
   });
 }
 
@@ -1769,25 +2300,115 @@ let betweenSongsHeld = false;
 let betweenSongsRemainingMs = 0;
 let betweenSongsDeadline = 0;
 let betweenSongsPendingItem = null;
+/** Gap interstitial content: random Music Videos B-roll vs S24 USB mirror vs both. */
+let gapContent = 'music-broll'; // 'music-broll' | 'phone-mirror' | 'both'
+/**
+ * Phone USB mirror (scrcpy/adb) is parked for now — Gap/pause always use Music Videos.
+ * Keep phone-mirror.js + UI hooks; flip this true when S24 is rewired.
+ */
+const PHONE_MIRROR_GAP_ENABLED = false;
+/** Independent Gap mix levels (0–1), applied on top of master Out. */
+let gapBrollLevel = 0.85;
+let gapPhoneLevel = 0.85;
 
 const SETTINGS_FILE = path.join('/tmp', 'karol-settings.json');
 
+function normalizeGapContent(v) {
+  // Phone / Both parked — coerce any saved phone modes to MVs.
+  if (!PHONE_MIRROR_GAP_ENABLED) return 'music-broll';
+  if (v === 'phone-mirror' || v === 'both') return v;
+  return 'music-broll';
+}
+
+function getGapContent() {
+  return normalizeGapContent(gapContent);
+}
+
+function gapNeedsPhone(c) {
+  if (!PHONE_MIRROR_GAP_ENABLED) return false;
+  const x = c || getGapContent();
+  return x === 'phone-mirror' || x === 'both';
+}
+
+/** Quiet status when mirror is parked — never probe adb / nag about S24. */
+function phoneMirrorStatusQuiet() {
+  if (!PHONE_MIRROR_GAP_ENABLED) {
+    return {
+      disabled: true,
+      adbOk: false,
+      adbCount: 0,
+      scrcpyRunning: false,
+      scrcpyInstalled: false,
+      mode: 'off',
+      error: '',
+    };
+  }
+  return phoneMirror ? phoneMirror.getStatus() : { error: 'unavailable', adbOk: false, scrcpyRunning: false };
+}
+
+function gapNeedsBroll(c) {
+  const x = c || getGapContent();
+  return x === 'music-broll' || x === 'both';
+}
+
+function clamp01(n, fallback) {
+  const v = Number(n);
+  if (!isFinite(v)) return fallback;
+  return Math.max(0, Math.min(1, v));
+}
+
+function getGapMix() {
+  return {
+    gapBrollLevel: clamp01(gapBrollLevel, 0.85),
+    gapPhoneLevel: clamp01(gapPhoneLevel, 0.85),
+  };
+}
+
 function loadSettings() {
+  let migratedGap = false;
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
       const s = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
       if (typeof s.betweenSongsMs === 'number' && isFinite(s.betweenSongsMs)) {
         betweenSongsMs = s.betweenSongsMs;
       }
+      if (s.gapContent === 'phone-mirror' || s.gapContent === 'music-broll' || s.gapContent === 'both') {
+        const raw = s.gapContent;
+        gapContent = normalizeGapContent(raw);
+        if (!PHONE_MIRROR_GAP_ENABLED && (raw === 'phone-mirror' || raw === 'both')) {
+          migratedGap = true;
+          console.log('[karol] Migrated gapContent', raw, '→ music-broll (phone mirror parked)');
+        }
+      }
+      if (typeof s.gapBrollLevel === 'number') gapBrollLevel = clamp01(s.gapBrollLevel, 0.85);
+      if (typeof s.gapPhoneLevel === 'number') gapPhoneLevel = clamp01(s.gapPhoneLevel, 0.85);
       if (typeof s.volumeLevel === 'number' && isFinite(s.volumeLevel)) {
         volumeLevel = Math.max(0, Math.min(1, s.volumeLevel));
       }
       if (typeof s.queueShuffle === 'boolean') {
         queueShuffle = s.queueShuffle;
       }
+      // Sticky DJ deck for the night — armed until Stop / Clear All
+      if (s.jukebox && Array.isArray(s.jukebox.items) && s.jukebox.items.length) {
+        const items = s.jukebox.items
+          .map((it) => ({
+            videoId: String(it.videoId || ''),
+            title: String(it.title || ''),
+          }))
+          .filter((it) => it.videoId);
+        if (items.length) {
+          const idx = Math.max(0, Math.min(items.length - 1, Number(s.jukebox.index) || 0));
+          jukebox = { items, index: idx, shuffle: !!s.jukebox.shuffle };
+          console.log('[karol] Restored DJ deck:', items.length, 'tracks, index', idx);
+        }
+      }
     }
   } catch (e) {
     console.warn('[karol] settings load failed:', e.message);
+  }
+  if (!PHONE_MIRROR_GAP_ENABLED) gapContent = 'music-broll';
+  if (migratedGap) {
+    try { saveSettings(); } catch (_) {}
   }
 }
 
@@ -1795,12 +2416,304 @@ function saveSettings() {
   try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
       betweenSongsMs: getBetweenSongsMs(),
+      gapContent: getGapContent(),
+      gapBrollLevel: getGapMix().gapBrollLevel,
+      gapPhoneLevel: getGapMix().gapPhoneLevel,
       volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
       queueShuffle: !!queueShuffle,
+      jukebox: jukeboxActive() ? {
+        items: jukebox.items.map((it) => ({
+          videoId: it.videoId,
+          title: it.title || '',
+        })),
+        index: jukebox.index,
+        shuffle: !!jukebox.shuffle,
+      } : null,
     }, null, 2));
   } catch (e) {
     console.warn('[karol] settings save failed:', e.message);
   }
+}
+
+function playerBoundsForMirror() {
+  try {
+    if (playWin && !playWin.isDestroyed()) {
+      const b = playWin.getBounds();
+      return { x: b.x, y: b.y, width: b.width, height: b.height };
+    }
+  } catch (_) {}
+  return null;
+}
+
+/** True while scrcpy is composited as an always-on-top window over the HDMI phone slot. */
+let phoneMirrorOverlayActive = false;
+
+function getScreenCaptureAccessStatus() {
+  try {
+    if (systemPreferences && typeof systemPreferences.getMediaAccessStatus === 'function') {
+      return systemPreferences.getMediaAccessStatus('screen') || 'unknown';
+    }
+  } catch (_) {}
+  return 'unknown';
+}
+
+/** Fit a true 9:19.5 portrait rect inside the given box.
+ *  align: 'center' | 'right' (Dual Gap overlays the hard right edge of the MV). */
+function clampPortraitPhoneSlot(slot, opts) {
+  if (!slot || !(Number(slot.width) > 40) || !(Number(slot.height) > 40)) return slot;
+  opts = opts || {};
+  const align = opts.align === 'right' ? 'right' : 'center';
+  const aspect = 9 / 19.5; // width/height
+  const boxX = Number(slot.x) || 0;
+  const boxY = Number(slot.y) || 0;
+  const boxW = Number(slot.width);
+  const boxH = Number(slot.height);
+  let ph = boxH;
+  let pw = ph * aspect;
+  if (pw > boxW) {
+    pw = boxW;
+    ph = pw / aspect;
+  }
+  // Hard ceiling: never wider than ~36% of a 1080p panel unless the box forces it
+  if (pw > 420 && boxW > 420) {
+    pw = 420;
+    ph = pw / aspect;
+    if (ph > boxH) {
+      ph = boxH;
+      pw = ph * aspect;
+    }
+  }
+  const x = align === 'right'
+    ? Math.round(boxX + boxW - pw)
+    : Math.round(boxX + (boxW - pw) / 2);
+  const y = Math.round(boxY + (boxH - ph) / 2);
+  return {
+    x,
+    y,
+    width: Math.max(140, Math.round(pw)),
+    height: Math.max(280, Math.round(ph)),
+  };
+}
+
+/** Estimate Dual-Gap / Phone pane rect in screen coords from the player window.
+ *  Dual Gap: full-bleed MV; portrait phone on the hard right edge above the marquee. */
+function phoneSlotBoundsFromPlayer() {
+  const b = playerBoundsForMirror();
+  if (!b || !(b.width > 200) || !(b.height > 200)) return null;
+  const dual = getGapContent() === 'both';
+  const phoneAspect = 9 / 19.5; // width/height
+  if (dual) {
+    const marquee = Math.round(Math.min(120, Math.max(80, b.height * 0.09)));
+    const padTop = Math.round(b.height * 0.014);
+    const padRight = Math.round(b.width * 0.006);
+    const padBot = marquee + Math.round(b.height * 0.01);
+    const phoneH = Math.max(280, b.height - padTop - padBot);
+    let phoneW = Math.round(phoneH * phoneAspect);
+    const maxW = Math.round(Math.min(b.width * 0.28, 380));
+    if (phoneW > maxW) {
+      phoneW = maxW;
+    }
+    return {
+      x: Math.round(b.x + b.width - padRight - phoneW),
+      y: Math.round(b.y + padTop),
+      width: phoneW,
+      height: Math.round(phoneW / phoneAspect),
+    };
+  }
+  const padX = Math.round(b.width * 0.012);
+  const padTop = Math.round(b.height * 0.14);
+  const padBot = Math.round(b.height * 0.20);
+  // Phone-only: centered portrait
+  const colH = Math.max(240, b.height - padTop - padBot);
+  let ph = colH;
+  let pw = Math.round(ph * phoneAspect);
+  const maxW = Math.round(b.width * 0.36);
+  if (pw > maxW) {
+    pw = maxW;
+    ph = Math.round(pw / phoneAspect);
+  }
+  return clampPortraitPhoneSlot({
+    x: b.x + (b.width - pw) / 2,
+    y: b.y + padTop + (colH - ph) / 2,
+    width: pw,
+    height: ph,
+  });
+}
+
+/**
+ * Fallback when Screen Recording / desktopCapturer is unavailable:
+ * host scrcpy directly in the HDMI phone slot (always-on-top), with the
+ * player dropped from 'screen-saver' level. Never toggles fullscreen.
+ */
+function startHdmiPhoneOverlay(reason) {
+  if (!phoneMirror) {
+    return { ok: false, error: 'phone-mirror module unavailable', routing: { mode: 'off' } };
+  }
+  const slot = phoneSlotBoundsFromPlayer();
+  console.log('[karol] HDMI phone overlay', reason || '', slot);
+  let result;
+  try {
+    result = phoneMirror.startPhoneMirror(playerBoundsForMirror(), {
+      playWin,
+      hostOnPrimary: false,
+      slotBounds: slot,
+      fullscreenDisplay: false,
+      forceRestart: true,
+      noAudio: getGapMix().gapPhoneLevel < 0.02,
+      audioLevel: getGapMix().gapPhoneLevel,
+    });
+  } catch (e) {
+    console.error('[karol] HDMI overlay start threw:', e && e.message);
+    return { ok: false, error: e.message || 'overlay start failed', routing: { mode: 'off' } };
+  }
+  if (!result.ok) return result;
+  phoneMirrorOverlayActive = true;
+  try {
+    if (playWin && !playWin.isDestroyed()) playWin.setAlwaysOnTop(false);
+  } catch (_) {}
+  // Player AOT dropped for scrcpy — keep menu bar covered
+  ensureMenuBarCover('hdmi-overlay');
+  startMenuBarCoverWatch();
+  sendToPlayers('player-event', {
+    type: 'phone-mirror-overlay',
+    active: true,
+  });
+  sendToPlayers('player-event', {
+    type: 'phone-mirror-capture-status',
+    ok: true,
+    reason: 'hdmi-overlay',
+    message: '',
+  });
+  notifyCtrl('phone-mirror-status', {
+    ...(result.status || phoneMirror.getStatus()),
+    overlay: true,
+    screenStatus: getScreenCaptureAccessStatus(),
+  });
+  return result;
+}
+
+function stopHdmiPhoneOverlayFlag() {
+  phoneMirrorOverlayActive = false;
+  sendToPlayers('player-event', { type: 'phone-mirror-overlay', active: false });
+}
+
+/** Start or stop phone mirror for Gap/Pause.
+ *  Prefer laptop scrcpy + desktopCapturer when Screen Recording is granted;
+ *  otherwise place scrcpy on the HDMI phone slot (no TCC needed).
+ *  Never toggles player fullscreen (crashes macOS NSWindow setStyleMask). */
+function ensurePhoneMirrorForGap(wantOn) {
+  if (!PHONE_MIRROR_GAP_ENABLED) {
+    // Parked: never spawn scrcpy/adb — Gap uses Music Videos only.
+    try {
+      stopHdmiPhoneOverlayFlag();
+      if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror();
+      sendToPlayers('player-event', { type: 'phone-mirror-capture-stop' });
+    } catch (_) {}
+    return { ok: true, routing: { mode: 'off' }, status: phoneMirrorStatusQuiet(), parked: true };
+  }
+  if (!phoneMirror) {
+    return { ok: false, error: 'phone-mirror module unavailable', routing: { mode: 'off' } };
+  }
+  if (!wantOn) {
+    stopHdmiPhoneOverlayFlag();
+    try { phoneMirror.stopPhoneMirror(); } catch (_) {}
+    sendToPlayers('player-event', { type: 'phone-mirror-capture-stop' });
+    return { ok: true, routing: { mode: 'off' }, status: phoneMirror.getStatus() };
+  }
+
+  const screenStatus = getScreenCaptureAccessStatus();
+  console.log('[karol] phone mirror screen access:', screenStatus);
+
+  // No Screen Recording → skip capturer entirely (empty source list / TCC false negative)
+  if (screenStatus !== 'granted') {
+    const overlay = startHdmiPhoneOverlay('screen-status=' + screenStatus);
+    notifyCtrl('phone-mirror-status', overlay.status || phoneMirror.getStatus());
+    return overlay;
+  }
+
+  let result;
+  try {
+    result = phoneMirror.startPhoneMirror(playerBoundsForMirror(), {
+      playWin,
+      hostOnPrimary: true,
+      fullscreenDisplay: false,
+      // Direct scrcpy→BlackHole can't be ducked; mute at near-zero phone fader
+      noAudio: getGapMix().gapPhoneLevel < 0.02,
+      audioLevel: getGapMix().gapPhoneLevel,
+    });
+  } catch (e) {
+    console.error('[karol] phone mirror start threw:', e && e.message);
+    return { ok: false, error: e.message || 'mirror start failed', routing: { mode: 'off' } };
+  }
+  notifyCtrl('phone-mirror-status', result.status || phoneMirror.getStatus());
+  if (!result.ok) return result;
+
+  phoneMirrorOverlayActive = false;
+
+  // Wait for scrcpy window, then bind desktopCapturer → player B-roll video
+  const tryCapture = (attempt) => {
+    if (!phoneMirror.isRunning()) {
+      sendToPlayers('player-event', {
+        type: 'phone-mirror-capture-status',
+        ok: false,
+        reason: 'scrcpy-stopped',
+        message: 'Phone mirror window closed',
+      });
+      return;
+    }
+    if (getScreenCaptureAccessStatus() !== 'granted') {
+      console.warn('[karol] screen access lost — falling back to HDMI overlay');
+      startHdmiPhoneOverlay('access-lost');
+      return;
+    }
+    desktopCapturer.getSources({
+      types: ['window'],
+      thumbnailSize: { width: 0, height: 0 },
+      fetchWindowIcons: false,
+    }).then((sources) => {
+      const list = sources || [];
+      const hit = list.find((s) => /Karol Phone Mirror/i.test(s.name || ''))
+        || list.find((s) => /scrcpy/i.test(s.name || ''));
+      if (!hit) {
+        if (attempt < 8) {
+          if (attempt === 0 || attempt === 3 || attempt === 6) {
+            console.warn('[karol] phone mirror window not in capturer yet (attempt', attempt + ', sources=' + list.length + ')');
+            sendToPlayers('player-event', {
+              type: 'phone-mirror-capture-status',
+              ok: false,
+              reason: 'window-missing',
+              message: list.length
+                ? 'Looking for Karol Phone Mirror…'
+                : 'Waiting for screen capture sources…',
+              sourceCount: list.length,
+            });
+          }
+          setTimeout(() => tryCapture(attempt + 1), attempt < 4 ? 350 : 600);
+          return;
+        }
+        console.warn('[karol] capture source missing after retries — HDMI overlay fallback; sources=',
+          list.slice(0, 12).map((s) => s.name));
+        startHdmiPhoneOverlay('capturer-miss');
+        return;
+      }
+      console.log('[karol] Phone mirror capture source:', hit.name, hit.id);
+      sendToPlayers('player-event', {
+        type: 'phone-mirror-capture',
+        sourceId: hit.id,
+        sourceName: hit.name,
+      });
+    }).catch((e) => {
+      console.warn('[karol] desktopCapturer failed:', e && e.message);
+      if (attempt < 4) {
+        setTimeout(() => tryCapture(attempt + 1), 500);
+        return;
+      }
+      startHdmiPhoneOverlay('capturer-error');
+    });
+  };
+  setTimeout(() => tryCapture(0), 700);
+
+  return result;
 }
 
 function getBetweenSongsMs() {
@@ -1816,6 +2729,7 @@ function clearBetweenSongsTimer() {
   betweenSongsRemainingMs = 0;
   betweenSongsDeadline = 0;
   betweenSongsPendingItem = null;
+  try { if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror(); } catch (_) {}
   notifyInterstitialState();
 }
 
@@ -1836,7 +2750,7 @@ function notifyInterstitialState() {
 }
 
 /** Payload for pause interstitial — prefer next singer, else current / paused tip. */
-function buildPauseInterstitialPayload() {
+function buildPauseInterstitialPayload(mirrorRouting) {
   let singer = '';
   let title = '';
   let label = 'Up next';
@@ -1855,12 +2769,32 @@ function buildPauseInterstitialPayload() {
     title = 'Scan QR to request a song';
     label = 'Paused';
   }
+  let content = getGapContent();
+  let brollVideoId = null;
+  let routing = mirrorRouting || { mode: 'off' };
+  // Live dual-gap: never demote to MVs-only just because routing mode string is odd
+  if (gapNeedsBroll(content)) {
+    brollVideoId = pickRandomMusicBrollId();
+  } else {
+    brollVideoId = null;
+  }
+  if (gapNeedsPhone(content) && routing && routing.failed) {
+    content = 'music-broll';
+    brollVideoId = pickRandomMusicBrollId();
+  }
+  const mix = getGapMix();
   return {
     type: 'pause-interstitial',
     singer: singer || DEFAULT_DJ_NAME,
     title,
     label,
-    brollVideoId: pickRandomMusicBrollId(),
+    gapContent: content,
+    brollVideoId,
+    mirrorAudioMode: routing.mode || 'off',
+    mirrorHouseDevice: routing.house || null,
+    mirrorTapDevice: routing.tap || null,
+    gapBrollLevel: mix.gapBrollLevel,
+    gapPhoneLevel: mix.gapPhoneLevel,
     queue,
     currentIndex: queueIndex,
   };
@@ -1908,28 +2842,33 @@ function musicSearchDirs() {
   return dirs;
 }
 
-/** One directory scan → Set of playable music bases (avoids 600× existsSync on USB). */
+/** Local music bases for Gap B-roll — from in-memory library cache only.
+ *  Never readdirSync the USB songs/ folder here (ExFAT scandir freezes IPC). */
 function rebuildMusicBrollLocalIndex(force) {
   const now = Date.now();
   if (!force && musicBrollLocalIndex && (now - musicBrollLocalIndexAt) < MUSIC_BROLL_INDEX_TTL_MS) {
     return musicBrollLocalIndex;
   }
   const found = new Set();
-  const exts = new Set(['.mp4', '.webm', '.mkv', '.m4v']);
-  for (const dir of musicSearchDirs()) {
-    let names = [];
-    try { names = fs.readdirSync(dir); } catch (_) { continue; }
-    for (const name of names) {
-      if (!name || name.startsWith('._')) continue;
-      const ext = path.extname(name).toLowerCase();
-      if (!exts.has(ext)) continue;
-      const base = path.basename(name, path.extname(name));
-      if (!/^[A-Za-z0-9_-]{11}$/.test(base)) continue;
-      if (/-karaoke$/i.test(base)) continue;
-      try {
-        if (fs.statSync(path.join(dir, name)).size > 1000) found.add(base);
-      } catch (_) {}
+  try {
+    if (library && typeof library.list === 'function') {
+      const r = library.list({}) || {};
+      for (const v of (r.videos || [])) {
+        if (!v) continue;
+        const raw = String(v.videoId || v.id || '');
+        if (/-karaoke$/i.test(raw)) continue;
+        const base = raw.replace(/-karaoke$/i, '');
+        if (!/^[A-Za-z0-9_-]{11}$/.test(base)) continue;
+        const tag = String(v.tag || '');
+        if (tag && tag !== 'music' && tag !== 'song') continue;
+        // Prefer rows that already know a path; otherwise still allow tagged music ids
+        if (v.path || v.filePath || v.localPath || tag === 'music' || tag === 'song' || !tag) {
+          found.add(base);
+        }
+      }
     }
+  } catch (e) {
+    console.warn('[karol] B-roll index from cache failed:', e && e.message);
   }
   musicBrollLocalIndex = found;
   musicBrollLocalIndexAt = now;
@@ -2142,8 +3081,16 @@ function resumeBetweenSongs() {
     betweenSongsPendingItem = null;
     betweenSongsRemainingMs = 0;
     notifyInterstitialState();
-    sendPlay(item.videoId, item.title, item.singer || item.requester);
-    notifyPlayerQueue();
+    sendToPlayers('player-event', { type: 'phone-mirror-fade-out' });
+    setTimeout(() => {
+      try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
+      notifyCtrl('phone-mirror-status', phoneMirrorStatusQuiet());
+      sendPlay(item.videoId, item.title, item.singer || item.requester, {
+        force: true,
+        karaoke: isKaraokeQueueItem(item),
+      });
+      notifyPlayerQueue();
+    }, 340);
   }, ms);
   console.log('[karol] Interstitial resumed —', Math.round(ms / 1000) + 's left');
   notifyInterstitialState();
@@ -2161,35 +3108,74 @@ function toggleBetweenSongsHold() {
 }
 
 function doTransportPause() {
-  // During between-songs: hold the countdown, keep B-roll + animations running
+  // Gap hold is HOLD-only — Pause never freezes the between-songs countdown
   if (betweenSongsTimer || betweenSongsHeld || betweenSongsPendingItem) {
-    holdBetweenSongs();
-    playback.state = 'paused';
-    notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-    return { ok: true, nowPlaying: buildPhoneNowPlaying(), interstitialHeld: true };
+    return {
+      ok: true,
+      ignored: true,
+      reason: 'gap_active',
+      nowPlaying: buildPhoneNowPlaying(),
+      ...getInterstitialState(),
+    };
   }
-  // Show interstitial over a live (or already paused) track — never advance queue
-  if (playback.state === 'playing' || playback.state === 'paused' || playback.videoId) {
-    clearBetweenSongsTimer();
-    sendToPlayers('player-event', buildPauseInterstitialPayload());
-    playback.state = 'paused';
-    notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-    return { ok: true, nowPlaying: buildPhoneNowPlaying() };
-  }
-  notifyPlayer({ type: 'pause' });
   playback.state = 'paused';
+  let mirrorRouting = { mode: 'off' };
+  try {
+    if (gapNeedsPhone(getGapContent())) {
+      const mir = ensurePhoneMirrorForGap(true);
+      if (mir && mir.ok) {
+        mirrorRouting = mir.routing || { mode: 'direct' };
+      } else {
+        console.warn('[karol] Pause phone mirror failed — MVs fallback:', mir && mir.error);
+        notifyCtrl('phone-mirror-status', {
+          ...((mir && mir.status) || {}),
+          error: (mir && mir.error) || 'Phone mirror failed',
+          fallback: 'music-broll',
+        });
+        mirrorRouting = { mode: 'off', failed: true };
+        try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
+      }
+    } else {
+      try { if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror(); } catch (_) {}
+    }
+    const payload = buildPauseInterstitialPayload(mirrorRouting);
+    console.log('[karol] Pause interstitial:', payload.gapContent, payload.label, payload.singer);
+    sendToPlayers('player-event', payload);
+  } catch (e) {
+    console.error('[karol] Pause interstitial failed — safe pause only:', e && e.message);
+    try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
+    notifyPlayer({ type: 'pause' });
+  }
+  notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
   return { ok: true, nowPlaying: buildPhoneNowPlaying() };
 }
 
 function doTransportPlay() {
-  // Resume a held between-songs interstitial (B-roll already spinning)
+  // Gap resume is HOLD/RESUME-only — Play does not unstick a held interstitial
   if (betweenSongsHeld && betweenSongsPendingItem) {
-    resumeBetweenSongs();
-    playback.state = 'playing';
-    return { ok: true, nowPlaying: buildPhoneNowPlaying(), interstitialHeld: false };
+    return {
+      ok: true,
+      ignored: true,
+      reason: 'gap_held',
+      nowPlaying: buildPhoneNowPlaying(),
+      ...getInterstitialState(),
+    };
   }
-  // Resume same paused track (reverse QR trip) — do not call sendPlay / advance
+  // During an active (unheld) gap, Play is a no-op — countdown continues
+  if (betweenSongsTimer || betweenSongsPendingItem) {
+    return {
+      ok: true,
+      ignored: true,
+      reason: 'gap_active',
+      nowPlaying: buildPhoneNowPlaying(),
+      ...getInterstitialState(),
+    };
+  }
+  // Resume same paused track — tear down pause interstitial / phone mirror first
   if (playback.state === 'paused') {
+    try { if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror(); } catch (_) {}
+    sendToPlayers('player-event', { type: 'phone-mirror-capture-stop' });
+    notifyCtrl('phone-mirror-status', phoneMirrorStatusQuiet());
     sendToPlayers('player-event', { type: 'resume' });
     playback.state = 'playing';
     return { ok: true, nowPlaying: buildPhoneNowPlaying() };
@@ -2199,9 +3185,38 @@ function doTransportPlay() {
   return { ok: true, nowPlaying: buildPhoneNowPlaying() };
 }
 
-/** Show next-singer + big QR + music B-roll, then start playback. */
+/**
+ * Start the next show item.
+ * Gap interstitial + singer entrance are karaoke-only.
+ * Jukebox/DJ advances cut straight to the next track.
+ */
+function playShowItem(item) {
+  if (!item) return;
+  if (isKaraokeQueueItem(item)) {
+    playAfterBetweenSongs(item);
+    return;
+  }
+  clearBetweenSongsTimer();
+  betweenSongsPendingItem = null;
+  betweenSongsRemainingMs = 0;
+  betweenSongsDeadline = 0;
+  notifyInterstitialState();
+  if (!playWin || playWin.isDestroyed()) createPlayer();
+  sendPlay(item.videoId, item.title, item.singer || item.requester, {
+    force: true,
+    karaoke: false,
+  });
+  notifyPlayerQueue();
+}
+
+/** Show next-singer + big QR + music B-roll (or phone mirror), then start karaoke. */
 function playAfterBetweenSongs(item) {
   if (!item) return;
+  // Safety: never Gap for DJ/jukebox rows
+  if (!isKaraokeQueueItem(item)) {
+    playShowItem(item);
+    return;
+  }
   clearBetweenSongsTimer();
   betweenSongsPendingItem = item;
   const ms = getBetweenSongsMs();
@@ -2210,14 +3225,58 @@ function playAfterBetweenSongs(item) {
   const singer = displaySingerName(item.singer || item.requester);
   const title = displayTitle(item);
   if (!playWin || playWin.isDestroyed()) createPlayer();
-  const brollVideoId = pickRandomMusicBrollId();
-  console.log('[karol] Interstitial broll pick:', brollVideoId || '(none)', 'gap', ms + 'ms', 'singer', singer);
+
+  let content = getGapContent();
+  let brollVideoId = null;
+  let mirrorRouting = { mode: 'off' };
+  if (gapNeedsPhone(content)) {
+    const mir = ensurePhoneMirrorForGap(true);
+    if (!mir.ok) {
+      console.warn('[karol] Phone mirror failed — falling back to Music Videos:', mir.error);
+      notifyCtrl('phone-mirror-status', {
+        ...(mir.status || {}),
+        error: mir.error || 'Phone mirror failed',
+        fallback: 'music-broll',
+      });
+      content = 'music-broll';
+      try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
+      brollVideoId = pickRandomMusicBrollId();
+    } else {
+      mirrorRouting = mir.routing || { mode: 'direct' };
+      if (gapNeedsBroll(content)) {
+        brollVideoId = pickRandomMusicBrollId();
+      }
+      console.log('[karol] Interstitial', content, mirrorRouting.mode, 'gap', ms + 'ms', 'singer', singer,
+        brollVideoId ? ('broll ' + brollVideoId) : '');
+    }
+  } else {
+    try { if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror(); } catch (_) {}
+    brollVideoId = pickRandomMusicBrollId();
+    console.log('[karol] Interstitial broll pick:', brollVideoId || '(none)', 'gap', ms + 'ms', 'singer', singer);
+  }
+
+  const mix = getGapMix();
+  // Clear stale feature clock so Gap UI doesn't look like a frozen playing track
+  // (and so sendPlay debounce / progress guards don't use leftover times).
+  playback = {
+    videoId: item.videoId || null,
+    currentTime: 0,
+    duration: 0,
+    state: 'interstitial',
+  };
+  featureTrackEverProgressed = false;
   sendToPlayers('player-event', {
     type: 'between-songs',
     singer: singer,
     title,
     durationMs: ms,
+    gapContent: content,
     brollVideoId,
+    mirrorAudioMode: mirrorRouting.mode || 'off',
+    mirrorHouseDevice: mirrorRouting.house || null,
+    mirrorTapDevice: mirrorRouting.tap || null,
+    gapBrollLevel: mix.gapBrollLevel,
+    gapPhoneLevel: mix.gapPhoneLevel,
     queue,
     currentIndex: queueIndex,
   });
@@ -2228,43 +3287,97 @@ function playAfterBetweenSongs(item) {
     betweenSongsPendingItem = null;
     betweenSongsRemainingMs = 0;
     notifyInterstitialState();
-    sendPlay(item.videoId, item.title, item.singer || item.requester);
-    notifyPlayerQueue();
+    // Ask player to fade mirror audio, then hand off to karaoke.
+    sendToPlayers('player-event', { type: 'phone-mirror-fade-out' });
+    setTimeout(() => {
+      try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
+      notifyCtrl('phone-mirror-status', phoneMirrorStatusQuiet());
+      // Force past debounce — this is the intentional Gap→karaoke handoff
+      sendPlay(item.videoId, item.title, item.singer || item.requester, {
+        force: true,
+        karaoke: true,
+      });
+      notifyPlayerQueue();
+    }, 340);
   }, ms);
   notifyInterstitialState();
 }
 
-function advanceQueue(direction) {
-  if (jukeboxActive()) {
-    advanceJukebox(direction);
-    return;
-  }
-  if (queue.length === 0) return;
-  skipRequested = true;
-  if (queueShuffle && direction === 1 && queue.length > 1) {
-    const cur = queue[queueIndex];
-    if (cur && cur.videoId) shufflePlayedIds.add(String(cur.videoId));
-    let candidates = [];
-    for (let i = 0; i < queue.length; i++) {
-      if (i === queueIndex) continue;
-      const id = String((queue[i] && queue[i].videoId) || '');
-      if (!shufflePlayedIds.has(id)) candidates.push(i);
+/** DJ mirror row — stamped fromJukebox, or healed when it matches the armed deck. */
+function isDjQueueItem(item) {
+  if (!item) return false;
+  if (item.fromJukebox) return true;
+  if (!jukeboxActive()) return false;
+  const cur = jukebox.items[jukebox.index];
+  return !!(cur && String(cur.videoId || '') === String(item.videoId || ''));
+}
+
+/** Karaoke = singer-queue rows (not the DJ feature track). */
+function isKaraokeQueueItem(item) {
+  return !!(item && !isDjQueueItem(item));
+}
+
+function pendingKaraokeItems() {
+  return queue.filter(isKaraokeQueueItem);
+}
+
+function pendingKaraokeCount() {
+  return pendingKaraokeItems().length;
+}
+
+/** Ensure the interactive DJ mirror keeps fromJukebox so it is never consumed as karaoke. */
+function healDjMirrorFlags() {
+  if (!jukeboxActive()) return;
+  const curId = String((jukebox.items[jukebox.index] && jukebox.items[jukebox.index].videoId) || '');
+  for (const item of queue) {
+    if (!item) continue;
+    if (item.fromJukebox) continue;
+    if (curId && String(item.videoId || '') === curId) {
+      item.fromJukebox = true;
+      if (!item.singer) item.singer = DEFAULT_DJ_NAME;
+      if (!item.requester) item.requester = DEFAULT_DJ_NAME;
     }
-    if (candidates.length === 0) {
-      // Full cycle done — reshuffle from the top (exclude current so we don't repeat immediately)
-      shufflePlayedIds.clear();
-      if (cur && cur.videoId) shufflePlayedIds.add(String(cur.videoId));
-      for (let i = 0; i < queue.length; i++) {
-        if (i !== queueIndex) candidates.push(i);
-      }
-    }
-    queueIndex = candidates[Math.floor(Math.random() * candidates.length)];
-  } else {
-    queueIndex = (queueIndex + direction + queue.length) % queue.length;
   }
-  const item = queue[queueIndex];
+}
+
+/** Derived show mode for UI: KJ interrupt vs DJ default vs idle. */
+function showMode() {
+  if (betweenSongsPendingItem && isKaraokeQueueItem(betweenSongsPendingItem)) return 'kj';
+  const cur = queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null;
+  if (cur && isKaraokeQueueItem(cur) && (playback.state === 'playing' || playback.state === 'paused')) {
+    return 'kj';
+  }
+  if (jukeboxActive()) return 'dj';
+  if (pendingKaraokeCount() > 0) return 'kj';
+  return 'idle';
+}
+
+function showModePayload() {
+  return {
+    showMode: showMode(),
+    pendingKaraoke: pendingKaraokeCount(),
+  };
+}
+
+function notifyShowUpdate() {
+  notifyCtrl('queue-update', {
+    queue,
+    currentIndex: queueIndex,
+    shuffleEnabled: !!queueShuffle,
+    jukebox: jukeboxSummary(),
+    ...showModePayload(),
+  });
+  notifyPlayerQueue();
+}
+
+function idleStopShow() {
+  queue = pendingKaraokeItems(); // drop DJ mirrors
+  queueIndex = -1;
+  playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
+  clearBetweenSongsTimer();
   saveState();
-  playAfterBetweenSongs(item);
+  notifyPlayer({ type: 'stop' });
+  notifyShowUpdate();
 }
 
 function jukeboxActive() {
@@ -2282,80 +3395,24 @@ function jukeboxSummary() {
   };
 }
 
-/** Build a playable jukebox from music-video rows — skips missing/tiny files. */
-function startJukebox(rawItems, { shuffle = true, play = true, requester } = {}) {
-  const who = normalizeQueueSinger(requester);
-  const cleaned = [];
-  const seen = new Set();
-  for (const raw of rawItems || []) {
-    if (!raw) continue;
-    const vid = resolveVid(raw.videoId || raw.id || '');
-    if (!vid || seen.has(vid)) continue;
-    let playable = false;
-    try {
-      const p = library && typeof library.getVideoPath === 'function' ? library.getVideoPath(vid) : null;
-      if (p && fs.existsSync(p) && fs.statSync(p).size >= 50_000) playable = true;
-    } catch (_) { /* ignore */ }
-    if (!playable) continue;
-    seen.add(vid);
-    cleaned.push({
-      videoId: vid,
-      title: bestTitleFor(vid, raw.title || ''),
-    });
-  }
-  if (!cleaned.length) {
-    return { ok: false, error: 'No playable local music videos found', added: 0 };
-  }
-  if (shuffle) shuffleInPlace(cleaned);
-  jukebox = { items: cleaned, index: 0, shuffle: !!shuffle };
-  queueShuffle = !!shuffle;
-  shufflePlayedIds.clear();
-  // Interactive queue stays tiny — only the currently playing jukebox track.
-  const first = cleaned[0];
-  queue = [{
-    videoId: first.videoId,
-    title: first.title,
+function makeJukeboxQueueRow(deckItem) {
+  const who = DEFAULT_DJ_NAME;
+  return {
+    videoId: deckItem.videoId,
+    title: deckItem.title || bestTitleFor(deckItem.videoId, ''),
     singer: who,
     requester: who,
     fromJukebox: true,
-  }];
-  queueIndex = 0;
-  saveSettings();
-  saveState();
-  if (play) {
-    skipRequested = true;
-    sendPlay(first.videoId, first.title, who);
-  }
-  notifyCtrl('queue-update', {
-    queue,
-    currentIndex: queueIndex,
-    shuffleEnabled: !!queueShuffle,
-    jukebox: jukeboxSummary(),
-  });
-  notifyPlayerQueue();
-  console.log('[karol] Jukebox started:', cleaned.length, 'tracks, shuffle=', !!shuffle);
-  return {
-    ok: true,
-    added: cleaned.length,
-    skipped: (rawItems || []).length - cleaned.length,
-    jukebox: jukeboxSummary(),
-    shuffleEnabled: !!queueShuffle,
-    queueLength: queue.length,
-    currentIndex: queueIndex,
   };
 }
 
-function stopJukebox() {
-  jukebox = null;
-}
-
-function advanceJukebox(direction) {
-  if (!jukeboxActive()) return;
-  skipRequested = true;
+/** Move DJ deck index; returns the selected item or null. */
+function selectNextJukeboxItem(direction) {
+  if (!jukeboxActive()) return null;
   const n = jukebox.items.length;
-  if (n === 0) return;
-  if (jukebox.shuffle && direction === 1 && n > 1) {
-    // No-repeat random among not-yet-played this cycle
+  if (n === 0) return null;
+  const dir = direction < 0 ? -1 : 1;
+  if (jukebox.shuffle && dir === 1 && n > 1) {
     const curId = String((jukebox.items[jukebox.index] && jukebox.items[jukebox.index].videoId) || '');
     if (curId) shufflePlayedIds.add(curId);
     let candidates = [];
@@ -2371,32 +3428,225 @@ function advanceJukebox(direction) {
     }
     jukebox.index = candidates[Math.floor(Math.random() * candidates.length)];
   } else {
-    jukebox.index = (jukebox.index + direction + n) % n;
+    jukebox.index = (jukebox.index + dir + n) % n;
   }
-  const item = jukebox.items[jukebox.index];
-  const who = DEFAULT_DJ_NAME;
-  queue = [{
-    videoId: item.videoId,
-    title: item.title,
+  return jukebox.items[jukebox.index] || null;
+}
+
+/**
+ * Single “what plays next” resolver for natural end + skip/prev.
+ * Pending karaoke always wins over the DJ deck; finished karaoke is consumed.
+ */
+function advanceShow({ direction = 1, fromEnded = false } = {}) {
+  const now = Date.now();
+  if (fromEnded && lastAdvanceAtMs && (now - lastAdvanceAtMs) < ADVANCE_DEBOUNCE_MS) {
+    console.warn('[karol] Ignoring rapid natural-end re-advance (' + (now - lastAdvanceAtMs) + 'ms)');
+    skipRequested = true; // absorb further ended noise until next real play
+    return;
+  }
+
+  healDjMirrorFlags();
+  const dir = direction < 0 ? -1 : 1;
+  const cur = queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null;
+
+  // Arm skip guard immediately so gap teardown / duplicate ended cannot cascade
+  skipRequested = true;
+  lastAdvanceAtMs = now;
+
+  // ── Backward skip ──
+  if (dir === -1 && !fromEnded) {
+    const karaoke = pendingKaraokeItems();
+    if (cur && isKaraokeQueueItem(cur) && karaoke.length > 1) {
+      const pos = karaoke.indexOf(cur);
+      const prev = karaoke[(pos - 1 + karaoke.length) % karaoke.length];
+      queue = karaoke;
+      queueIndex = Math.max(0, queue.indexOf(prev));
+      saveState();
+      playShowItem(queue[queueIndex]);
+      notifyShowUpdate();
+      return;
+    }
+    if (jukeboxActive()) {
+      const deckItem = selectNextJukeboxItem(-1);
+      if (!deckItem) { idleStopShow(); return; }
+      const row = makeJukeboxQueueRow(deckItem);
+      queue = [row, ...karaoke];
+      queueIndex = 0;
+      saveSettings();
+      saveState();
+      playShowItem(row);
+      notifyShowUpdate();
+      return;
+    }
+    if (karaoke.length) {
+      queue = karaoke;
+      queueIndex = karaoke.length - 1;
+      saveState();
+      playShowItem(queue[queueIndex]);
+      notifyShowUpdate();
+    }
+    return;
+  }
+
+  // ── Forward / natural end ──
+  const wasDj = isDjQueueItem(cur);
+  const wasKaraoke = isKaraokeQueueItem(cur);
+  if (wasKaraoke) {
+    updateMysqlRequestStatus(cur, 'ended', fromEnded ? undefined : 'skipped');
+    queue.splice(queueIndex, 1);
+  } else if (wasDj) {
+    // Drop the DJ mirror; karaoke rows (if any) shift forward
+    queue.splice(queueIndex, 1);
+    // Pre-advance deck so a later DJ resume doesn't replay this MV
+    if (jukeboxActive()) selectNextJukeboxItem(1);
+  }
+
+  const karaoke = pendingKaraokeItems();
+  if (karaoke.length > 0) {
+    queue = karaoke;
+    queueIndex = 0;
+    saveState();
+    playShowItem(queue[0]); // karaoke → Gap + entrance
+    notifyShowUpdate();
+    return;
+  }
+
+  if (jukeboxActive()) {
+    // After DJ→DJ: index already advanced above. After karaoke→DJ: play current index.
+    let deckItem = null;
+    if (wasDj) {
+      deckItem = jukebox.items[jukebox.index] || null;
+    } else {
+      deckItem = wasKaraoke
+        ? (jukebox.items[jukebox.index] || null)
+        : selectNextJukeboxItem(1);
+    }
+    if (!deckItem) { idleStopShow(); return; }
+    const row = makeJukeboxQueueRow(deckItem);
+    queue = [row];
+    queueIndex = 0;
+    saveSettings();
+    saveState();
+    playShowItem(row); // jukebox → hard cut, no Gap / entrance
+    notifyShowUpdate();
+    return;
+  }
+
+  idleStopShow();
+}
+
+function advanceQueue(direction) {
+  advanceShow({ direction: direction < 0 ? -1 : 1, fromEnded: false });
+}
+
+/** Build / arm DJ deck from music-video rows — skips missing/tiny files. */
+function startJukebox(rawItems, { shuffle = true, play = true, requester } = {}) {
+  const who = normalizeQueueSinger(requester);
+  const cleaned = [];
+  const seen = new Set();
+  for (const raw of rawItems || []) {
+    if (!raw) continue;
+    // Music jukebox / DJ deck must stay on Music Video ids — never remap to
+    // `{id}-karaoke` even when a custom karaoke twin exists on disk.
+    const vid = String(raw.videoId || raw.id || '').replace(/-karaoke$/, '');
+    if (!vid || seen.has(vid)) continue;
+    let playable = false;
+    try {
+      const p = library && typeof library.getVideoPath === 'function' ? library.getVideoPath(vid) : null;
+      if (p && fs.existsSync(p) && fs.statSync(p).size >= 50_000 && !/-karaoke\.mp4$/i.test(p)) {
+        playable = true;
+      }
+    } catch (_) { /* ignore */ }
+    if (!playable) continue;
+    seen.add(vid);
+    cleaned.push({
+      videoId: vid,
+      title: bestTitleFor(vid, raw.title || ''),
+    });
+  }
+  if (!cleaned.length) {
+    return { ok: false, error: 'No playable local music videos found', added: 0 };
+  }
+  if (shuffle) shuffleInPlace(cleaned);
+  jukebox = { items: cleaned, index: 0, shuffle: !!shuffle };
+  queueShuffle = !!shuffle;
+  shufflePlayedIds.clear();
+  // Keep pending karaoke; DJ mirror is only the current feature track
+  const karaoke = pendingKaraokeItems();
+  const first = cleaned[0];
+  const row = {
+    videoId: first.videoId,
+    title: first.title,
     singer: who,
     requester: who,
     fromJukebox: true,
-  }];
+  };
+  queue = [row, ...karaoke];
   queueIndex = 0;
+  saveSettings();
   saveState();
-  playAfterBetweenSongs({
-    videoId: item.videoId,
-    title: item.title,
+  if (play) {
+    skipRequested = true;
+    sendPlay(first.videoId, first.title, who);
+  }
+  notifyShowUpdate();
+  console.log('[karol] DJ deck armed:', cleaned.length, 'tracks, shuffle=', !!shuffle, 'singers waiting=', karaoke.length);
+  return {
+    ok: true,
+    added: cleaned.length,
+    skipped: (rawItems || []).length - cleaned.length,
+    jukebox: jukeboxSummary(),
+    shuffleEnabled: !!queueShuffle,
+    queueLength: queue.length,
+    currentIndex: queueIndex,
+    ...showModePayload(),
+  };
+}
+
+function stopJukebox() {
+  jukebox = null;
+  // Strip DJ mirrors from the interactive queue; keep karaoke
+  const karaoke = pendingKaraokeItems();
+  const cur = queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null;
+  const wasDj = cur && cur.fromJukebox;
+  queue = karaoke;
+  if (wasDj) {
+    queueIndex = karaoke.length ? 0 : -1;
+  } else if (cur && isKaraokeQueueItem(cur)) {
+    queueIndex = queue.indexOf(cur);
+    if (queueIndex < 0) queueIndex = karaoke.length ? 0 : -1;
+  } else {
+    queueIndex = karaoke.length ? Math.min(queueIndex, karaoke.length - 1) : -1;
+  }
+  saveSettings();
+}
+
+function advanceJukebox(direction) {
+  advanceShow({ direction: direction < 0 ? -1 : 1, fromEnded: false });
+}
+
+/** Append a singer-queue row; DJ stays armed and yields at the next Gap. */
+function enqueueKaraokeItem({ videoId, title, requester, mysqlRequestId } = {}) {
+  const vid = resolveVid(videoId);
+  if (!vid) return { ok: false, error: 'No videoId' };
+  const cleanTitle = bestTitleFor(vid, title);
+  const who = normalizeQueueSinger(requester);
+  const item = {
+    videoId: vid,
+    title: cleanTitle,
     singer: who,
     requester: who,
-  });
-  notifyCtrl('queue-update', {
-    queue,
-    currentIndex: 0,
-    shuffleEnabled: !!queueShuffle,
-    jukebox: jukeboxSummary(),
-  });
-  notifyPlayerQueue();
+  };
+  if (mysqlRequestId) item.mysqlRequestId = mysqlRequestId;
+  queue.push(item);
+  // Idle → start karaoke immediately. Otherwise wait for next Gap / natural end.
+  if (queueIndex < 0) {
+    queueIndex = queue.length - 1;
+    sendPlay(vid, cleanTitle, who);
+  }
+  saveState();
+  notifyShowUpdate();
+  return { ok: true, videoId: vid, item, ...showModePayload() };
 }
 
 function setQueueShuffle(enabled, { reshuffleUpcoming } = {}) {
@@ -2513,7 +3763,7 @@ app.whenReady().then(async () => {
   screen.on('display-added', (_e, display) => {
     console.log('[karol] Display added:', display.label || display.id, display.bounds);
     if (playWin && !playWin.isDestroyed()) {
-      placePlayerOnExternalDisplay('display-added');
+      schedulePlacePlayerOnExternalDisplay('display-added');
     } else {
       createPlayer();
     }
@@ -2524,7 +3774,9 @@ app.whenReady().then(async () => {
     updateKaraokePowerPolicy('display-removed');
   });
   screen.on('display-metrics-changed', () => {
-    placePlayerOnExternalDisplay('display-metrics-changed');
+    // Debounced + no-op when already correct — raw handler used to exit/enter
+    // fullscreen in a loop and freeze the Mac.
+    schedulePlacePlayerOnExternalDisplay('display-metrics-changed');
     updateKaraokePowerPolicy('display-metrics-changed');
   });
   powerMonitor.on('on-ac', () => {
@@ -2536,68 +3788,23 @@ app.whenReady().then(async () => {
     updateKaraokePowerPolicy('on-battery');
   });
 
-  // Load library cache — stream scan status to the controller UI
-  if (library && typeof library.setScanListener === 'function') {
-    library.setScanListener((status) => {
-      notifyCtrl('library-scan-progress', status);
-    });
-  }
-  if (library && typeof library.init === 'function') {
-    const scanStatus = await library.init();
-    console.log('[karol] Library ready:', JSON.stringify(scanStatus || {}));
-    // Build interstitial Music Videos pool off the critical path
-    setTimeout(() => {
-      try { rebuildMusicBrollPool(true); } catch (e) {
-        console.warn('[karol] music broll pool warm-up failed:', e && e.message);
-      }
-    }, 1500);
-    if (scanStatus) notifyCtrl('library-scan-progress', scanStatus);
-  }
-
-  // Restore persistent state
+  // Restore queue/DJ deck before anything else so IPC/API have real state.
+  // Only touch /tmp here — never the USB library drive (can hang for minutes).
   loadState();
   loadSettings();
 
-  // Heal any queue entries persisted with bare-id titles (older sessions):
-  // resolve from library / MySQL catalog / oEmbed and notify all surfaces.
   setTimeout(() => {
-    fixBareIdQueueTitles('startup').catch((e) => console.error('[karol] Title heal failed:', e.message));
-  }, 4000);
-
-  // Reclaim durable karaoke jobs from MySQL / local fallback: resume or
-  // retry anything unfinished, mark jobs whose outputs already exist as done.
-  setTimeout(() => {
-    reclaimKaraokeJobs().catch((e) => console.error('[karol] Job reclaim failed:', e.message));
-  }, 8000);
-
-  // Keep USB hub + external library drive awake for the whole session
-  startUsbKeepAwake();
-  startExternalDriveWatch();
-
-  // Run health check
-  const health = await runHealthCheck();
-  console.log('[karol] Health check:', JSON.stringify(health));
-  notifyCtrl('health-report', health);
-
-  // ── YouTube cookie refresh: once at startup, then every 2 hours ──
-  // Exports Chrome's logged-in session into .karol/yt-cookies.txt for yt-dlp.
-  function refreshYtCookies() {
-    const cookiesPath = path.join('/Users/macdonk/Documents/GitHub/Karol', '.karol', 'yt-cookies.txt');
-    try { fs.mkdirSync(path.dirname(cookiesPath), { recursive: true }); } catch {}
-    const proc = spawn('/opt/homebrew/bin/yt-dlp', [
-      '--cookies-from-browser', 'chrome',
-      '--cookies', cookiesPath,
-      '-s', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    ], { timeout: 60_000 });
-    proc.on('close', (code) => {
-      console.log('[karol] YouTube cookie refresh done (exit', code, ') →', cookiesPath);
-    });
-    proc.on('error', (e) => console.error('[karol] Cookie refresh error:', e.message));
-  }
-  refreshYtCookies();
-  setInterval(refreshYtCookies, 2 * 60 * 60 * 1000);
+    try {
+      if (karolAudio) karolAudio.configureAudioOnStartup();
+    } catch (e) {
+      console.warn('[karol-audio] startup configure failed:', e && e.message);
+    }
+  }, 3000);
 
   // ── Start API server for public domain access (with auto-respawn) ──
+  // MUST run before any maxone/USB I/O. library.init / drive watch call
+  // sync fs on the external volume and were freezing startup so :3131 never
+  // came up (LaunchAgent then filled the gap with a dead no-IPC orphan).
 function startApiServer() {
   // Kill any orphan process on port 3131 from a previous crashed session
   try {
@@ -2704,17 +3911,12 @@ function startApiServer() {
         : queue.find(item =>
             item.videoId === vid || item.videoId === baseId || item.videoId === baseId + '-karaoke');
       if (!slotForThisRequest) {
-        queue.push({
+        enqueueKaraokeItem({
           videoId: vid,
           title: cleanTitle,
-          singer: requester || '',
           requester: requester || '',
           mysqlRequestId: mysqlRequestId || null,
         });
-        saveState();
-        if (queueIndex < 0) { queueIndex = queue.length - 1; sendPlay(vid, cleanTitle, requester); }
-        notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-        notifyPlayerQueue();
         console.log('[karol] Web request queued:', vid, cleanTitle, requester);
       } else {
         // Fix title if queue still has a URL / bare-id placeholder
@@ -2780,11 +3982,13 @@ function startApiServer() {
       notifyPlayerQueue();
     }
     if (msg && msg.type === 'library-rescan') {
-      console.log('[karol] Web-triggered library rescan:', msg.videoId);
+      console.log('[karol] Web-triggered library refresh (soft):', msg.videoId);
+      // Single-video publish used to call init(true) and wipe/rebuild the whole
+      // catalog on ExFAT. Prefer the existing cache; only scan if none.
+      notifyCtrl('library-scan-progress', { videoId: msg.videoId, status: 'done' });
       if (library && typeof library.init === 'function') {
-        library.init(true).then(() => {
-          notifyCtrl('library-scan-progress', { videoId: msg.videoId, status: 'done' });
-        });
+        const cur = (typeof library.list === 'function' ? library.list({}) : null) || {};
+        if (!cur.ok) library.init(false);
       }
     }
   };
@@ -2816,11 +4020,102 @@ function startApiServer() {
 
 try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API server:', e.message); }
 
-  // ── Allow all device permissions (speaker/camera selection, etc.) ──
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    // This is a local karaoke app — grant all hardware access
+  // Library cache from /tmp only — never walk maxone on the main thread.
+  // (ExFAT readdir was freezing Electron so player IPC died and tracks
+  // looked like they were "randomly restarting" / skipping.)
+  if (library && typeof library.setScanListener === 'function') {
+    library.setScanListener((status) => {
+      notifyCtrl('library-scan-progress', status);
+    });
+  }
+  if (library && typeof library.tryLoadCacheFromDisk === 'function') {
+    try {
+      library.tryLoadCacheFromDisk();
+      console.log('[karol] Library cache loaded from /tmp (no USB walk)');
+    } catch (_) {}
+  }
+  // Kick a background scan when maxone is already plugged in (probeDrive is
+  // stat-only — safe). list() auto-starts the worker when the drive is readable.
+  setTimeout(() => {
+    try {
+      if (!library || typeof library.list !== 'function') return;
+      const cur = library.list({}) || {};
+      if (!cur.ok && typeof library.refreshDiskStats === 'function') {
+        library.refreshDiskStats({ recount: false });
+      }
+    } catch (e) {
+      console.error('[karol] Deferred library bootstrap failed:', e.message);
+    }
+  }, 2000);
+  // Never warm B-roll / disk counts on startup — ExFAT readdir freezes IPC.
+  setTimeout(() => {
+    try { startUsbKeepAwake(); } catch (_) {}
+  }, 8000);
+  setTimeout(() => {
+    try { startExternalDriveWatch(); } catch (_) {}
+  }, 5000);
+
+  setTimeout(() => {
+    fixBareIdQueueTitles('startup').catch((e) => console.error('[karol] Title heal failed:', e.message));
+  }, 4000);
+  setTimeout(() => {
+    reclaimKaraokeJobs().catch((e) => console.error('[karol] Job reclaim failed:', e.message));
+  }, 8000);
+
+  function refreshYtCookies() {
+    const cookiesPath = path.join('/Users/macdonk/Documents/GitHub/Karol', '.karol', 'yt-cookies.txt');
+    try { fs.mkdirSync(path.dirname(cookiesPath), { recursive: true }); } catch {}
+    const proc = spawn('/opt/homebrew/bin/yt-dlp', [
+      '--ffmpeg-location', '/opt/homebrew/bin',
+      '--cookies-from-browser', 'chrome',
+      '--cookies', cookiesPath,
+      '-s', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    ], { timeout: 60_000 });
+    proc.on('close', (code) => {
+      console.log('[karol] YouTube cookie refresh done (exit', code, ') →', cookiesPath);
+    });
+    proc.on('error', (e) => console.error('[karol] Cookie refresh error:', e.message));
+  }
+  setTimeout(refreshYtCookies, 15_000);
+  setInterval(refreshYtCookies, 2 * 60 * 60 * 1000);
+
+  // ── Allow all device permissions (speaker/camera/screen capture) ──
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    // Local karaoke app — grant hardware + display-capture for phone mirror
     callback(true);
   });
+  try {
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+      if (permission === 'media' || permission === 'display-capture'
+        || permission === 'mediaKeySystem' || permission === 'fullscreen') {
+        return true;
+      }
+      return true;
+    });
+  } catch (_) {}
+  // Electron 28+: route getDisplayMedia / desktop capture explicitly
+  try {
+    if (typeof session.defaultSession.setDisplayMediaRequestHandler === 'function') {
+      session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+        try {
+          const sources = await desktopCapturer.getSources({
+            types: ['window'],
+            thumbnailSize: { width: 0, height: 0 },
+          });
+          const hit = (sources || []).find((s) => /Karol Phone Mirror/i.test(s.name || ''))
+            || (sources || []).find((s) => /scrcpy/i.test(s.name || ''))
+            || (sources || [])[0];
+          if (hit) callback({ video: hit, audio: false });
+          else callback({});
+        } catch (e) {
+          console.warn('[karol] setDisplayMediaRequestHandler failed:', e && e.message);
+          callback({});
+        }
+      }, { useSystemPicker: false });
+    }
+  } catch (e) {
+    console.warn('[karol] display media handler unavailable:', e && e.message);
+  }
 
   // YouTube Error 153 ("Video player configuration error") — Electron iframes
   // often omit/block Referer. Force a normal browser Referer/Origin on YT requests.
@@ -2889,24 +4184,79 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     }
 
     if (s.state === 'ended') {
-      if (skipRequested) {
-        skipRequested = false;
+      // Gap/B-roll teardown must never advance the show
+      if (betweenSongsTimer || betweenSongsHeld || betweenSongsPendingItem) {
+        console.log('[karol] Ignoring ended during Gap interstitial');
+        skipRequested = true;
+      } else if (Date.now() < ignoreEndedUntilMs) {
+        console.log('[karol] Ignoring ended during post-play grace (' + (ignoreEndedUntilMs - Date.now()) + 'ms left)');
+        skipRequested = true;
+      } else if (skipRequested) {
+        console.log('[karol] Ignoring ended (skip guard armed)');
       } else {
-        if (queue.length > 0) {
-          updateMysqlRequestStatus(queue[queueIndex], 'ended');
-          queueIndex = (queueIndex + 1) % queue.length;
-          // Guard: if queue was modified and index is now invalid, clamp
-          if (queueIndex < 0 || queueIndex >= queue.length) queueIndex = 0;
-          const item = queue[queueIndex];
-          if (item) {
-            saveState();
-            playAfterBetweenSongs(item);
+        const reportId = resolveVid(s.videoId || '');
+        const expectId = resolveVid(
+          (queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex].videoId : '')
+          || playback.videoId
+          || ''
+        );
+        const idMatch = !!(reportId && expectId && (
+          reportId === expectId
+          || reportId.replace(/-karaoke$/, '') === expectId.replace(/-karaoke$/, '')
+        ));
+        // Stale ended from a torn-down <video> often arrives under the *new*
+        // id (or mismatched id) right after a skip/play-now — that looked like
+        // a random mid-song jump to the next DJ track.
+        if (!idMatch) {
+          console.warn('[karol] Ignoring ended for mismatched id', reportId, '≠', expectId);
+          skipRequested = true;
+        } else {
+          const ct = Number(s.currentTime || playback.currentTime || 0);
+          const dur = Number(s.duration || playback.duration || 0);
+          const knownCt = Number(playback.currentTime || 0);
+          // Reject ended whose clock is far ahead of what we've actually heard
+          // for this play (classic teardown: old near-end times + new videoId).
+          if (knownCt >= 1 && ct > knownCt + 8) {
+            console.warn('[karol] Ignoring ended with stale clock', ct.toFixed(2), 'vs known', knownCt.toFixed(2));
+            skipRequested = true;
+          } else {
+            // Only trust ended near the real end of the file. Spurious mid-song
+            // ended events were advancing/restarting the DJ deck.
+            // Require a real duration — dur=0/NaN mid-stream must never advance.
+            const nearEnd = dur >= 8 && isFinite(dur) && ct >= Math.min(dur - 1.25, dur * 0.9);
+            if (!featureTrackEverProgressed || !nearEnd) {
+              console.warn('[karol] Ignoring non-terminal ended at', ct.toFixed(2), '/', dur, '(progressed=', featureTrackEverProgressed, ')');
+              skipRequested = true;
+            } else {
+              advanceShow({ direction: 1, fromEnded: true });
+            }
           }
         }
       }
     }
     if (s.state === 'error') {
       updateMysqlRequestStatus(queue[queueIndex], 'error', 'player reported error');
+      const failedId = String(s.videoId || playback.videoId || '');
+      console.warn('[karol] Player error on', failedId, s.error || '', 'progressed=', featureTrackEverProgressed);
+      // Mid-song glitches must NOT call sendPlay (that restarts from 0).
+      // Only advance when the track never got going.
+      if (!featureTrackEverProgressed) {
+        skipRequested = true;
+        const epochAtError = playEpoch;
+        setTimeout(() => {
+          if (epochAtError !== playEpoch) return;
+          const cur = queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null;
+          if (!cur) return;
+          const curId = String(cur.videoId || '');
+          const same = curId === failedId
+            || curId.replace(/-karaoke$/, '') === failedId.replace(/-karaoke$/, '');
+          if (!same) return;
+          if (betweenSongsTimer || betweenSongsHeld || betweenSongsPendingItem) return;
+          if (featureTrackEverProgressed) return;
+          console.warn('[karol] Initial load failed — advancing once');
+          advanceShow({ direction: 1, fromEnded: false });
+        }, 1200);
+      }
     }
     if (s.state === 'playing') {
       // The player ACTUALLY started — this is the only place a request is
@@ -2917,10 +4267,33 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
         updateMysqlRequestStatus(current, 'playing');
         saveState();
       }
+      const reportId = String(s.videoId || '');
+      const expectId = current ? String(current.videoId || '') : '';
+      if (reportId && expectId && (reportId === expectId
+        || reportId.replace(/-karaoke$/, '') === expectId.replace(/-karaoke$/, ''))) {
+        const ct = Number(s.currentTime || 0);
+        // Hold skip guard until ~2.5s into the new track so teardown `ended`
+        // from the previous media cannot cascade into another advance.
+        if (ct >= 2.5) {
+          featureTrackEverProgressed = true;
+          skipRequested = false;
+        } else if (ct >= 1) {
+          featureTrackEverProgressed = true;
+        }
+      }
     }
-    if (s.state === 'playing' || s.state === 'error') {
-      // New video started (or failed) — clear any stale skip flag
-      skipRequested = false;
+    // Progress ticks also count (playing reports sometimes omit currentTime)
+    if (typeof s.currentTime === 'number' && s.currentTime >= 1) {
+      const current = queue[queueIndex];
+      const reportId = String(s.videoId || '');
+      const expectId = current ? String(current.videoId || '') : '';
+      if (current && reportId && expectId && (reportId === expectId
+        || reportId.replace(/-karaoke$/, '') === expectId.replace(/-karaoke$/, ''))) {
+        featureTrackEverProgressed = true;
+        if ((s.state === 'playing' || playback.state === 'playing') && s.currentTime >= 2.5) {
+          skipRequested = false;
+        }
+      }
     }
     notifyCtrl('player-status', s);
   });
@@ -3014,6 +4387,18 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     invalidateMusicBrollPool();
     return result;
   });
+  ipcMain.handle('library-set-rating', (_e, { videoId, rating }) => {
+    if (!library || typeof library.setRating !== 'function') {
+      return { ok: false, error: 'library unavailable' };
+    }
+    return library.setRating(videoId, rating);
+  });
+  ipcMain.handle('library-get-rating', (_e, videoId) => {
+    if (!library || typeof library.getRating !== 'function') {
+      return { ok: false, error: 'library unavailable' };
+    }
+    return library.getRating(videoId);
+  });
   ipcMain.handle('library-status', (_e, vid) => library ? library.getStatus(vid) : { exists: false });
   ipcMain.handle('library-lyrics', (_e, vid) => library ? library.getLyrics(vid) : null);
   ipcMain.handle('library-file-path', async (_e, vid) => {
@@ -3030,6 +4415,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   });
 
   ipcMain.handle('queue-get', () => {
+    healDjMirrorFlags();
     // Load tags once — never N× disk hits for lyric provenance on a 600-track queue.
     let tags = {};
     try { tags = (library && library.getTags && library.getTags()) || {}; } catch (_) {}
@@ -3042,6 +4428,13 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
       var lookupId = String(vid || '').replace(/-karaoke$/, '');
       var karaoke = tags[lookupId]?.tag === 'karaoke' || tags[lookupId + '-karaoke']?.tag === 'karaoke';
       var isCustom = tags[lookupId]?.source === 'karaoke-maker' || tags[lookupId + '-karaoke']?.source === 'karaoke-maker';
+      var ratingRaw = (tags[lookupId + '-karaoke'] && tags[lookupId + '-karaoke'].rating)
+        || (tags[lookupId] && tags[lookupId].rating)
+        || (tags[vid] && tags[vid].rating);
+      var ratingNum = Number(ratingRaw);
+      var rating = (Number.isFinite(ratingNum) && ratingNum > 0)
+        ? Math.max(1, Math.min(5, Math.round(ratingNum)))
+        : null;
       var lyricSource = '';
       var lyricLabel = '';
       var hasLyrics = false;
@@ -3063,6 +4456,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
       return Object.assign({}, item, {
         karaoke: !!karaoke,
         isCustom: !!isCustom,
+        rating: rating,
         hasLyrics: hasLyrics,
         lyricSource: lyricSource,
         lyricLabel: lyricLabel,
@@ -3074,31 +4468,21 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
       currentIndex: queueIndex,
       shuffleEnabled: !!queueShuffle,
       jukebox: jukeboxSummary(),
+      ...showModePayload(),
     };
   });
 
   ipcMain.handle('queue-add', (_e, { videoId, title, requester }) => {
-    // Manual adds join the interactive queue (and pause jukebox ownership of the queue slot)
-    if (jukeboxActive() && queue.length === 1 && queue[0] && queue[0].fromJukebox) {
-      // Keep jukebox running in background; append request after current
-    }
-    const vid = resolveVid(videoId);
-    const cleanTitle = bestTitleFor(vid, title);
-    const who = normalizeQueueSinger(requester);
-    queue.push({ videoId: vid, title: cleanTitle, singer: who, requester: who });
-    if (queueIndex < 0) { queueIndex = queue.length - 1; sendPlay(vid, cleanTitle, who); }
-    saveState();
-    notifyCtrl('queue-update', { queue, currentIndex: queueIndex, shuffleEnabled: !!queueShuffle, jukebox: jukeboxSummary() });
-    notifyPlayerQueue();
-    return { ok: true };
+    // Singer queue interrupt — DJ deck stays armed; takeover at next Gap
+    return enqueueKaraokeItem({ videoId, title, requester });
   });
 
   /** Batch-append music videos (or other dumps). Large lists stay in the real queue
    *  as slim rows; UI/player only render a window so memory stays stable. */
   ipcMain.handle('queue-add-many', (_e, { items, requester, playIfIdle, shuffle, asJukebox } = {}) => {
     const list = Array.isArray(items) ? items.slice() : [];
-    // asJukebox only when explicitly requested — Queue All uses the full queue.
-    if (asJukebox === true && list.length >= 40) {
+    // Explicit jukebox / DJ arm — never dump hundreds into the singer queue
+    if (asJukebox === true) {
       return startJukebox(list, { shuffle: shuffle !== false, play: playIfIdle !== false, requester });
     }
 
@@ -3176,13 +4560,8 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('jukebox-stop', () => {
     stopJukebox();
-    notifyCtrl('queue-update', {
-      queue,
-      currentIndex: queueIndex,
-      shuffleEnabled: !!queueShuffle,
-      jukebox: null,
-    });
-    return { ok: true };
+    notifyShowUpdate();
+    return { ok: true, jukebox: null, ...showModePayload() };
   });
 
   ipcMain.handle('queue-shuffle-set', (_e, { enabled, reshuffleUpcoming } = {}) => {
@@ -3194,39 +4573,75 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   // Phone DJ API stubs that previously no-oped
   ipcMain.handle('queue-shuffle-upcoming', () => setQueueShuffle(true, { reshuffleUpcoming: true }));
 
-  ipcMain.handle('queue-play-now', (_e, { videoId, title, requester }) => {
-    const vid = resolveVid(videoId);
+  ipcMain.handle('queue-play-now', (_e, { videoId, title, requester, preferMusic } = {}) => {
+    const vid = resolveVid(videoId, { preferMusic: !!preferMusic });
     const cleanTitle = bestTitleFor(vid, title);
     const who = normalizeQueueSinger(requester);
     const existingIdx = queue.findIndex(item => item.videoId === vid);
+    let fromJukebox = false;
     if (existingIdx >= 0) {
+      fromJukebox = !!queue[existingIdx].fromJukebox;
       queue.splice(existingIdx, 1);
     }
-    queue.push({ videoId: vid, title: cleanTitle, singer: who, requester: who });
+    if (!fromJukebox && jukeboxActive()) {
+      const cur = jukebox.items[jukebox.index];
+      if (cur && String(cur.videoId) === String(vid)) fromJukebox = true;
+    }
+    // Playing a Music Video from the Music tab should stay on the DJ/MV path.
+    if (preferMusic) fromJukebox = true;
+    queue.push({
+      videoId: vid,
+      title: cleanTitle,
+      singer: who,
+      requester: who,
+      fromJukebox: fromJukebox || undefined,
+    });
     skipRequested = true;
     queueIndex = queue.length - 1;
+    healDjMirrorFlags();
     saveState();
-    sendPlay(vid, cleanTitle, who);
-    notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-    notifyPlayerQueue();
-    return { ok: true };
+    sendPlay(vid, cleanTitle, who, { force: true, karaoke: preferMusic ? false : undefined });
+    notifyShowUpdate();
+    return { ok: true, ...showModePayload() };
   });
 
   ipcMain.handle('queue-remove', (_e, index) => {
     if (index < 0 || index >= queue.length) return { ok: false };
     updateMysqlRequestStatus(queue[index], 'ended', 'removed from queue');
-    if (index === queueIndex) {
-      queue.splice(index, 1);
-      if (queue.length === 0) { queueIndex = -1; notifyPlayer({ type: 'stop' }); notifyPlayerQueue(); saveState(); }
-      else { queueIndex = queueIndex >= queue.length ? 0 : queueIndex; sendPlay(queue[queueIndex].videoId, queue[queueIndex].title, queue[queueIndex].singer); }
-    } else {
-      queue.splice(index, 1);
-      if (index < queueIndex) queueIndex--;
+    const removingCurrent = index === queueIndex;
+    queue.splice(index, 1);
+    if (index < queueIndex) queueIndex--;
+    else if (removingCurrent) {
+      const karaoke = pendingKaraokeItems();
+      if (karaoke.length) {
+        queue = karaoke;
+        queueIndex = 0;
+        skipRequested = true;
+        clearBetweenSongsTimer();
+        sendPlay(queue[0].videoId, queue[0].title, queue[0].singer);
+      } else if (jukeboxActive()) {
+        const deckItem = selectNextJukeboxItem(1);
+        if (deckItem) {
+          const row = makeJukeboxQueueRow(deckItem);
+          queue = [row];
+          queueIndex = 0;
+          skipRequested = true;
+          clearBetweenSongsTimer();
+          sendPlay(row.videoId, row.title, row.singer);
+          saveSettings();
+        } else {
+          idleStopShow();
+          return { ok: true, ...showModePayload() };
+        }
+      } else {
+        queueIndex = -1;
+        clearBetweenSongsTimer();
+        notifyPlayer({ type: 'stop' });
+      }
     }
     saveState();
-    notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
-    notifyPlayerQueue();
-    return { ok: true };
+    notifyShowUpdate();
+    return { ok: true, ...showModePayload() };
   });
 
   ipcMain.handle('queue-clear', () => {
@@ -3235,11 +4650,12 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     queue = []; queueIndex = -1;
     shufflePlayedIds.clear();
     playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
+    clearBetweenSongsTimer();
+    saveSettings();
     saveState();
     notifyPlayer({ type: 'stop' });
-    notifyCtrl('queue-update', { queue: [], currentIndex: -1, shuffleEnabled: !!queueShuffle, jukebox: null });
-    notifyPlayerQueue();
-    return { ok: true };
+    notifyShowUpdate();
+    return { ok: true, ...showModePayload() };
   });
 
   ipcMain.handle('queue-reorder', (_e, { from, to }) => {
@@ -3260,7 +4676,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     skipRequested = true;
     queueIndex = idx;
     saveState();
-    sendPlay(queue[idx].videoId, queue[idx].title, queue[idx].singer || queue[idx].requester);
+    sendPlay(queue[idx].videoId, queue[idx].title, queue[idx].singer || queue[idx].requester, { force: true });
     notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
     notifyPlayerQueue();
     return { ok: true };
@@ -3270,6 +4686,9 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     ok: true, djActive: true, queueLength: queue.length,
     currentTitle: queue[queueIndex]?.title || '',
     currentTime: playback.currentTime, duration: playback.duration, state: playback.state,
+    ...getInterstitialState(),
+    ...showModePayload(),
+    jukebox: jukeboxSummary(),
   }));
   ipcMain.handle('now-playing', () => {
     if (queueIndex >= 0 && queueIndex < queue.length) {
@@ -3292,6 +4711,12 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     saveSettings();
     notifyPlayer({ type: 'volume', level: volumeLevel });
   });
+  let vocalMixLevel = 0;
+  ipcMain.on('transport-vocal-mix', (_e, l) => {
+    const level = Math.max(0, Math.min(1, Number(l)));
+    vocalMixLevel = Number.isFinite(level) ? level : 0;
+    notifyPlayer({ type: 'vocal-mix', level: vocalMixLevel });
+  });
   ipcMain.on('fx-trigger', (_e, name) => notifyPlayer({ type: 'fx', name: String(name || '').slice(0, 24) }));
   ipcMain.on('toggle-lyric-slider', (_e, active) => {
     notifyPlayer({ type: 'toggle-lyric-slider', active });
@@ -3305,8 +4730,17 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
       var karaokeId = (videoId || '').replace(/-karaoke$/, '') + '-karaoke';
       var lyricsData = library ? library.getLyrics(karaokeId) : null;
       var lines = lyricsData && lyricsData.lines ? lyricsData.lines : [];
+      var secondaryLines = lyricsData && lyricsData.secondaryLines ? lyricsData.secondaryLines : null;
+      var tertiaryLines = lyricsData && lyricsData.tertiaryLines ? lyricsData.tertiaryLines : null;
       var title = resolveTitleLocal(videoId) || '';
-      notifyPlayer({ type: 'toggle-full-lyrics', active: true, lines: lines, title: title || 'Full Lyrics' });
+      notifyPlayer({
+        type: 'toggle-full-lyrics',
+        active: true,
+        lines: lines,
+        secondaryLines: secondaryLines,
+        tertiaryLines: tertiaryLines,
+        title: title || 'Full Lyrics',
+      });
     } catch(e) {
       console.error('[karol] toggle-full-lyrics error:', e.message);
       notifyPlayer({ type: 'toggle-full-lyrics', active: true, lines: [], title: 'Error loading lyrics' });
@@ -3427,13 +4861,104 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.handle('settings-get', () => ({
     ok: true,
     betweenSongsMs: getBetweenSongsMs(),
+    gapContent: getGapContent(),
+    phoneMirrorGapEnabled: PHONE_MIRROR_GAP_ENABLED,
+    ...getGapMix(),
     volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
     ...getInterstitialState(),
+    ...showModePayload(),
+    jukebox: jukeboxSummary(),
+    phoneMirror: phoneMirrorStatusQuiet(),
   }));
   ipcMain.handle('settings-set', (_e, patch) => {
     if (patch && typeof patch.betweenSongsMs === 'number' && isFinite(patch.betweenSongsMs)) {
       betweenSongsMs = Math.max(3000, Math.min(120000, Math.round(patch.betweenSongsMs)));
       console.log('[karol] Interstitial duration set to', getBetweenSongsMs() + 'ms');
+    }
+    let mixChanged = false;
+    if (patch && typeof patch.gapBrollLevel === 'number' && isFinite(patch.gapBrollLevel)) {
+      const next = clamp01(patch.gapBrollLevel, gapBrollLevel);
+      if (next !== gapBrollLevel) { gapBrollLevel = next; mixChanged = true; }
+    }
+    if (patch && typeof patch.gapPhoneLevel === 'number' && isFinite(patch.gapPhoneLevel)) {
+      const next = clamp01(patch.gapPhoneLevel, gapPhoneLevel);
+      if (next !== gapPhoneLevel) { gapPhoneLevel = next; mixChanged = true; }
+    }
+    if (mixChanged) {
+      const mix = getGapMix();
+      console.log('[karol] Gap mix levels', mix);
+      sendToPlayers('player-event', {
+        type: 'gap-mix',
+        gapBrollLevel: mix.gapBrollLevel,
+        gapPhoneLevel: mix.gapPhoneLevel,
+      });
+      // Direct/overlay scrcpy audio bypasses Electron — duck via Android media volume
+      // (loopback still uses player <audio>.volume from gap-mix above).
+      if (PHONE_MIRROR_GAP_ENABLED && phoneMirror && typeof phoneMirror.schedulePhoneAudioLevel === 'function') {
+        try {
+          const r = phoneMirror.schedulePhoneAudioLevel(mix.gapPhoneLevel, {
+            playWin,
+            playBounds: playerBoundsForMirror(),
+            allowRestart: true,
+          });
+          console.log('[karol] Phone audio level →', mix.gapPhoneLevel,
+            r && r.scheduled ? '(scheduled)' : '',
+            phoneMirror.isRunning && phoneMirror.isRunning() ? 'scrcpy-up' : 'scrcpy-down');
+        } catch (e) {
+          console.warn('[karol] phone audio level failed:', e && e.message);
+        }
+      }
+    }
+    if (patch && (patch.gapContent === 'phone-mirror' || patch.gapContent === 'music-broll' || patch.gapContent === 'both')) {
+      const prev = getGapContent();
+      if (!PHONE_MIRROR_GAP_ENABLED && (patch.gapContent === 'phone-mirror' || patch.gapContent === 'both')) {
+        console.log('[karol] Ignoring gapContent', patch.gapContent, '(phone mirror parked)');
+      }
+      gapContent = normalizeGapContent(patch.gapContent);
+      console.log('[karol] Gap content set to', getGapContent());
+      // Live-switch during an active Gap / pause interstitial
+      const gapLive = !!(betweenSongsTimer || betweenSongsHeld || betweenSongsPendingItem || playback.state === 'paused');
+      if (prev !== getGapContent() && gapLive) {
+        const mix = getGapMix();
+        if (gapNeedsPhone(getGapContent())) {
+          const mir = ensurePhoneMirrorForGap(true);
+          if (mir.ok) {
+            const nextContent = getGapContent();
+            sendToPlayers('player-event', {
+              type: 'gap-content-switch',
+              gapContent: nextContent,
+              brollVideoId: gapNeedsBroll(nextContent) ? pickRandomMusicBrollId() : null,
+              mirrorAudioMode: (mir.routing && mir.routing.mode) || 'direct',
+              mirrorHouseDevice: (mir.routing && mir.routing.house) || null,
+              mirrorTapDevice: (mir.routing && mir.routing.tap) || null,
+              gapBrollLevel: mix.gapBrollLevel,
+              gapPhoneLevel: mix.gapPhoneLevel,
+            });
+          } else {
+            gapContent = 'music-broll';
+            notifyCtrl('phone-mirror-status', {
+              ...(mir.status || {}),
+              error: mir.error || 'Phone mirror failed',
+            });
+            sendToPlayers('player-event', {
+              type: 'gap-content-switch',
+              gapContent: 'music-broll',
+              brollVideoId: pickRandomMusicBrollId(),
+              gapBrollLevel: mix.gapBrollLevel,
+              gapPhoneLevel: mix.gapPhoneLevel,
+            });
+          }
+        } else {
+          ensurePhoneMirrorForGap(false);
+          sendToPlayers('player-event', {
+            type: 'gap-content-switch',
+            gapContent: 'music-broll',
+            brollVideoId: pickRandomMusicBrollId(),
+            gapBrollLevel: mix.gapBrollLevel,
+            gapPhoneLevel: mix.gapPhoneLevel,
+          });
+        }
+      }
     }
     if (patch && typeof patch.volumeLevel === 'number' && isFinite(patch.volumeLevel)) {
       volumeLevel = Math.max(0, Math.min(1, patch.volumeLevel));
@@ -3444,8 +4969,86 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     return {
       ok: true,
       betweenSongsMs: getBetweenSongsMs(),
+      gapContent: getGapContent(),
+      phoneMirrorGapEnabled: PHONE_MIRROR_GAP_ENABLED,
+      ...getGapMix(),
       volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
+      phoneMirror: phoneMirrorStatusQuiet(),
     };
+  });
+  ipcMain.handle('phone-mirror-status', () => phoneMirrorStatusQuiet());
+  ipcMain.handle('phone-mirror-stop', () => {
+    if (phoneMirror) phoneMirror.stopPhoneMirror();
+    return { ok: true, status: phoneMirrorStatusQuiet() };
+  });
+  ipcMain.handle('phone-mirror-screen-access', () => {
+    let status = 'unknown';
+    try {
+      if (systemPreferences && typeof systemPreferences.getMediaAccessStatus === 'function') {
+        status = systemPreferences.getMediaAccessStatus('screen');
+      }
+    } catch (_) {}
+    return { ok: true, status };
+  });
+  ipcMain.handle('phone-mirror-find-source', async () => {
+    let screenStatus = 'unknown';
+    try {
+      if (systemPreferences && typeof systemPreferences.getMediaAccessStatus === 'function') {
+        screenStatus = systemPreferences.getMediaAccessStatus('screen');
+      }
+    } catch (_) {}
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['window'],
+        thumbnailSize: { width: 0, height: 0 },
+        fetchWindowIcons: false,
+      });
+      const list = sources || [];
+      const hit = list.find((s) => /Karol Phone Mirror/i.test(s.name || ''))
+        || list.find((s) => /scrcpy/i.test(s.name || ''));
+      return {
+        ok: !!hit,
+        screenStatus,
+        sourceCount: list.length,
+        sourceId: hit ? hit.id : null,
+        sourceName: hit ? hit.name : null,
+        names: list.slice(0, 15).map((s) => s.name),
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        screenStatus,
+        error: (e && e.message) || String(e),
+        sourceCount: 0,
+      };
+    }
+  });
+  ipcMain.on('phone-mirror-slot-bounds', (_e, rel) => {
+    if (!phoneMirror || !phoneMirror.isRunning()) return;
+    if (!rel || !(Number(rel.width) > 80)) return;
+    if (!playWin || playWin.isDestroyed()) return;
+    const cb = playWin.getContentBounds();
+    let slot = rel;
+    if (rel.iw && rel.ih && rel.left != null) {
+      const sx = cb.width / Math.max(1, rel.iw);
+      const sy = cb.height / Math.max(1, rel.ih);
+      slot = {
+        x: cb.x + rel.left * sx,
+        y: cb.y + rel.top * sy,
+        width: rel.width * sx,
+        height: rel.height * sy,
+      };
+    }
+    // Keep overlay above player after layout reports
+    if (phoneMirrorOverlayActive) {
+      try { playWin.setAlwaysOnTop(false); } catch (_) {}
+      ensureMenuBarCover('slot-bounds');
+    }
+    const dual = getGapContent() === 'both';
+    phoneMirror.repositionPhoneMirror(clampPortraitPhoneSlot(slot, dual ? { align: 'right' } : null), {
+      playWin,
+      playBounds: playerBoundsForMirror(),
+    });
   });
 
   // ── Retry failed pipeline job ──
@@ -3516,10 +5119,12 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   });
 
   // ── Lyric reprocessing ──
-  ipcMain.handle('reprocess-lyrics', (_e, { videoId, forceWhisper, lyricsText, whisperModel }) => {
-    console.log('[karol] IPC: reprocess-lyrics received for:', videoId, 'forceWhisper:', forceWhisper, 'model:', whisperModel, 'lyrics:', lyricsText ? lyricsText.length + ' chars' : 'none');
+  ipcMain.handle('reprocess-lyrics', (_e, { videoId, forceWhisper, lyricsText, whisperModel, mode, lyricsTrack, language, romanize }) => {
+    console.log('[karol] IPC: reprocess-lyrics received for:', videoId, 'mode:', mode || 'rebuild', 'forceWhisper:', forceWhisper, 'model:', whisperModel, 'lang:', language || '-', 'romanize:', romanize || '-', 'lyrics:', lyricsText ? lyricsText.length + ' chars' : 'none');
     const karaokeId = videoId.replace(/-karaoke$/, '');
     const ytUrl = 'https://www.youtube.com/watch?v=' + karaokeId;
+    const isRetime = mode === 'retime';
+    const isStems = mode === 'stems';
 
     // Already queued or processing (done/error are fine to replace)
     const checkId = karaokeId;
@@ -3533,29 +5138,87 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     // Clear stale done/error entry so UI shows a fresh Re-Lyric job
     if (existing) delete processingJobs[checkId];
 
-    console.log('[karol] Reprocessing lyrics for:', karaokeId, whisperModel ? '(model: ' + whisperModel + ')' : '', lyricsText ? '(custom lyrics: ' + lyricsText.length + ' chars)' : '');
-    processingJobs[checkId] = { status: 'queued', progress: 0, label: 'Re-Lyric: ' + karaokeId + (whisperModel ? ' [' + whisperModel + ']' : '') + (lyricsText ? ' [+lyrics]' : ''), karaokify: true, isReLyric: true, queuePosition: karaokeQueue.length + 1 };
+    const effectiveModel = isStems ? null : (whisperModel || 'large-v3');
+    console.log('[karol] Reprocessing lyrics for:', karaokeId, isStems ? '(stems-only)' : (isRetime ? '(retime-keep-text)' : ''), effectiveModel ? '(model: ' + effectiveModel + ')' : '', lyricsText ? '(custom lyrics: ' + lyricsText.length + ' chars)' : '');
+    const jobLabel = isStems
+      ? ('Rebuild stems: ' + karaokeId)
+      : (isRetime
+        ? ('Re-time: ' + karaokeId + ' [' + effectiveModel + ']')
+        : ('Re-Lyric: ' + karaokeId + ' [' + effectiveModel + ']' + (lyricsText ? ' [+lyrics]' : '') + (romanize ? ' [romanize:' + romanize + ']' : '')));
+    processingJobs[checkId] = { status: 'queued', progress: 0, label: jobLabel, karaokify: true, isReLyric: true, mode: mode || 'rebuild', queuePosition: karaokeQueue.length + 1 };
     broadcastJobProgress();
 
-    // Queue reprocess as a special job (downloads.js handles --reprocess flag)
     karaokeQueue.push({
       videoId: karaokeId,
       url: ytUrl,
       requester: '',
       isReLyric: true,
       forceWhisper: !!forceWhisper,
-      lyricsText: lyricsText || null,
-      whisperModel: whisperModel || null,
+      lyricsText: (isRetime || isStems) ? null : (lyricsText || null),
+      whisperModel: effectiveModel,
+      lyricsTrack: lyricsTrack || 'sung',
+      mode: mode || 'rebuild',
+      retimeKeepText: isRetime,
+      rebuildStemsOnly: isStems,
+      language: language || null,
+      romanize: romanize || null,
     });
     const queuePos = karaokeQueue.length;
     const startedImmediately = !karaokeRunning;
     processNextKaraokeJob();
+    const startedMsg = isStems ? 'Stem rebuild started (keeping lyrics)'
+      : (isRetime ? 'Re-time started (keeping lyric text)' : 'Re-lyric started');
+    const queuedMsg = isStems ? 'Stem rebuild' : (isRetime ? 'Re-time' : 'Reprocessing');
     return {
       ok: true,
       message: startedImmediately
-        ? 'Re-lyric started'
-        : ('Reprocessing queued (position: ' + queuePos + ')'),
+        ? startedMsg
+        : (queuedMsg + ' queued (position: ' + queuePos + ')'),
     };
+  });
+
+  ipcMain.handle('lyrics-translate-preview', async (_e, { videoId }) => {
+    try {
+      const translateLyrics = require('./translate-lyrics');
+      return await translateLyrics.previewEnglishTranslation(videoId);
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('lyrics-add-english', async (_e, { videoId, lyricsText, replaceEnglish, sourceLang }) => {
+    try {
+      const translateLyrics = require('./translate-lyrics');
+      const result = await translateLyrics.addEnglishTrack(videoId, {
+        lyricsText: lyricsText || null,
+        replaceEnglish: !!replaceEnglish,
+        sourceLang: sourceLang || null,
+      });
+      if (result && result.ok) {
+        // Nudge player if this track is current
+        try {
+          notifyPlayer({ type: 'lyrics-reload' });
+        } catch (_) {}
+      }
+      return result;
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('lyrics-romanize', async (_e, { videoId, lang }) => {
+    try {
+      if (!downloads || typeof downloads.romanizeOnly !== 'function') {
+        return { ok: false, error: 'Romanize unavailable' };
+      }
+      const result = await downloads.romanizeOnly(videoId, lang || 'th');
+      if (result && result.ok) {
+        try { notifyPlayer({ type: 'lyrics-reload', videoId }); } catch (_) {}
+      }
+      return result;
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
   });
 
   // ── Lyric offset persistence ──
@@ -3606,10 +5269,8 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('get-lyric-offset', (_e, { videoId }) => {
     try {
-      if (fs.existsSync(TAGS_JSON)) {
-        const tags = JSON.parse(fs.readFileSync(TAGS_JSON, 'utf8'));
-        const entry = tags[videoId] || tags[videoId + '-karaoke'] || {};
-        return { ok: true, offset: entry.lyricOffset || 0 };
+      if (library && typeof library.getLyricOffset === 'function') {
+        return library.getLyricOffset(videoId);
       }
     } catch (e) { console.error('[karol] get-lyric-offset error:', e.message); }
     return { ok: true, offset: 0 };
@@ -3617,43 +5278,27 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
 
   ipcMain.handle('save-lyric-offset', (_e, { videoId, offset }) => {
     try {
-      // Update tags.json
-      let tags = {};
-      if (fs.existsSync(TAGS_JSON)) {
-        tags = JSON.parse(fs.readFileSync(TAGS_JSON, 'utf8'));
+      if (!library || typeof library.setLyricOffset !== 'function') {
+        return { ok: false, error: 'library unavailable' };
       }
-      const key = tags[videoId] ? videoId : (videoId + '-karaoke');
-      if (!tags[key]) tags[key] = {};
-      tags[key].lyricOffset = offset;
-      fs.writeFileSync(TAGS_JSON, JSON.stringify(tags, null, 2));
+      // Persist offset only — do not bake into LRC (player applies offset at runtime;
+      // mutating timestamps + keeping lyricOffset would double-shift on reload).
+      const result = library.setLyricOffset(videoId, offset);
+      if (!result || !result.ok) return result || { ok: false, error: 'save failed' };
 
-      // Shift the LRC JSON timestamps if offset is non-zero
-      if (Math.abs(offset) > 0.1) {
-        const lrcPath = '/Volumes/maxone/Deskreen/karaoke/' + videoId.replace(/-karaoke$/, '') + '-karaoke.lrc.json';
-        if (fs.existsSync(lrcPath)) {
-          const lrc = JSON.parse(fs.readFileSync(lrcPath, 'utf8'));
-          if (lrc.lines && Array.isArray(lrc.lines)) {
-            for (const line of lrc.lines) {
-              line.startTime = Math.max(0, (line.startTime || 0) + offset);
-              line.endTime = Math.max(0.1, (line.endTime || 0) + offset);
-              if (line.words) {
-                for (const w of line.words) {
-                  w.startTime = Math.max(0, (w.startTime || 0) + offset);
-                  w.endTime = Math.max(0.01, (w.endTime || 0) + offset);
-                }
-              }
-            }
-            fs.writeFileSync(lrcPath, JSON.stringify(lrc, null, 2));
-            console.log('[karol] Saved lyric offset', offset, 'for', videoId, '— LRC timestamps shifted');
-          }
-        }
-      }
+      const savedOffset = result.offset || 0;
+      const savedId = result.videoId || videoId;
+      console.log('[karol] Saved lyric offset', savedOffset, 'for', savedId);
 
-      // Notify player to reload lyrics with new offset
+      // Notify player to apply the durable offset immediately
       if (playWin && !playWin.isDestroyed()) {
-        playWin.webContents.send('player-event', { type: 'lyric-offset-updated', videoId, offset });
+        playWin.webContents.send('player-event', {
+          type: 'lyric-offset-updated',
+          videoId: savedId,
+          offset: savedOffset,
+        });
       }
-      return { ok: true };
+      return result;
     } catch (e) {
       console.error('[karol] save-lyric-offset error:', e.message);
       return { ok: false, error: e.message };
@@ -3675,7 +5320,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
         '--diagnose-only',
         videoId,
       ], {
-        env: { ...process.env, PATH: process.env.PATH },
+        env: { ...process.env, PATH: '/opt/homebrew/bin:' + (process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'), PYTHONUNBUFFERED: '1' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -3745,11 +5390,12 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
         ? ['--cookies', cookiesPath]
         : ['--cookies-from-browser', 'chrome'];
       const proc = childCp.spawn('/opt/homebrew/bin/yt-dlp', [
+        '--ffmpeg-location', '/opt/homebrew/bin',
         '--flat-playlist', '--dump-json', '--no-playlist',
         ...authArgs,
         searchQuery,
       ], {
-        env: { ...process.env, PATH: process.env.PATH },
+        env: { ...process.env, PATH: '/opt/homebrew/bin:' + (process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin') },
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 30000,
       });
@@ -3854,6 +5500,15 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ctrlWin.on('closed', () => { ctrlWin = null; });
   ctrlWin.loadFile(CTRL_HTML);
 
+  // Dedicated HDMI karaoke display — open player after ready settles
+  // (sync create here can stall whenReady / IPC on macOS multi-display).
+  if (getExternalDisplay()) {
+    setTimeout(() => {
+      try { createPlayer(); }
+      catch (e) { console.error('[karol] startup createPlayer failed:', e && e.message); }
+    }, 400);
+  }
+
   console.log('[karol] Ready.');
 });
 
@@ -3866,6 +5521,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  restoreKaraokeMenuBarHide();
+  destroyMenuBarCover();
+  try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
   if (driveWatchTimer) { clearInterval(driveWatchTimer); driveWatchTimer = null; }
   stopUsbKeepAwake();
   if (karaokePowerBlockerId !== null && powerSaveBlocker.isStarted(karaokePowerBlockerId)) {

@@ -6,20 +6,48 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://i.ytimg.com https://*.ytimg.com https://*.youtube.com; media-src 'self' file: blob:; connect-src 'self' file:; img-src 'self' file: data: https:; font-src 'self' data:;">
 <title>Karol DJ Controller</title>
 <style>
-:root{--bg:#0a0a14;--surface:#12121f;--border:#1e1e38;--accent:#8b5cf6;--gold:#f0c040;--text:#e2e2ee;--textDim:#7a7a9a;--danger:#ef4444;--success:#10b981;--sidebar-w:340px}
+:root{--bg:#0a0a14;--surface:#12121f;--border:#1e1e38;--accent:#8b5cf6;--gold:#f0c040;--text:#e2e2ee;--textDim:#7a7a9a;--danger:#ef4444;--success:#10b981}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
 button{cursor:pointer;border:none;outline:none;font-family:inherit}
 input,select{font-family:inherit}
 
-/* Sidebar */
-#sidebar{width:var(--sidebar-w);min-width:260px;background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
-#sidebar-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
-#sidebar-header h1{font-size:18px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--gold));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+#app-shell{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#app-tabs{
+  display:flex;align-items:center;gap:8px;padding:10px 16px 0;
+  background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;
+}
+#app-tabs .app-brand{
+  font-size:17px;font-weight:800;margin-right:8px;padding-bottom:10px;
+  background:linear-gradient(135deg,var(--accent),var(--gold));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+}
+#app-tabs .app-tab{
+  padding:10px 18px 12px;border-radius:8px 8px 0 0;background:transparent;
+  border:1px solid transparent;border-bottom:none;color:var(--textDim);
+  font-size:13px;font-weight:700;transition:all .15s;display:inline-flex;align-items:center;gap:8px;
+}
+#app-tabs .app-tab:hover{color:var(--text);background:rgba(139,92,246,0.08)}
+#app-tabs .app-tab.active{
+  color:var(--text);background:var(--bg);border-color:var(--border);
+  box-shadow:inset 0 2px 0 var(--accent);
+}
+.app-tab-badge{
+  display:inline-block;min-width:18px;padding:1px 6px;border-radius:10px;
+  font-size:10px;font-weight:800;background:rgba(139,92,246,0.25);color:var(--accent);
+}
+#app-tabs .app-tab.active .app-tab-badge{background:rgba(139,92,246,0.35)}
+#app-panels{flex:1;display:flex;min-height:0;overflow:hidden;background:var(--bg)}
+.app-panel{display:none;flex:1;flex-direction:column;min-width:0;overflow:hidden;width:100%}
+.app-panel.active{display:flex}
+
+/* Library tab */
+#sidebar{background:var(--surface)}
+#sidebar-header{display:none}
 #search-box{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;margin:12px 20px 0}
 #search-box:focus{outline:none;border-color:var(--accent)}
 
-#library-list{flex:1;overflow-y:auto;padding:0 12px 8px}
+#library-list{flex:1;min-height:0;overflow-y:auto;padding:0 12px 8px}
 .lib-cols{
   display:flex;align-items:center;gap:10px;padding:6px 10px 4px;
   position:sticky;top:0;z-index:2;background:var(--surface);
@@ -33,6 +61,7 @@ input,select{font-family:inherit}
 .lib-cols .lib-col-spacer{width:22px;flex:0 0 auto} /* tag chip */
 .lib-cols .lib-col-title{flex:1;text-align:left;min-width:0}
 .lib-cols .lib-col-artist{max-width:140px;width:140px;text-align:left}
+.lib-cols .lib-col-rating{width:78px;flex:0 0 auto;justify-content:center}
 .lib-cols .lib-col-year{min-width:44px;justify-content:flex-end}
 .lib-cols .lib-col-actions{width:118px;flex:0 0 auto}
 .lib-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;transition:background 0.15s;font-size:12px;border-bottom:1px solid rgba(30,30,56,0.3)}
@@ -40,7 +69,17 @@ input,select{font-family:inherit}
 .lib-item:active{background:rgba(139,92,246,0.15)}
 .lib-item .lib-title{flex:1;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .lib-item .lib-artist{color:var(--textDim);font-size:11px;max-width:140px;width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib-item .lib-rating{width:78px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:1px;user-select:none}
+.lib-item .lib-rating .star{background:none;border:none;padding:0 1px;font-size:13px;line-height:1;color:rgba(122,122,154,0.45);cursor:pointer}
+.lib-item .lib-rating .star.on{color:var(--gold)}
+.lib-item .lib-rating .star:hover,
+.lib-item .lib-rating:hover .star.preview{color:var(--gold)}
+.lib-item .lib-rating.empty .star{opacity:0.55}
+.lib-item .lib-rating-ro{pointer-events:none;opacity:0.85}
 .lib-item .lib-year{color:var(--textDim);font-size:11px;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.q-rating{display:inline-flex;gap:1px;margin-left:6px;vertical-align:middle}
+.q-rating .qs{font-size:11px;color:rgba(122,122,154,0.4)}
+.q-rating .qs.on{color:var(--gold)}
 .lib-item .lib-tag{font-size:9px;padding:1px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:1px;flex:0 0 auto}
 .lib-tag.karaoke{background:rgba(139,92,246,0.2);color:var(--accent)}
 .lib-tag.music{background:rgba(240,192,64,0.15);color:var(--gold)}
@@ -94,13 +133,31 @@ input,select{font-family:inherit}
 .np-status.playing{background:rgba(16,185,129,0.2);color:var(--success)}
 .np-status.paused{background:rgba(240,192,64,0.2);color:var(--gold)}
 .np-status.idle{background:rgba(122,122,154,0.15);color:var(--textDim)}
-#interstitial-settings{display:flex;flex-direction:column;gap:4px;min-width:140px;padding:0 4px}
+#interstitial-settings{display:flex;flex-direction:column;gap:4px;min-width:260px;max-width:300px;padding:0 4px;flex-shrink:0}
+#interstitial-settings label{font-size:10px;color:var(--textDim);text-transform:uppercase;letter-spacing:0.5px}
+#interstitial-settings .gap-content-row{display:flex;align-items:stretch;gap:4px;margin-top:2px;width:100%}
+#interstitial-settings .gap-content-btn{
+  flex:1 1 0;min-width:0;font-size:11px;font-weight:700;padding:5px 4px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:rgba(30,30,56,0.5);color:var(--textDim);
+  white-space:nowrap;text-align:center;
+}
+#interstitial-settings .gap-content-btn.active{background:rgba(139,92,246,0.35);border-color:rgba(139,92,246,0.7);color:#fff}
+#interstitial-settings .gap-content-btn:disabled{opacity:0.4;cursor:not-allowed;pointer-events:none}
+#interstitial-settings .gap-mix-row input[type=range]:disabled{opacity:0.35;cursor:not-allowed}
+#interstitial-settings .gap-mix-row{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+#interstitial-settings .gap-mix-row label{font-size:9px;letter-spacing:0.4px;display:flex;justify-content:space-between;gap:6px}
+#interstitial-settings .gap-mix-row input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer;height:14px}
+#interstitial-settings .gap-mirror-status{font-size:9px;color:var(--textDim);max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:12px}
 #interstitial-settings label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap}
 #interstitial-settings label span{color:var(--gold)}
 #bs-ms-slider{width:140px;accent-color:var(--accent);cursor:pointer}
 #volume-settings{display:flex;flex-direction:column;gap:4px;min-width:130px;padding:0 4px}
 #volume-settings label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap}
 #volume-settings label span{color:var(--accent)}
+#vocal-mix-settings{display:flex;flex-direction:column;gap:4px;min-width:110px;padding:0 4px}
+#vocal-mix-settings label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap}
+#vocal-mix-settings label span{color:var(--accent)}
+#vocal-mix-settings input:disabled{opacity:0.35;cursor:not-allowed}
 #vol-slider{width:130px;accent-color:var(--accent);cursor:pointer}
 
 /* Transport buttons */
@@ -121,7 +178,19 @@ input,select{font-family:inherit}
 }
 @keyframes holdPulse{0%,100%{box-shadow:0 0 10px rgba(240,192,64,0.35)}50%{box-shadow:0 0 18px rgba(240,192,64,0.7)}}
 .np-status.gap{background:rgba(139,92,246,0.22);color:#c4b5fd}
-.np-status.holding{background:rgba(240,192,64,0.25);color:var(--gold)}
+.np-status.holding{background:rgba(249,115,22,0.28);color:#fdba74;border:1px solid rgba(249,115,22,0.45)}
+.transport-hint{font-size:9px;color:var(--textDim);letter-spacing:0.3px;line-height:1.25;max-width:110px;text-align:center}
+#show-mode-pill{font-size:10px;font-weight:800;letter-spacing:1px;padding:4px 8px;border-radius:4px;text-transform:uppercase;flex-shrink:0}
+#show-mode-pill.kj{background:rgba(139,92,246,0.25);color:#c4b5fd}
+#show-mode-pill.dj{background:rgba(240,192,64,0.22);color:var(--gold)}
+#show-mode-pill.idle{background:rgba(122,122,154,0.15);color:var(--textDim)}
+#filter-legend{display:flex;flex-wrap:wrap;gap:8px 14px;padding:0 16px 8px;font-size:10px;color:var(--textDim);align-items:center}
+#filter-legend .leg{display:inline-flex;align-items:center;gap:5px}
+#filter-legend .leg .chip{font-size:9px;padding:1px 5px;border-radius:3px;font-weight:700;letter-spacing:0.5px}
+#filter-legend .chip.k{background:rgba(139,92,246,0.2);color:var(--accent)}
+#filter-legend .chip.c{background:rgba(236,72,153,0.18);color:#ec4899}
+#filter-legend .chip.m{background:rgba(240,192,64,0.15);color:var(--gold)}
+#queue-mode-hint{font-size:11px;font-weight:500;color:var(--textDim);margin-left:6px}
 
 /* ── DJ FX bar ── */
 #fx-bar{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
@@ -132,14 +201,8 @@ input,select{font-family:inherit}
 .fx-btn.sendit{background:linear-gradient(135deg,#ff006e,#8b5cf6);color:#fff;border:none;font-size:14px;letter-spacing:1px;padding:8px 20px;box-shadow:0 0 14px rgba(255,0,110,0.45)}
 .fx-btn.sendit:hover{box-shadow:0 0 22px rgba(255,0,110,0.7);filter:brightness(1.1)}
 
-/* Main area */
-#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-
-/* Draggable divider between sidebar and main */
-#drag-handle{width:5px;min-width:5px;background:var(--border);cursor:col-resize;transition:background 0.15s;flex-shrink:0;position:relative}
-#drag-handle:hover,#drag-handle.dragging{background:var(--accent)}
-#drag-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:3px;height:24px;border-radius:2px;background:rgba(255,255,255,0.15)}
-body.dragging{cursor:col-resize;user-select:none}
+/* Main area (Show tab) */
+#main{background:var(--bg)}
 #queue-header{padding:14px 20px;border-bottom:1px solid var(--border);font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:space-between}
 #queue-header button{font-size:11px;padding:4px 10px;border-radius:4px;background:rgba(239,68,68,0.15);color:var(--danger);font-weight:600}
 #queue-header .shuffle-btn{background:rgba(139,92,246,0.15);color:var(--accent)}
@@ -174,7 +237,7 @@ body.dragging{cursor:col-resize;user-select:none}
 .q-action-btn.rep-btn:hover{background:rgba(239,68,68,0.35);color:#fff}
 
 /* Request form */
-#request-form{padding:16px 20px;border-top:1px solid var(--border);display:flex;gap:8px}
+#request-form{padding:16px 20px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0}
 #request-form input{flex:1;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px}
 #request-form input:focus{outline:none;border-color:var(--accent)}
 #request-form button{padding:8px 16px;background:var(--accent);color:#fff;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
@@ -206,6 +269,7 @@ body.dragging{cursor:col-resize;user-select:none}
   color:var(--gold);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;transition:all .15s;
 }
 .queue-mv-btn:hover{background:rgba(240,192,64,0.28);color:#fff;border-color:var(--gold)}
+.queue-mv-btn.active{background:rgba(240,192,64,0.35);color:#111;border-color:var(--gold)}
 .queue-mv-btn:disabled{opacity:0.45;cursor:wait}
 #queue-header .queue-mv-btn{margin-right:8px}
 #reclass-menu .rc-hint{display:block;font-size:10px;color:var(--textDim);font-weight:500;margin-top:2px;line-height:1.3}
@@ -234,10 +298,24 @@ body.dragging{cursor:col-resize;user-select:none}
 #loading-state .spinner{width:24px;height:24px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;margin-right:10px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* Processing panel */
-#processing-panel{display:none;padding:12px 16px;border-top:1px solid var(--border);background:rgba(10,10,20,0.6)}
-#processing-panel.visible{display:block}
-#processing-panel-header{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);margin-bottom:8px;font-weight:700}
+/* Processing panel — fixed height, scroll when many custom jobs */
+#processing-panel{
+  display:none;flex-shrink:0;flex-direction:column;
+  padding:12px 16px 10px;border-top:1px solid var(--border);
+  background:rgba(10,10,20,0.6);max-height:200px;min-height:0;
+}
+#processing-panel.visible{display:flex}
+#processing-panel-header{
+  font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);
+  margin-bottom:6px;font-weight:700;flex-shrink:0;
+}
+#processing-jobs{
+  flex:1;min-height:0;max-height:140px;overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:contain;padding-right:4px;
+}
+#processing-jobs::-webkit-scrollbar{width:6px}
+#processing-jobs::-webkit-scrollbar-thumb{background:rgba(139,92,246,0.35);border-radius:3px}
+#processing-actions{flex-shrink:0}
 .processing-job{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:11px;border-bottom:1px solid rgba(30,30,56,0.3)}
 .processing-job:last-child{border-bottom:none}
 .processing-job .pj-status{width:18px;height:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -258,7 +336,7 @@ body.dragging{cursor:col-resize;user-select:none}
 .processing-job .pj-retry-btn:hover{background:rgba(239,68,68,0.3)}
 
 /* Health bar */
-#health-bar{padding:10px 20px;border-bottom:1px solid var(--border);background:rgba(10,10,20,0.4);display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:10px}
+#health-bar{padding:10px 20px;border-top:1px solid var(--border);background:rgba(10,10,20,0.4);display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:10px;flex-shrink:0}
 #health-bar .health-item{display:flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;background:rgba(30,30,56,0.4)}
 #health-bar .health-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 #health-bar .health-dot.ok{background:var(--success)}
@@ -339,11 +417,15 @@ body.dragging{cursor:col-resize;user-select:none}
 </head>
 <body>
 
-<!-- Sidebar: Library -->
-<div id="sidebar">
-  <div id="sidebar-header">
-    <h1>Karol DJ</h1>
-  </div>
+<div id="app-shell">
+  <nav id="app-tabs" aria-label="Controller sections">
+    <span class="app-brand">Karol DJ</span>
+    <button type="button" class="app-tab active" data-tab="library" onclick="setAppTab('library')">Library</button>
+    <button type="button" class="app-tab" data-tab="show" onclick="setAppTab('show')">Show <span class="app-tab-badge" id="tab-queue-count">0</span></button>
+  </nav>
+  <div id="app-panels">
+<!-- Library tab -->
+<div id="sidebar" class="app-panel active" data-panel="library">
   <input id="search-box" type="text" placeholder="Search library... (4094 videos)" autofocus>
   <div id="singer-bar">
     <input id="singer-input" type="text" placeholder="Singer name (default: Naynay)" autocomplete="off" title="Leave blank to credit Naynay as the DJ">
@@ -352,9 +434,13 @@ body.dragging{cursor:col-resize;user-select:none}
     <button class="filter-tab active" data-filter="all" onclick="setLibraryFilter('all')" title="All library videos">All <span class="tab-count" id="count-all">0</span></button>
     <button class="filter-tab" data-filter="karaoke" onclick="setLibraryFilter('karaoke')" title="Standard karaoke tracks">Karaoke <span class="tab-count" id="count-karaoke">0</span></button>
     <button class="filter-tab" data-filter="custom" onclick="setLibraryFilter('custom')" title="Custom karaoke-maker tracks (your pipeline)">Custom <span class="tab-count" id="count-custom">0</span></button>
-    <button class="filter-tab" data-filter="musicvideo" onclick="setLibraryFilter('musicvideo')" title="Music videos for interstitial B-roll + jukebox">Music Videos <span class="tab-count" id="count-music">0</span></button>
-    <button class="queue-mv-btn" id="btn-queue-all-mv" onclick="queueAllMusicVideos()" title="Add every Music Video to the queue (skips ones already queued)">+ Queue all MVs</button>
+    <button class="filter-tab" data-filter="musicvideo" onclick="setLibraryFilter('musicvideo')" title="Music videos for interstitial B-roll + Music jukebox">Music Videos <span class="tab-count" id="count-music">0</span></button>
     <button class="rescan-btn" onclick="rescanLibrary()" title="Rescan library">Rescan</button>
+  </div>
+  <div id="filter-legend" title="Library category chips">
+    <span class="leg"><span class="chip k">K</span> Karaoke</span>
+    <span class="leg"><span class="chip c">C</span> Custom (pipeline)</span>
+    <span class="leg"><span class="chip m">M</span> Music Video</span>
   </div>
   <div id="library-status" class="scanning">
     <div class="ls-title"><span class="ls-spinner"></span><span id="ls-title-text">Checking maxone library…</span></div>
@@ -367,6 +453,7 @@ body.dragging{cursor:col-resize;user-select:none}
       <span class="lib-col-spacer"></span>
       <button type="button" class="lib-col lib-col-title active" data-sort="title" onclick="setLibrarySort('title')" title="Sort by song name">Song <span class="arrow" id="sort-arrow-title">▲</span></button>
       <button type="button" class="lib-col lib-col-artist" data-sort="artist" onclick="setLibrarySort('artist')" title="Sort by artist">Artist <span class="arrow" id="sort-arrow-artist"></span></button>
+      <button type="button" class="lib-col lib-col-rating" data-sort="rating" onclick="setLibrarySort('rating')" title="Sort by karaoke quality rating">★ <span class="arrow" id="sort-arrow-rating"></span></button>
       <button type="button" class="lib-col lib-col-year" data-sort="year" onclick="setLibrarySort('year')" title="Sort by publish year">Year <span class="arrow" id="sort-arrow-year"></span></button>
       <span class="lib-col-actions"></span>
     </div>
@@ -390,6 +477,8 @@ body.dragging{cursor:col-resize;user-select:none}
   </div>
   <div id="health-bar">
     <div class="health-item"><div class="health-dot" id="health-drive"></div><span class="health-label" id="health-drive-text">Drive</span></div>
+    <div class="health-item"><div class="health-dot" id="health-umc"></div><span class="health-label" id="health-umc-text">UMC</span></div>
+    <div class="health-item"><div class="health-dot" id="health-usb"></div><span class="health-label" id="health-usb-text">USB</span></div>
     <div class="health-item"><div class="health-dot" id="health-ytdlp"></div><span class="health-label">yt-dlp</span></div>
     <div class="health-item"><div class="health-dot" id="health-ffmpeg"></div><span class="health-label">FFmpeg</span></div>
     <div class="health-item"><div class="health-dot" id="health-lib"></div><span class="health-label" id="health-lib-text">Lib</span></div>
@@ -397,9 +486,8 @@ body.dragging{cursor:col-resize;user-select:none}
     <button class="health-refresh" onclick="refreshHealth()">Refresh</button>
   </div>
 </div>
-<div id="drag-handle"></div>
-<!-- Main: Now Playing + Queue -->
-<div id="main">
+<!-- Show tab -->
+<div id="main" class="app-panel" data-panel="show">
   <div id="now-playing-bar">
     <div class="np-info">
       <div class="np-title" id="np-title">—</div>
@@ -410,18 +498,36 @@ body.dragging{cursor:col-resize;user-select:none}
       </div>
     </div>
     <span class="np-status idle" id="np-status">Idle</span>
-    <div id="interstitial-settings" title="Auto gap after each song before the next one starts. Use HOLD to freeze that screen while B-roll keeps playing.">
+    <span id="show-mode-pill" class="idle" title="KJ = karaoke singers · DJ = Music jukebox / Gap filler">Idle</span>
+    <div id="interstitial-settings" title="Auto gap after each song before the next one starts. Use HOLD (not Pause) to freeze that screen while Music Videos keep playing.">
       <label>Gap <span id="bs-ms-label">15s</span></label>
       <input type="range" id="bs-ms-slider" min="5" max="60" step="1" value="15">
+      <div class="gap-content-row" title="MVs = random music videos. Phone / Both = USB mirror (parked for now — rewire later).">
+        <button type="button" class="gap-content-btn active" id="gap-content-mvs" onclick="setGapContent('music-broll')">MVs</button>
+        <button type="button" class="gap-content-btn" id="gap-content-phone" onclick="setGapContent('phone-mirror')" disabled title="Phone USB mirror parked — coming back later">Phone</button>
+        <button type="button" class="gap-content-btn" id="gap-content-both" onclick="setGapContent('both')" disabled title="Phone USB mirror parked — coming back later">Both</button>
+      </div>
+      <div class="gap-mix-row" title="Gap Music Video level (on top of Out).">
+        <label>MV <span id="gap-broll-label">85%</span></label>
+        <input type="range" id="gap-broll-slider" min="0" max="100" step="1" value="85">
+        <label class="gap-phone-mix" style="opacity:0.45">Phone <span id="gap-phone-label">85%</span></label>
+        <input type="range" id="gap-phone-slider" class="gap-phone-mix" min="0" max="100" step="1" value="85" disabled title="Phone mix parked with USB mirror">
+      </div>
+      <div class="gap-mirror-status" id="gap-mirror-status"></div>
     </div>
     <div id="volume-settings" title="Karol output into BlackHole → Ableton. Keep under ~70% so Live doesn't redline.">
       <label>Out <span id="vol-label">55%</span></label>
       <input type="range" id="vol-slider" min="10" max="100" step="1" value="55">
     </div>
+    <div id="vocal-mix-settings" title="Guide vocals from Demucs stem. 0% = instrumental karaoke only. Rebuild stems via Re-Lyric if disabled.">
+      <label>Vocals <span id="vocal-mix-label">0%</span></label>
+      <input type="range" id="vocal-mix-slider" min="0" max="100" step="1" value="0" disabled>
+    </div>
     <button class="transport-btn neutral" id="btn-prev" onclick="api.transport.prev()">⏮</button>
-    <button class="transport-btn play" id="btn-play" onclick="togglePlay()">▶</button>
-    <button class="transport-btn hold" id="btn-hold-gap" onclick="toggleGapHold()" disabled title="Hold the between-songs screen — B-roll keeps playing">HOLD</button>
+    <button class="transport-btn play" id="btn-play" onclick="togglePlay()" title="Pause/play the current song only — does not hold the Gap">▶</button>
+    <button class="transport-btn hold" id="btn-hold-gap" onclick="toggleGapHold()" disabled title="Hold the between-songs Gap — B-roll keeps playing. Pause does not do this.">HOLD</button>
     <button class="transport-btn neutral" id="btn-next" onclick="api.transport.skip()">⏭</button>
+    <div class="transport-hint" title="Pause = song · HOLD = gap only">Pause = song<br>HOLD = gap</div>
   </div>
 
   <div id="fx-bar">
@@ -439,15 +545,15 @@ body.dragging{cursor:col-resize;user-select:none}
   </div>
 
   <div id="queue-header">
-    Queue (<span id="queue-count">0</span>)<span id="shuffle-badge" style="display:none;margin-left:8px;font-size:11px;font-weight:700;color:var(--accent)">· shuffle</span>
+    Singer queue (<span id="queue-count">0</span>)<span id="queue-mode-hint"></span><span id="shuffle-badge" style="display:none;margin-left:8px;font-size:11px;font-weight:700;color:var(--accent)">· shuffle</span>
     <div style="display:flex;align-items:center;gap:8px">
       <button class="shuffle-btn" id="btn-shuffle" onclick="toggleQueueShuffle()" title="Shuffle mode — next track is random (no repeats until the full cycle)">Shuffle</button>
-      <button class="queue-mv-btn" onclick="queueAllMusicVideos()" title="Add every Music Video to the queue (shuffled)">+ All Music Videos</button>
+      <button class="queue-mv-btn" id="btn-music-jukebox" onclick="toggleMusicJukebox()" title="Arm DJ deck from Music Videos — default when no singers are pending. Singers take over at the next Gap.">Start Music Jukebox</button>
       <button onclick="api.queue.clear().then(refreshQueue)">Clear All</button>
     </div>
   </div>
   <div id="queue-list">
-    <div style="color:var(--textDim);text-align:center;padding:40px">Queue is empty.<br>Add songs from the library or use the request form.</div>
+    <div style="color:var(--textDim);text-align:center;padding:40px">Singer queue is empty.<br>Add karaoke requests from the library, or start the Music jukebox for background MVs.</div>
   </div>
 
   <div id="status-bar">
@@ -460,11 +566,13 @@ body.dragging{cursor:col-resize;user-select:none}
     <div id="phone-connect" title="Scan with phone browser — opens public DJ controller">
       <img id="phone-qr" alt="Phone connect QR" width="72" height="72">
       <div class="pc-meta">
-        <span class="pc-label">S24 control</span>
+        <span class="pc-label">Remote DJ</span>
         <span class="pc-url" id="phone-url">Resolving…</span>
-        <span class="pc-hint">Scan in Karol Controller</span>
+        <span class="pc-hint">Scan in browser</span>
       </div>
     </div>
+  </div>
+</div>
   </div>
 </div>
 
@@ -483,6 +591,7 @@ let karaokeVideoIds = new Set(); // Ids tagged karaoke that are NOT karaoke-make
 let musicVideoIds = new Set();   // Base ids of regular (non-karaoke) music videos
 let musicVideoMeta = {};         // id -> {title, artist, year} from tags.json for remote-only rows
 let tagMetaById = {};            // id -> {tag, source} live from tags.json (wins over stale scan rows)
+let ratingById = {};             // videoId (base + -karaoke) → 1–5 star rating
 let libraryFilter = 'all';       // 'all' | 'karaoke' | 'custom' | 'musicvideo'
 let librarySort = { key: 'title', dir: 1 }; // 1 = A→Z / old→new, -1 = reverse
 let queue = [];
@@ -491,39 +600,22 @@ let nowPlaying = null;
 let progressInterval = null;
 let processingJobs = {}; // Track active karaoke pipeline jobs
 
-// ── Resizable sidebar divider ──
+// ── App tabs (Library | Show) ──
+var activeAppTab = localStorage.getItem('karol-controller-tab') || 'library';
 
-(function() {
-  var handle = document.getElementById('drag-handle');
-  var sidebar = document.getElementById('sidebar');
-  var root = document.documentElement;
-  var dragging = false;
-  var startX = 0;
-  var startW = 0;
-
-  handle.addEventListener('mousedown', function(e) {
-    e.preventDefault();
-    dragging = true;
-    startX = e.clientX;
-    startW = sidebar.getBoundingClientRect().width;
-    handle.classList.add('dragging');
-    document.body.classList.add('dragging');
+function setAppTab(tab) {
+  if (tab !== 'library' && tab !== 'show') return;
+  activeAppTab = tab;
+  localStorage.setItem('karol-controller-tab', tab);
+  document.querySelectorAll('#app-tabs .app-tab').forEach(function(btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
   });
-
-  document.addEventListener('mousemove', function(e) {
-    if (!dragging) return;
-    var delta = e.clientX - startX;
-    var newW = Math.max(260, Math.min(800, startW + delta));
-    root.style.setProperty('--sidebar-w', newW + 'px');
+  document.querySelectorAll('.app-panel').forEach(function(panel) {
+    panel.classList.toggle('active', panel.getAttribute('data-panel') === tab);
   });
+}
 
-  document.addEventListener('mouseup', function() {
-    if (!dragging) return;
-    dragging = false;
-    handle.classList.remove('dragging');
-    document.body.classList.remove('dragging');
-  });
-})();
+setAppTab(activeAppTab);
 
 const DEFAULT_DJ_NAME = 'Naynay';
 
@@ -555,16 +647,35 @@ async function refreshCustomVideoIds() {
     var mvNext = new Set();
     var mvMeta = {};
     var metaNext = {};
+    var ratingNext = {};
     for (var key in tags) {
+      if (!Object.prototype.hasOwnProperty.call(tags, key)) continue;
       var entry = tags[key];
-      metaNext[key] = { tag: entry.tag || '', source: entry.source || '' };
+      if (!entry || typeof entry !== 'object') continue;
+      metaNext[key] = { tag: entry.tag || '', source: entry.source || '', rating: null };
+      var r = Number(entry.rating);
+      if (Number.isFinite(r) && r > 0) {
+        var rClamped = Math.max(1, Math.min(5, Math.round(r)));
+        ratingNext[key] = rClamped;
+        var rBase = key.replace(/-karaoke$/, '');
+        ratingNext[rBase] = rClamped;
+        ratingNext[rBase + '-karaoke'] = rClamped;
+        metaNext[key].rating = rClamped;
+      }
       if (entry.source === 'karaoke-maker') {
-        // Library rows may use either the base id or the '-karaoke'
-        // variant id — index both so the Custom filter matches.
+        // Custom membership must NOT include the bare YouTube id when the
+        // provenance lives on `{id}-karaoke`. Indexing both made dual-presence
+        // tracks show a Custom "C" badge in Music Videos and appear twice under
+        // the Custom filter (music row + karaoke row).
         var base = key.replace(/-karaoke$/, '');
         customBases.add(base);
-        next.add(base);
-        next.add(base + '-karaoke');
+        if (/-karaoke$/.test(key)) {
+          next.add(key);
+        } else {
+          // Legacy: karaoke-maker stamped on the base key only.
+          next.add(base);
+          next.add(base + '-karaoke');
+        }
       } else if (entry.tag === 'karaoke') {
         // Karaoke tab: tag=karaoke, NOT a karaoke-maker product
         kNext.add(key);
@@ -585,9 +696,27 @@ async function refreshCustomVideoIds() {
     musicVideoIds = mvNext;
     musicVideoMeta = mvMeta;
     tagMetaById = metaNext;
+    ratingById = ratingNext;
+    // Also stamp ratings onto in-memory library rows so render doesn't depend
+    // solely on the sidecar map (survives partial tag-refresh failures).
+    for (var i = 0; i < allVideos.length; i++) {
+      var vid = allVideos[i].videoId;
+      var rr = ratingNext[vid] || ratingNext[String(vid || '').replace(/-karaoke$/, '')] || null;
+      allVideos[i].rating = rr || null;
+    }
     updateFilterTabCounts();
-    console.log('[controller] Karaoke:', karaokeVideoIds.size, '| Custom:', customUniqueCount, '| Music videos:', musicVideoIds.size);
-  } catch(_) { /* keep previous sets */ }
+    console.log('[controller] Karaoke:', karaokeVideoIds.size, '| Custom:', customUniqueCount, '| Music videos:', musicVideoIds.size, '| Rated:', Object.keys(ratingNext).filter(function(k){return k.indexOf('-karaoke')>=0;}).length);
+  } catch (e) {
+    console.error('[controller] refreshCustomVideoIds failed:', e && e.message ? e.message : e);
+  }
+}
+
+function effectiveRating(videoId, videoObj) {
+  if (videoObj && videoObj.rating) return Number(videoObj.rating) || 0;
+  var n = ratingById[videoId];
+  if (n) return n;
+  var base = String(videoId || '').replace(/-karaoke$/, '');
+  return ratingById[base] || ratingById[base + '-karaoke'] || 0;
 }
 
 function updateFilterTabCounts() {
@@ -639,9 +768,12 @@ function buildMusicVideoRows() {
     // Member if tagged music/song in tags.json, or a local non-karaoke row
     // (scan defaults untagged local files to 'music').
     var eTag = effectiveTag(v);
+    var eSrc = effectiveSource(v);
+    // Never list pipeline karaoke variants or karaoke-maker rows here.
+    if (/-karaoke$/.test(v.videoId) || eSrc === 'karaoke-maker') continue;
     var isMember = musicVideoIds.has(v.videoId) ||
       ((eTag === 'music' || eTag === 'song') && !/-karaoke$/.test(v.videoId));
-    if (isMember && effectiveSource(v) !== 'karaoke-maker' && !localIds.has(v.videoId)) {
+    if (isMember && !localIds.has(v.videoId)) {
       localIds.add(v.videoId);
       rows.push(v);
     }
@@ -980,6 +1112,9 @@ function sortLibraryVideos(videos) {
     var cmp = 0;
     if (key === 'year') {
       cmp = libSortYearValue(a) - libSortYearValue(b);
+    } else if (key === 'rating') {
+      cmp = effectiveRating(a.videoId, a) - effectiveRating(b.videoId, b);
+      if (!cmp) cmp = (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
     } else if (key === 'artist') {
       cmp = (a.artist || '').localeCompare(b.artist || '', undefined, { sensitivity: 'base' });
       if (!cmp) cmp = (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
@@ -994,14 +1129,84 @@ function sortLibraryVideos(videos) {
   return copy;
 }
 
+function ratingStarsHtml(videoId, rating, editable) {
+  var r = rating || 0;
+  var cls = 'lib-rating' + (r ? '' : ' empty') + (editable ? '' : ' lib-rating-ro');
+  var title = editable
+    ? (r ? ('Rated ' + r + '/5 — click a star to change, click again to clear') : 'Rate this custom karaoke track')
+    : (r ? ('Rated ' + r + '/5') : 'Not rated');
+  var html = '<span class="' + cls + '" title="' + escapeHtml(title) + '" data-vid="' + escapeHtml(videoId) + '">';
+  for (var s = 1; s <= 5; s++) {
+    if (editable) {
+      html += '<button type="button" class="star' + (s <= r ? ' on' : '') + '" data-n="' + s + '"' +
+        ' onclick="event.stopPropagation();setTrackRating(\'' + escapeJs(videoId) + '\',' + s + ')"' +
+        ' onmouseenter="previewStars(this,' + s + ')" onmouseleave="clearStarPreview(this)"' +
+        ' aria-label="' + s + ' star' + (s > 1 ? 's' : '') + '">★</button>';
+    } else {
+      html += '<span class="star' + (s <= r ? ' on' : '') + '">★</span>';
+    }
+  }
+  html += '</span>';
+  return html;
+}
+
+function previewStars(btn, n) {
+  var wrap = btn.parentNode;
+  if (!wrap) return;
+  var stars = wrap.querySelectorAll('.star');
+  for (var i = 0; i < stars.length; i++) {
+    stars[i].classList.toggle('preview', (i + 1) <= n);
+  }
+}
+function clearStarPreview(btn) {
+  var wrap = btn.parentNode;
+  if (!wrap) return;
+  var stars = wrap.querySelectorAll('.star');
+  for (var i = 0; i < stars.length; i++) stars[i].classList.remove('preview');
+}
+
+async function setTrackRating(videoId, stars) {
+  var current = effectiveRating(videoId);
+  // Clicking the current rating again clears it
+  var next = (current === stars) ? 0 : stars;
+  try {
+    var r = await api.library.setRating(videoId, next);
+    if (!r || !r.ok) {
+      console.error('[controller] setRating failed', r);
+      return;
+    }
+    var base = String(videoId || '').replace(/-karaoke$/, '');
+    if (next > 0) {
+      ratingById[base] = next;
+      ratingById[base + '-karaoke'] = next;
+      ratingById[videoId] = next;
+    } else {
+      delete ratingById[base];
+      delete ratingById[base + '-karaoke'];
+      delete ratingById[videoId];
+    }
+    applyFilterAndRender();
+  } catch (e) {
+    console.error('[controller] setRating error', e);
+  }
+}
+
 function renderLibrary(videos) {
   var list = document.getElementById('library-list');
   var cols = document.getElementById('lib-cols');
   var html = '';
   for (var i = 0; i < Math.min(videos.length, 200); i++) {
     var v = videos[i];
-    var tagClass = effectiveTag(v) || 'music';
-    var tagLabel = tagClass === 'karaoke' ? 'K' : tagClass === 'song' ? 'S' : 'M';
+    // Custom badge only for karaoke-maker rows / -karaoke variants — never for
+    // the Music Video twin of a dual-presence custom track.
+    var eff = effectiveTag(v) || 'music';
+    var esrc = effectiveSource(v);
+    var isCustomRow = esrc === 'karaoke-maker'
+      || (/-karaoke$/.test(v.videoId) && customVideoIds.has(v.videoId))
+      || (customVideoIds.has(v.videoId) && eff !== 'music' && eff !== 'song');
+    var tagClass = isCustomRow ? 'custom-tag' : (eff === 'karaoke' ? 'karaoke' : (eff === 'song' ? 'song' : 'music'));
+    var tagLabel = isCustomRow ? 'C' : (eff === 'karaoke' ? 'K' : (eff === 'song' ? 'S' : 'M'));
+    var tagTitle = isCustomRow ? 'Custom (karaoke-maker pipeline)' : (eff === 'karaoke' ? 'Karaoke' : (eff === 'song' ? 'Song' : 'Music Video'));
 
     // Check if this video is currently processing
     var isProcessing = processingJobs[v.videoId] && processingJobs[v.videoId].status !== 'done' && processingJobs[v.videoId].status !== 'error';
@@ -1015,7 +1220,7 @@ function renderLibrary(videos) {
     } else {
       // Empty title → main process resolves the real one on queue; never send the raw id
       actionsHtml = '<div class="lib-actions">' +
-        '<button class="lib-btn queue" title="Add to queue" onclick="queueVideo(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">+ Queue</button>' +
+        '<button class="lib-btn queue" title="Add to Singer queue" onclick="queueVideo(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">+ Queue</button>' +
         '<button class="lib-btn playnow" title="Play now" onclick="playNow(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">Play</button>' +
         '<button class="lib-btn reclass" title="Recategorize: Karaoke / Custom / Music Video" onclick="event.stopPropagation();openReclassMenu(event,\'' + v.videoId + '\')">&#8942;</button>' +
       '</div>';
@@ -1025,12 +1230,13 @@ function renderLibrary(videos) {
       (v.unavailable ? ((v.artist ? v.artist + ' ' : '') + '(unavailable)')
         : (v.remote ? safeDisplayTitle('', v.videoId) : v.videoId));
     var yearLabel = v.year || (String(v.upload_date || '').slice(0, 4)) || '';
+    var rating = effectiveRating(v.videoId, v);
     html += '<div class="' + itemClass + '">' +
-      '<span class="lib-tag ' + tagClass + '">' + tagLabel + '</span>' +
-      (customVideoIds.has(v.videoId) ? '<span class="lib-tag custom-tag">C</span>' : '') +
+      '<span class="lib-tag ' + tagClass + '" title="' + escapeHtml(tagTitle) + '">' + tagLabel + '</span>' +
       (v.remote ? '<span class="lib-tag yt-tag" title="Not on local drive — plays from YouTube">YT</span>' : '') +
       '<span class="lib-title" title="' + escapeHtml(v.title||'') + '">' + escapeHtml(shownTitle) + '</span>' +
       '<span class="lib-artist">' + escapeHtml(v.artist||'') + '</span>' +
+      ratingStarsHtml(v.videoId, rating, isCustomRow && !isProcessing) +
       '<span class="lib-year" title="' + escapeHtml(v.upload_date || yearLabel) + '">' + escapeHtml(yearLabel) + '</span>' +
       actionsHtml +
     '</div>';
@@ -1055,7 +1261,22 @@ function applyFilterAndRender() {
   if (libraryFilter === 'karaoke') {
     videos = videos.filter(function(v) { return isKaraokeTabMember(v); });
   } else if (libraryFilter === 'custom') {
-    videos = videos.filter(function(v) { return customVideoIds.has(v.videoId); });
+    // One row per logical custom track. Never list Music Video rows here —
+    // dual-presence tracks keep the MV under Music Videos and the pipeline
+    // output under Custom.
+    var customIdSet = {};
+    for (var ci = 0; ci < allVideos.length; ci++) {
+      customIdSet[allVideos[ci].videoId] = true;
+    }
+    videos = videos.filter(function(v) {
+      var et = effectiveTag(v);
+      var es = effectiveSource(v);
+      var isMember = customVideoIds.has(v.videoId) || es === 'karaoke-maker';
+      if (!isMember) return false;
+      if ((et === 'music' || et === 'song') && !/-karaoke$/.test(v.videoId)) return false;
+      if (!/-karaoke$/.test(v.videoId) && customIdSet[String(v.videoId) + '-karaoke']) return false;
+      return true;
+    });
   } else if (libraryFilter === 'musicvideo') {
     videos = buildMusicVideoRows();
   }
@@ -1122,6 +1343,10 @@ async function resolveVisibleMusicVideoTitles(rows) {
 
 function setLibraryFilter(filter) {
   libraryFilter = filter;
+  // Custom review workflow: show highest-rated first
+  if (filter === 'custom' && librarySort.key !== 'rating') {
+    librarySort = { key: 'rating', dir: -1 };
+  }
   // Update tab active states
   var tabs = document.querySelectorAll('#filter-bar .filter-tab');
   for (var i = 0; i < tabs.length; i++) {
@@ -1130,23 +1355,36 @@ function setLibraryFilter(filter) {
   applyFilterAndRender();
 }
 
-async function queueAllMusicVideos() {
+async function toggleMusicJukebox() {
+  if (jukeboxState && jukeboxState.active) {
+    try {
+      if (api.queue && api.queue.stopJukebox) await api.queue.stopJukebox();
+      else if (api.stopJukebox) await api.stopJukebox();
+      jukeboxState = null;
+      await refreshQueue();
+      updateShuffleBtnUI();
+      updateJukeboxBtnUI();
+      var st = document.getElementById('request-status');
+      if (st) st.textContent = 'Music jukebox stopped';
+    } catch (e) {
+      console.error('stopMusicJukebox:', e);
+      alert('Failed to stop Music jukebox: ' + (e && e.message ? e.message : e));
+    }
+    return;
+  }
   var rows = buildMusicVideoRows();
   if (!rows.length) {
     alert('No music videos found. Open Music Videos or Rescan first.');
     return;
   }
-  var msg = 'Add ' + rows.length + ' music videos to the queue on shuffle?\n\n'
-    + 'Missing/unplayable files are skipped. The list stays windowed so it won’t freeze the UI.';
+  var msg = 'Start Music jukebox with ' + rows.length + ' music videos?\n\n'
+    + 'This is background filler — separate from the Singer queue.\n'
+    + 'Missing/unplayable files are skipped.';
   if (!confirm(msg)) return;
 
-  var btns = document.querySelectorAll('.queue-mv-btn');
-  for (var b = 0; b < btns.length; b++) {
-    btns[b].disabled = true;
-    btns[b].textContent = 'Queuing…';
-  }
+  var btn = document.getElementById('btn-music-jukebox');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
   try {
-    // Replace any previous dump / jukebox with a fresh shuffled playlist
     try { await api.queue.clear(); } catch (_) {}
     var singer = currentSingerOrDj();
     var items = rows.map(function(v) {
@@ -1155,36 +1393,78 @@ async function queueAllMusicVideos() {
     var r = await api.queue.addMany(items, singer, {
       playIfIdle: true,
       shuffle: true,
-      asJukebox: false, // full queue — user wants every track listed
+      asJukebox: true,
     });
     queueShuffleEnabled = !!(r && r.shuffleEnabled);
-    jukeboxState = null;
+    jukeboxState = (r && r.jukebox) || null;
     updateShuffleBtnUI();
+    updateJukeboxBtnUI();
     await refreshQueue();
     var added = (r && r.added) || 0;
     var skipped = (r && r.skipped) || 0;
     var status = document.getElementById('request-status');
     if (status) {
-      status.textContent = 'Queued ' + added + ' music videos'
+      status.textContent = 'Music jukebox: ' + added + ' tracks'
         + (skipped ? ' (' + skipped + ' skipped)' : '')
         + (queueShuffleEnabled ? ' · shuffle on' : '');
     }
   } catch (e) {
-    console.error('queueAllMusicVideos:', e);
-    alert('Failed to queue music videos: ' + (e && e.message ? e.message : e));
+    console.error('startMusicJukebox:', e);
+    alert('Failed to start Music jukebox: ' + (e && e.message ? e.message : e));
   } finally {
-    for (var c = 0; c < btns.length; c++) {
-      btns[c].disabled = false;
-    }
-    var side = document.getElementById('btn-queue-all-mv');
-    if (side) side.textContent = '+ Queue all MVs';
-    var headerBtns = document.querySelectorAll('#queue-header .queue-mv-btn');
-    for (var h = 0; h < headerBtns.length; h++) headerBtns[h].textContent = '+ All Music Videos';
+    updateJukeboxBtnUI();
   }
 }
 
 let queueShuffleEnabled = false;
 let jukeboxState = null;
+let showModeState = 'idle';
+let pendingKaraokeCount = 0;
+
+function updateShowModePill() {
+  var pill = document.getElementById('show-mode-pill');
+  if (!pill) return;
+  var mode = showModeState || 'idle';
+  var label = mode === 'kj' ? 'KJ' : (mode === 'dj' ? 'DJ' : 'Idle');
+  if (gapHoldState && gapHoldState.interstitialActive) {
+    if (gapHoldState.interstitialHeld) label = (mode === 'kj' ? 'KJ' : 'DJ') + ' · HOLD';
+    else {
+      var sec = Math.max(1, Math.round((gapHoldState.interstitialRemainingMs || 0) / 1000));
+      label = (mode === 'kj' ? 'KJ' : 'DJ') + ' · Gap ' + sec + 's';
+    }
+  }
+  pill.textContent = label;
+  pill.className = mode === 'kj' ? 'kj' : (mode === 'dj' ? 'dj' : 'idle');
+  pill.title = mode === 'kj'
+    ? 'KJ mode — karaoke singer on deck'
+    : (mode === 'dj'
+      ? 'DJ mode — Music jukebox / Gap filler. Singers join at next Gap.'
+      : 'Idle — arm Music Jukebox or add a singer');
+}
+
+function updateJukeboxBtnUI() {
+  var btn = document.getElementById('btn-music-jukebox');
+  var hint = document.getElementById('queue-mode-hint');
+  var active = !!(jukeboxState && jukeboxState.active);
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = active ? 'Stop Music Jukebox' : 'Start Music Jukebox';
+    btn.title = active
+      ? 'Disarm DJ deck — karaoke queue only until you start jukebox again'
+      : 'Arm DJ deck from Music Videos — default when no singers are pending. Singers take over at the next Gap.';
+    btn.classList.toggle('active', active);
+  }
+  if (hint) {
+    var parts = [];
+    if (active) parts.push('Music jukebox (' + (jukeboxState.count || 0) + ')');
+    if (pendingKaraokeCount > 0) {
+      parts.push(pendingKaraokeCount + ' singer' + (pendingKaraokeCount === 1 ? '' : 's') + ' waiting');
+    }
+    hint.textContent = parts.length ? ' · ' + parts.join(' · ') : '';
+    hint.style.color = (active || pendingKaraokeCount > 0) ? 'var(--gold)' : 'var(--textDim)';
+  }
+  updateShowModePill();
+}
 
 function updateShuffleBtnUI() {
   var btn = document.getElementById('btn-shuffle');
@@ -1198,14 +1478,13 @@ function updateShuffleBtnUI() {
   }
   if (badge) {
     if (jukeboxState && jukeboxState.active) {
-      badge.style.display = 'inline';
-      badge.textContent = '· jukebox ' + (jukeboxState.count || 0)
-        + (queueShuffleEnabled ? ' · shuffle' : '');
+      badge.style.display = 'none';
     } else {
       badge.style.display = queueShuffleEnabled ? 'inline' : 'none';
       badge.textContent = '· shuffle';
     }
   }
+  updateJukeboxBtnUI();
 }
 
 async function toggleQueueShuffle() {
@@ -1415,6 +1694,7 @@ async function queueVideo(videoId, title) {
     var singer = currentSingerOrDj();
     await api.queue.add(videoId, title, singer, '');
     refreshQueue();
+    setAppTab('show');
   } catch(e) { console.error('Queue error:', e); }
 }
 
@@ -1425,8 +1705,15 @@ async function playNow(videoId, title) {
   }
   try {
     var singer = currentSingerOrDj();
-    await api.queue.playNow(videoId, title, singer, '');
+    // From Music Videos, force the base MV id so main does not remap to
+    // `{id}-karaoke` for dual-presence tracks.
+    var playId = videoId;
+    if (libraryFilter === 'musicvideo') {
+      playId = String(videoId || '').replace(/-karaoke$/, '');
+    }
+    await api.queue.playNow(playId, title, singer, '', libraryFilter === 'musicvideo');
     refreshQueue();
+    setAppTab('show');
   } catch(e) { console.error('Play now error:', e); }
 }
 
@@ -1453,18 +1740,68 @@ async function toggleLyricTiming(videoId) {
   lyricSliderActive = !lyricSliderActive;
   api.commands.toggleLyricSlider(lyricSliderActive);
 
-  // Load and display the existing offset
+  // Prefetch offset so player slider opens with the durable value (main normalizes id)
   try {
-    var result = await api.lyrics.getOffset(videoId + '-karaoke');
-    if (result && result.ok) {
-      // Offset will be shown on the player; we just toggle the slider
-    }
+    await api.lyrics.getOffset(videoId);
   } catch(e) { console.error('Toggle lyric slider error:', e); }
 }
 
 var pendingRelyricVideoId = null;
 
-function openRelyricModal(videoId) {
+function onRelyricModeChange() {
+  var mode = (document.getElementById('relyric-mode') || {}).value || 'rebuild';
+  var rebuild = document.getElementById('relyric-rebuild-fields');
+  var english = document.getElementById('relyric-english-fields');
+  var romanize = document.getElementById('relyric-romanize-fields');
+  var lyricsWrap = document.getElementById('relyric-lyrics-wrap');
+  var label = document.getElementById('relyric-lyrics-label');
+  var hint = document.getElementById('relyric-hint');
+  var ta = document.getElementById('relyric-lyrics');
+  var modelSel = document.getElementById('relyric-model');
+  var alsoRom = document.getElementById('relyric-also-romanize-wrap');
+  if (mode === 'add-english') {
+    if (rebuild) rebuild.style.display = 'none';
+    if (english) english.style.display = 'block';
+    if (romanize) romanize.style.display = 'none';
+    if (lyricsWrap) lyricsWrap.style.display = 'block';
+    if (label) label.textContent = 'English lyrics (one line per primary line)';
+    if (hint) hint.textContent = 'Primary (as-sung) stays on top. English appears underneath. Line count must match primary. Does not rebuild or romanize.';
+    if (ta) ta.placeholder = 'Paste English translation here, one line per sung line…\n\nOr click Auto-translate to fill from the as-sung track.';
+  } else if (mode === 'romanize') {
+    if (rebuild) rebuild.style.display = 'none';
+    if (english) english.style.display = 'none';
+    if (romanize) romanize.style.display = 'block';
+    if (lyricsWrap) lyricsWrap.style.display = 'none';
+    if (hint) hint.textContent = 'Keeps as-sung timing and text. Writes tracks.romanized (th/ja/ko/zh/lo). No Whisper, Demucs, or English — use Add English separately. Indonesian/Vietnamese are already Latin.';
+  } else if (mode === 'stems') {
+    if (rebuild) rebuild.style.display = 'none';
+    if (english) english.style.display = 'none';
+    if (romanize) romanize.style.display = 'none';
+    if (alsoRom) alsoRom.style.display = 'none';
+    if (lyricsWrap) lyricsWrap.style.display = 'none';
+    if (hint) hint.textContent = 'Re-runs Demucs on the original/source audio. Saves vocal + instrumental WAVs and remuxes karaoke.mp4. Lyrics are left untouched. Enables the Vocals fader on Now Playing.';
+  } else if (mode === 'retime') {
+    if (rebuild) rebuild.style.display = 'block';
+    if (english) english.style.display = 'none';
+    if (romanize) romanize.style.display = 'none';
+    if (alsoRom) alsoRom.style.display = 'none';
+    if (lyricsWrap) lyricsWrap.style.display = 'none';
+    if (hint) hint.textContent = 'Keeps every as-sung / romanized / English line exactly as written. Only re-locks start/end times via Whisper. No Demucs, no lyric rewrite, no romanize.';
+    if (modelSel) modelSel.value = 'large-v3';
+  } else {
+    if (rebuild) rebuild.style.display = 'block';
+    if (english) english.style.display = 'none';
+    if (romanize) romanize.style.display = 'none';
+    if (alsoRom) alsoRom.style.display = 'block';
+    if (lyricsWrap) lyricsWrap.style.display = 'block';
+    if (label) label.textContent = 'Custom lyrics (optional)';
+    if (hint) hint.textContent = 'Regenerates primary (as-sung) lyrics only. Set Language so Whisper matches the song. Check “Also romanize” only if you want Latin in the same pass. English is never added here.';
+    if (ta) ta.placeholder = 'Paste lyrics here if auto-sources don\'t have them. One line per stanza.';
+    if (modelSel && !modelSel.value) modelSel.value = 'large-v3';
+  }
+}
+
+async function openRelyricModal(videoId) {
   console.log('[controller] openRelyricModal CALLED videoId=' + videoId);
   var checkId = String(videoId || '').replace(/-karaoke$/, '');
   var job = processingJobs[checkId] || processingJobs[videoId];
@@ -1474,8 +1811,84 @@ function openRelyricModal(videoId) {
     return;
   }
   pendingRelyricVideoId = videoId;
-  document.getElementById('relyric-model').value = 'medium.en';
+  document.getElementById('relyric-model').value = 'large-v3';
   document.getElementById('relyric-lyrics').value = '';
+  var replaceEl = document.getElementById('relyric-replace-english');
+  if (replaceEl) replaceEl.checked = false;
+  var alsoRomEl = document.getElementById('relyric-also-romanize');
+  if (alsoRomEl) alsoRomEl.checked = false;
+  var langEl = document.getElementById('relyric-language');
+  var romLangEl = document.getElementById('relyric-romanize-lang');
+  var status = document.getElementById('relyric-english-status');
+  if (status) status.textContent = 'Primary stays on top. Paste English (one line per primary line) or Auto-translate, then Go.';
+
+  // Default: Add English when primary looks non-English / missing english;
+  // prefer Re-time when dual tracks already exist (text good, timing may be off);
+  // prefer Romanize when Thai script exists but no romanized track.
+  var modeEl = document.getElementById('relyric-mode');
+  var preferEnglish = true;
+  var preferRetime = false;
+  var preferRomanize = false;
+  var inferredLang = '';
+  try {
+    var ly = await api.library.lyrics(videoId);
+    if (!ly || !ly.lines || !ly.lines.length) {
+      ly = await api.library.lyrics(checkId + '-karaoke');
+    }
+    if (ly && ly.secondaryLines && ly.secondaryLines.length) {
+      preferEnglish = false;
+      preferRetime = true;
+    } else if (ly && ly.lines && ly.lines.length) {
+      var sample = ly.lines.slice(0, 8).map(function(l) { return l.text || ''; }).join(' ');
+      if (/[\u0E00-\u0E7F]/.test(sample)) {
+        inferredLang = 'th';
+        preferEnglish = false;
+        if (!(ly.display && ly.display.primary === 'romanized') && !(ly.tracks && ly.tracks.romanized)) {
+          preferRomanize = true;
+        }
+      } else if (/[\u0E80-\u0EFF]/.test(sample)) {
+        inferredLang = 'lo';
+        preferEnglish = false;
+        preferRomanize = !(ly.tracks && ly.tracks.romanized);
+      } else if (/[\uAC00-\uD7AF]/.test(sample)) {
+        inferredLang = 'ko';
+        preferEnglish = false;
+        preferRomanize = !(ly.tracks && ly.tracks.romanized);
+      } else if (/[\u3040-\u30FF]/.test(sample)) {
+        inferredLang = 'ja';
+        preferEnglish = false;
+        preferRomanize = !(ly.tracks && ly.tracks.romanized);
+      } else if (/[\u3400-\u9FFF]/.test(sample)) {
+        inferredLang = 'zh';
+        preferEnglish = false;
+        preferRomanize = !(ly.tracks && ly.tracks.romanized);
+      } else if (!/[àâäéèêëïîôùûüçñáíóú¿¡]/i.test(sample)
+          && !/[\u0400-\u04FF\u0600-\u06FF]/.test(sample)) {
+        preferEnglish = false;
+      }
+    }
+  } catch (_) {}
+  // Title-based Thai hint when LRC is Latin garbage (common failed Whisper invent)
+  if (!inferredLang) {
+    try {
+      var titleEl = document.querySelector('[data-video-id="' + checkId + '"] .q-title, [data-vid="' + checkId + '"]');
+      var titleSample = (titleEl && (titleEl.textContent || '')) || '';
+      if (/[\u0E00-\u0E7F]/.test(titleSample)) inferredLang = 'th';
+      else if (/[\u0E80-\u0EFF]/.test(titleSample)) inferredLang = 'lo';
+      else if (/[\uAC00-\uD7AF]/.test(titleSample)) inferredLang = 'ko';
+      else if (/[\u3040-\u30FF]/.test(titleSample)) inferredLang = 'ja';
+      else if (/[\u3400-\u9FFF]/.test(titleSample)) inferredLang = 'zh';
+    } catch (_) {}
+  }
+  if (langEl) langEl.value = inferredLang || '';
+  var romMap = { th: 'th', ja: 'ja', ko: 'ko', zh: 'zh', lo: 'lo' };
+  if (romLangEl) romLangEl.value = romMap[inferredLang] || 'th';
+  if (modeEl) {
+    modeEl.value = preferRetime ? 'retime'
+      : (preferRomanize ? 'romanize'
+        : (preferEnglish ? 'add-english' : 'rebuild'));
+  }
+  onRelyricModeChange();
   document.getElementById('relyric-modal-overlay').classList.add('show');
 }
 
@@ -1484,26 +1897,111 @@ function closeRelyricModal() {
   pendingRelyricVideoId = null;
 }
 
+async function autoTranslateRelyric() {
+  var videoId = pendingRelyricVideoId;
+  if (!videoId) return;
+  var status = document.getElementById('relyric-english-status');
+  if (status) status.textContent = 'Translating…';
+  try {
+    var r = await api.lyrics.translatePreview(videoId);
+    if (!r || !r.ok) {
+      if (status) status.textContent = (r && r.error) ? r.error : 'Translate failed';
+      return;
+    }
+    document.getElementById('relyric-lyrics').value = r.lyricsText || (r.texts || []).join('\n');
+    if (status) {
+      status.textContent = 'Filled ' + (r.lineCount || 0) + ' lines via ' + (r.provider || 'api')
+        + (r.hasEnglish ? ' · English track already exists — check Replace to overwrite' : '');
+    }
+  } catch (e) {
+    if (status) status.textContent = 'Error: ' + (e && e.message ? e.message : e);
+  }
+}
+
 async function submitRelyric() {
   console.log('[controller] submitRelyric CALLED');
   var videoId = pendingRelyricVideoId;
   if (!videoId) { console.log('[controller] submitRelyric: no videoId'); return; }
   console.log('[controller] submitRelyric: videoId=' + videoId);
+  var mode = (document.getElementById('relyric-mode') || {}).value || 'rebuild';
   var model = document.getElementById('relyric-model').value;
   var lyrics = document.getElementById('relyric-lyrics').value.trim();
+  var replaceEnglish = !!(document.getElementById('relyric-replace-english') || {}).checked;
+  var language = ((document.getElementById('relyric-language') || {}).value || '').trim() || null;
+  var romanizeLang = ((document.getElementById('relyric-romanize-lang') || {}).value || 'th').trim() || 'th';
+  var alsoRomanize = !!(document.getElementById('relyric-also-romanize') || {}).checked;
   // Hide modal but keep videoId local — do not clear before IPC
   document.getElementById('relyric-modal-overlay').classList.remove('show');
   pendingRelyricVideoId = null;
 
-  var el = setRequestStatus('Queuing re-lyric...', '#f0c040');
+  if (mode === 'add-english') {
+    var el = setRequestStatus('Adding English track…', '#f0c040');
+    try {
+      var result = await api.lyrics.addEnglish(videoId, {
+        lyricsText: lyrics || null,
+        replaceEnglish: replaceEnglish,
+      });
+      if (result && result.ok) {
+        setRequestStatus('English track saved (' + (result.lineCount || 0) + ' lines via ' + (result.provider || 'paste') + ')', '#40f040');
+        setTimeout(function() { setRequestStatus(''); }, 4000);
+        try { await refreshCustomVideoIds(); } catch (_) {}
+      } else {
+        setRequestStatus(result && result.error ? result.error : 'Failed to add English', '#ef4444');
+      }
+    } catch (e) {
+      console.error('Add English error:', e);
+      setRequestStatus('Error: ' + e.message, '#ef4444');
+    }
+    return;
+  }
+
+  if (mode === 'romanize') {
+    if (romanizeLang === 'id' || romanizeLang === 'vi' || romanizeLang === 'en') {
+      setRequestStatus('Already Latin — romanize not needed for ' + romanizeLang, '#f0c040');
+      return;
+    }
+    setRequestStatus('Romanizing lyrics (' + romanizeLang + ')…', '#f0c040');
+    try {
+      var romResult = await api.lyrics.romanize(videoId, { lang: romanizeLang });
+      if (romResult && romResult.ok) {
+        setRequestStatus(romResult.message || ('Romanized → tracks.romanized (' + (romResult.lineCount || '') + ' lines)'), '#40f040');
+        setTimeout(function() { setRequestStatus(''); }, 4000);
+        try { await refreshCustomVideoIds(); } catch (_) {}
+      } else {
+        setRequestStatus(romResult && romResult.error ? romResult.error : 'Romanize failed', '#ef4444');
+      }
+    } catch (e) {
+      console.error('Romanize error:', e);
+      setRequestStatus('Error: ' + e.message, '#ef4444');
+    }
+    return;
+  }
+
+  var statusMsg = mode === 'retime' ? 'Queuing re-time (keep lyrics)…'
+    : (mode === 'stems' ? 'Queuing stem rebuild (keep lyrics)…' : 'Queuing re-lyric...');
+  var el2 = setRequestStatus(statusMsg, '#f0c040');
 
   try {
-    var result = await api.lyrics.reprocess(videoId, false, { whisperModel: model, lyricsText: lyrics || null });
-    if (result && result.ok) {
-      setRequestStatus(result.message || 'Reprocessing queued...', '#f0c040');
+    var romCode = null;
+    if (mode === 'rebuild' && alsoRomanize) {
+      var langForRom = language || romanizeLang || 'th';
+      var allowed = { th: 1, ja: 1, ko: 1, zh: 1, lo: 1 };
+      romCode = allowed[langForRom] ? langForRom : 'th';
+    }
+    var opts = {
+      whisperModel: model,
+      lyricsText: (mode === 'retime' || mode === 'stems') ? null : (lyrics || null),
+      mode: mode === 'retime' ? 'retime' : (mode === 'stems' ? 'stems' : 'rebuild'),
+      lyricsTrack: 'sung',
+      language: language || null,
+    };
+    if (romCode) opts.romanize = romCode;
+    var result2 = await api.lyrics.reprocess(videoId, false, opts);
+    if (result2 && result2.ok) {
+      setRequestStatus(result2.message || 'Reprocessing queued...', '#f0c040');
       setTimeout(function() { setRequestStatus(''); }, 4000);
     } else {
-      setRequestStatus(result && result.error ? result.error : 'Failed to queue reprocess', '#ef4444');
+      setRequestStatus(result2 && result2.error ? result2.error : 'Failed to queue reprocess', '#ef4444');
     }
   } catch(e) {
     console.error('Reprocess error:', e);
@@ -1749,6 +2247,10 @@ async function refreshQueue() {
       queueShuffleEnabled = q.shuffleEnabled;
     }
     jukeboxState = q.jukebox || null;
+    showModeState = q.showMode || 'idle';
+    pendingKaraokeCount = typeof q.pendingKaraoke === 'number'
+      ? q.pendingKaraoke
+      : queue.filter(function(item) { return item && !item.fromJukebox; }).length;
     updateShuffleBtnUI();
     renderQueue();
   } catch(e) { console.error('Queue fetch error:', e); }
@@ -1756,10 +2258,17 @@ async function refreshQueue() {
 
 function renderQueue() {
   var list = document.getElementById('queue-list');
-  document.getElementById('queue-count').textContent = String(queue.length);
+  var singerCount = queue.filter(function(item) { return item && !item.fromJukebox; }).length;
+  document.getElementById('queue-count').textContent = String(singerCount);
+  var tabBadge = document.getElementById('tab-queue-count');
+  if (tabBadge) tabBadge.textContent = String(singerCount);
 
+  if (singerCount === 0 && !(jukeboxState && jukeboxState.active)) {
+    list.innerHTML = '<div style="color:var(--textDim);text-align:center;padding:40px">Singer queue is empty.<br>Add karaoke requests, or start the Music jukebox for background MVs.</div>';
+    return;
+  }
   if (queue.length === 0) {
-    list.innerHTML = '<div style="color:var(--textDim);text-align:center;padding:40px">Queue is empty.</div>';
+    list.innerHTML = '<div style="color:var(--textDim);text-align:center;padding:40px">Singer queue is empty.<br>DJ deck is armed — Music Videos will fill until a singer joins.</div>';
     return;
   }
 
@@ -1798,6 +2307,9 @@ function renderQueue() {
           '<span class="q-lyric-badge ' + escapeHtml(item.hasLyrics ? (item.lyricSource || 'unknown') : 'none') + '" title="' + escapeHtml(item.lyricLabel || (item.hasLyrics ? 'Lyrics' : 'No lyrics file')) + '">' +
             escapeHtml(item.hasLyrics ? (item.lyricLabel || 'Lyrics') : 'No lyrics') +
           '</span>' +
+          (isCustom && item.rating ? ('<span class="q-rating" title="Custom karaoke rating ' + item.rating + '/5">' +
+            (function(){ var o=''; for (var si=1;si<=5;si++) o+='<span class="qs'+(si<=item.rating?' on':'')+'">★</span>'; return o; })() +
+          '</span>') : '') +
         '</div>' +
       '</div>';
     if (item.hasLyrics) {
@@ -1851,8 +2363,8 @@ function updateGapHoldBtn() {
   btn.classList.toggle('holding', held);
   btn.textContent = held ? 'RESUME' : 'HOLD';
   btn.title = held
-    ? 'Resume the between-songs countdown'
-    : (active ? 'Hold the between-songs screen — B-roll keeps playing' : 'Available during the auto gap between songs');
+    ? 'Resume the between-songs Gap countdown'
+    : (active ? 'Hold the Gap — B-roll keeps playing. Pause does not do this.' : 'Available during the auto Gap between songs (not Pause)');
 }
 
 function updateGapStatusBadge() {
@@ -1860,13 +2372,14 @@ function updateGapStatusBadge() {
   var statusEl = document.getElementById('np-status');
   if (!statusEl) return;
   if (gapHoldState.interstitialHeld) {
-    statusEl.textContent = 'Holding';
+    statusEl.textContent = 'Gap HOLD';
     statusEl.className = 'np-status holding';
   } else {
     var sec = Math.max(1, Math.round((gapHoldState.interstitialRemainingMs || 0) / 1000));
     statusEl.textContent = 'Gap ' + sec + 's';
     statusEl.className = 'np-status gap';
   }
+  updateShowModePill();
 }
 
 function toggleGapHold() {
@@ -1886,10 +2399,110 @@ function initInterstitialSettings() {
   function applyVolLabel(pct) {
     if (volLabel) volLabel.textContent = pct + '%';
   }
+  function applyGapContent(mode) {
+    var mvs = document.getElementById('gap-content-mvs');
+    var phone = document.getElementById('gap-content-phone');
+    var both = document.getElementById('gap-content-both');
+    var m = mode === 'phone-mirror' || mode === 'both' ? mode : 'music-broll';
+    if (!phoneMirrorGapEnabled) m = 'music-broll';
+    if (mvs) mvs.classList.toggle('active', m === 'music-broll');
+    if (phone) phone.classList.toggle('active', m === 'phone-mirror');
+    if (both) both.classList.toggle('active', m === 'both');
+  }
+  function setPhoneMirrorUiEnabled(enabled) {
+    phoneMirrorGapEnabled = !!enabled;
+    var phone = document.getElementById('gap-content-phone');
+    var both = document.getElementById('gap-content-both');
+    var phoneSlider = document.getElementById('gap-phone-slider');
+    var status = document.getElementById('gap-mirror-status');
+    [phone, both].forEach(function(btn) {
+      if (!btn) return;
+      btn.disabled = !phoneMirrorGapEnabled;
+      btn.title = phoneMirrorGapEnabled
+        ? ''
+        : 'Phone USB mirror parked — coming back later';
+    });
+    if (phoneSlider) {
+      phoneSlider.disabled = !phoneMirrorGapEnabled;
+      phoneSlider.title = phoneMirrorGapEnabled ? '' : 'Phone mix parked with USB mirror';
+    }
+    if (status && !phoneMirrorGapEnabled) {
+      status.textContent = '';
+      status.style.color = '';
+    }
+  }
+  var phoneMirrorGapEnabled = false;
+  function applyGapMixLabels(broll, phone) {
+    var bl = document.getElementById('gap-broll-label');
+    var pl = document.getElementById('gap-phone-label');
+    if (bl) bl.textContent = Math.round((broll == null ? 0.85 : broll) * 100) + '%';
+    if (pl) pl.textContent = Math.round((phone == null ? 0.85 : phone) * 100) + '%';
+  }
+  window.setGapContent = function(mode) {
+    if (!phoneMirrorGapEnabled && (mode === 'phone-mirror' || mode === 'both')) {
+      applyGapContent('music-broll');
+      return;
+    }
+    var next = mode === 'phone-mirror' || mode === 'both' ? mode : 'music-broll';
+    applyGapContent(next);
+    api.settings.set({ gapContent: next }).then(function(r) {
+      if (r && r.phoneMirrorGapEnabled != null) setPhoneMirrorUiEnabled(r.phoneMirrorGapEnabled);
+      applyGapContent((r && r.gapContent) || next);
+      if (phoneMirrorGapEnabled && r && r.phoneMirror) applyPhoneMirrorStatus(r.phoneMirror);
+      if (phoneMirrorGapEnabled && (next === 'phone-mirror' || next === 'both')) refreshPhoneMirrorStatus();
+    }).catch(function() {});
+  };
+  function applyPhoneMirrorStatus(st) {
+    var el = document.getElementById('gap-mirror-status');
+    if (!el) return;
+    if (!phoneMirrorGapEnabled || (st && st.disabled)) {
+      el.textContent = '';
+      return;
+    }
+    if (!st) { el.textContent = ''; return; }
+    if (st.error && st.fallback === 'music-broll') {
+      el.textContent = 'Phone failed → MVs';
+      el.style.color = '#f59e0b';
+      return;
+    }
+    if (st.scrcpyRunning) {
+      el.textContent = st.mode === 'loopback' ? 'Mirror on (fades)' : 'Mirror on (direct)';
+      el.style.color = '#34d399';
+      return;
+    }
+    if (st.adbOk) {
+      el.textContent = 'Phone ready';
+      el.style.color = '#94a3b8';
+      return;
+    }
+    el.textContent = st.error || (st.adbOk === false ? 'No USB phone' : '');
+    el.style.color = st.error ? '#f87171' : '#94a3b8';
+  }
+  window.applyPhoneMirrorStatus = applyPhoneMirrorStatus;
+  function refreshPhoneMirrorStatus() {
+    if (!phoneMirrorGapEnabled) return;
+    if (!api.phoneMirror || !api.phoneMirror.status) return;
+    api.phoneMirror.status().then(applyPhoneMirrorStatus).catch(function() {});
+  }
   api.settings.get().then(function(r) {
     var ms = (r && r.betweenSongsMs) || 15000;
     var sec = Math.round(ms / 1000);
     if (slider) { slider.value = String(sec); applyGapLabel(sec); }
+    setPhoneMirrorUiEnabled(!!(r && r.phoneMirrorGapEnabled));
+    applyGapContent((r && r.gapContent) || 'music-broll');
+    var brollLvl = (r && typeof r.gapBrollLevel === 'number') ? r.gapBrollLevel : 0.85;
+    var phoneLvl = (r && typeof r.gapPhoneLevel === 'number') ? r.gapPhoneLevel : 0.85;
+    var brollSlider = document.getElementById('gap-broll-slider');
+    var phoneSlider = document.getElementById('gap-phone-slider');
+    if (brollSlider) brollSlider.value = String(Math.round(brollLvl * 100));
+    if (phoneSlider) phoneSlider.value = String(Math.round(phoneLvl * 100));
+    applyGapMixLabels(brollLvl, phoneLvl);
+    if (phoneMirrorGapEnabled) {
+      if (r && r.phoneMirror) applyPhoneMirrorStatus(r.phoneMirror);
+      else refreshPhoneMirrorStatus();
+    } else {
+      applyPhoneMirrorStatus({ disabled: true });
+    }
     var vol = (r && typeof r.volumeLevel === 'number') ? r.volumeLevel : 0.55;
     var pct = Math.round(vol * 100);
     if (volSlider) { volSlider.value = String(pct); applyVolLabel(pct); }
@@ -1899,6 +2512,21 @@ function initInterstitialSettings() {
       api.transport.gapState().then(applyGapHoldState).catch(function() {});
     }
   }).catch(function() {});
+  if (api.on) {
+    api.on('phone-mirror-status', function(st) {
+      if (!phoneMirrorGapEnabled) return;
+      applyPhoneMirrorStatus(st);
+    });
+  }
+  setInterval(function() {
+    if (!phoneMirrorGapEnabled) return;
+    var phoneBtn = document.getElementById('gap-content-phone');
+    var bothBtn = document.getElementById('gap-content-both');
+    if ((phoneBtn && phoneBtn.classList.contains('active')) ||
+        (bothBtn && bothBtn.classList.contains('active'))) {
+      refreshPhoneMirrorStatus();
+    }
+  }, 8000);
   var saveTimer = null;
   if (slider) {
     slider.addEventListener('input', function() {
@@ -1910,6 +2538,24 @@ function initInterstitialSettings() {
       }, 200);
     });
   }
+  var gapMixTimer = null;
+  function saveGapMixLevels() {
+    var brollSlider = document.getElementById('gap-broll-slider');
+    var phoneSlider = document.getElementById('gap-phone-slider');
+    var bPct = parseInt(brollSlider && brollSlider.value, 10);
+    var pPct = parseInt(phoneSlider && phoneSlider.value, 10);
+    if (!isFinite(bPct)) bPct = 85;
+    if (!isFinite(pPct)) pPct = 85;
+    applyGapMixLabels(bPct / 100, pPct / 100);
+    clearTimeout(gapMixTimer);
+    gapMixTimer = setTimeout(function() {
+      api.settings.set({ gapBrollLevel: bPct / 100, gapPhoneLevel: pPct / 100 }).catch(function() {});
+    }, 120);
+  }
+  var gapBrollSlider = document.getElementById('gap-broll-slider');
+  var gapPhoneSlider = document.getElementById('gap-phone-slider');
+  if (gapBrollSlider) gapBrollSlider.addEventListener('input', saveGapMixLevels);
+  if (gapPhoneSlider) gapPhoneSlider.addEventListener('input', saveGapMixLevels);
   var volTimer = null;
   if (volSlider) {
     volSlider.addEventListener('input', function() {
@@ -1923,8 +2569,54 @@ function initInterstitialSettings() {
       }, 80);
     });
   }
+  var vocalSlider = document.getElementById('vocal-mix-slider');
+  var vocalLabel = document.getElementById('vocal-mix-label');
+  var vocalTimer = null;
+  if (vocalSlider) {
+    vocalSlider.addEventListener('input', function() {
+      var pct = parseInt(vocalSlider.value, 10) || 0;
+      if (vocalLabel) vocalLabel.textContent = pct + '%';
+      var level = Math.max(0, Math.min(1, pct / 100));
+      clearTimeout(vocalTimer);
+      vocalTimer = setTimeout(function() {
+        if (api.transport && api.transport.vocalMix) api.transport.vocalMix(level);
+      }, 60);
+    });
+  }
 }
 initInterstitialSettings();
+
+let _lastVocalMixVideoId = null;
+async function refreshVocalMixUi(videoId) {
+  var slider = document.getElementById('vocal-mix-slider');
+  var label = document.getElementById('vocal-mix-label');
+  var wrap = document.getElementById('vocal-mix-settings');
+  if (!slider) return;
+  var key = videoId ? String(videoId) : '';
+  if (key === _lastVocalMixVideoId) return;
+  _lastVocalMixVideoId = key;
+  var available = false;
+  try {
+    if (videoId && api.library && api.library.status) {
+      var st = await api.library.status(videoId);
+      if (!st || !st.vocalMixAvailable) {
+        st = await api.library.status(String(videoId).replace(/-karaoke$/, '') + '-karaoke');
+      }
+      available = !!(st && st.vocalMixAvailable);
+    } else if (videoId && api.library && api.library.lyrics) {
+      var ly = await api.library.lyrics(videoId);
+      available = !!(ly && ly.vocalMixAvailable);
+    }
+  } catch (_) {}
+  slider.disabled = !available;
+  if (wrap) wrap.title = available
+    ? 'Guide vocals from Demucs stem. 0% = instrumental karaoke only.'
+    : 'Rebuild stems (Re-Lyric → Rebuild stems only) to enable vocal mix';
+  if (!available) {
+    slider.value = '0';
+    if (label) label.textContent = '0%';
+  }
+}
 
 function seekProgress(e) {
   if (!nowPlaying || !nowPlaying.duration || nowPlaying.duration <= 0) return;
@@ -1950,6 +2642,7 @@ function updateNowPlaying() {
       var idleStatus = document.getElementById('np-status');
       if (idleStatus) { idleStatus.textContent = 'Idle'; idleStatus.className = 'np-status idle'; }
     }
+    refreshVocalMixUi(null);
     return;
   }
 
@@ -1957,6 +2650,7 @@ function updateNowPlaying() {
   document.getElementById('np-singer').textContent = displaySingerName(nowPlaying.requester) + ' \u2022 ' + (nowPlaying.isYouTube ? 'YouTube' : 'Local');
   document.getElementById('np-current').textContent = formatTime(nowPlaying.currentTime || 0);
   document.getElementById('np-duration').textContent = formatTime(nowPlaying.duration || 0);
+  refreshVocalMixUi(nowPlaying.isYouTube ? null : nowPlaying.videoId);
 
   var pct = nowPlaying.duration > 0 ? ((nowPlaying.currentTime || 0) / nowPlaying.duration) * 100 : 0;
   document.getElementById('np-progress-bar').style.width = pct + '%';
@@ -1966,7 +2660,7 @@ function updateNowPlaying() {
   if (gapHoldState.interstitialActive) {
     updateGapStatusBadge();
   } else {
-    statusEl.textContent = isPlaying ? 'Playing' : (nowPlaying.state === 2 ? 'Paused' : 'Idle');
+    statusEl.textContent = isPlaying ? 'Playing' : (nowPlaying.state === 2 ? 'Song paused' : 'Idle');
     statusEl.className = 'np-status ' + (isPlaying ? 'playing' : (nowPlaying.state === 2 ? 'paused' : 'idle'));
   }
 
@@ -2061,6 +2755,8 @@ function renderProcessingPanel() {
   var jobIds = Object.keys(processingJobs);
   if (jobIds.length === 0) { panel.classList.remove('visible'); return; }
   panel.classList.add('visible');
+  var header = document.getElementById('processing-panel-header');
+  if (header) header.textContent = 'Processing (' + jobIds.length + ')';
 
   var html = '';
   for (var id of jobIds) {
@@ -2182,6 +2878,15 @@ function renderHealth(health) {
       ? 'Drive (missing)'
       : (health.driveReadable === false ? 'Drive (no access)' : 'maxone');
   }
+  setDot('health-umc', !!health.umc);
+  var umcText = document.getElementById('health-umc-text');
+  if (umcText) umcText.textContent = health.umc ? 'UMC' : 'UMC (missing)';
+  var usbOk = !!(health.usbKeepAwakeAgent || health.usbKeepAwakeApp);
+  setDot('health-usb', usbOk, !usbOk && !!health.drive);
+  var usbText = document.getElementById('health-usb-text');
+  if (usbText) {
+    usbText.textContent = usbOk ? 'USB awake' : 'USB sleep?';
+  }
   setDot('health-ytdlp', health.ytdlp);
   setDot('health-ffmpeg', health.ffmpeg);
   var scanning = !!(health.scanning || (health.libraryScan && health.libraryScan.status === 'scanning'));
@@ -2286,15 +2991,67 @@ init();
 <div id="relyric-modal-overlay" onclick="if(event.target===this)closeRelyricModal()">
   <div id="relyric-modal">
     <h2 id="relyric-modal-title">Re-Lyric Settings</h2>
-    <label>Whisper model</label>
-    <select id="relyric-model">
-      <option value="medium.en" selected>medium.en — standard (recommended)</option>
-      <option value="tiny.en">tiny.en — fast, lower accuracy</option>
-      <option value="large-v3">large-v3 — slow, best accuracy</option>
+    <label>Mode</label>
+    <select id="relyric-mode" onchange="onRelyricModeChange()">
+      <option value="add-english">Add English translation — keep as-sung on top</option>
+      <option value="romanize">Add romanize — keep as-sung, add Latin track</option>
+      <option value="stems">Rebuild stems only — Demucs vocals + instrumental (keep lyrics)</option>
+      <option value="retime">Re-time only — keep perfect lyrics, fix sync</option>
+      <option value="rebuild">Full rebuild — regenerate primary lyrics (Whisper / LRCLIB)</option>
     </select>
-    <label>Custom lyrics (optional)</label>
-    <textarea id="relyric-lyrics" placeholder="Paste lyrics here if auto-sources don't have them. One line per stanza.&#10;&#10;Example:&#10;Mi amore&#10;Espresso macchiato, macchiato, macchiato&#10;Por favore"></textarea>
-    <div class="modal-hint">We always try LRCLIB + karaoke YouTube + scrapers first. Paste only as backup/override. Whisper invents words only if every source fails.</div>
+    <div id="relyric-rebuild-fields">
+      <label>Whisper model</label>
+      <select id="relyric-model">
+        <option value="large-v3" selected>large-v3 — best accuracy (default)</option>
+        <option value="medium.en">medium.en — standard English</option>
+        <option value="medium">medium — multilingual (FR/ES/TH/etc.)</option>
+        <option value="tiny.en">tiny.en — fast, lower accuracy</option>
+      </select>
+      <label>Language (rebuild / re-time)</label>
+      <select id="relyric-language">
+        <option value="">Auto — infer from lyrics / title</option>
+        <option value="th">Thai (th)</option>
+        <option value="ja">Japanese (ja)</option>
+        <option value="ko">Korean (ko)</option>
+        <option value="zh">Chinese (zh)</option>
+        <option value="lo">Lao (lo)</option>
+        <option value="id">Indonesian (id)</option>
+        <option value="vi">Vietnamese (vi)</option>
+        <option value="en">English (en)</option>
+        <option value="fr">French (fr)</option>
+        <option value="es">Spanish (es)</option>
+      </select>
+      <div class="modal-hint">Whisper defaults to English invent if unset — pick the song language. Does not auto-add English or romanize.</div>
+      <label id="relyric-also-romanize-wrap" style="display:flex;align-items:center;gap:6px;margin-top:10px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--textDim);cursor:pointer">
+        <input type="checkbox" id="relyric-also-romanize" style="accent-color:var(--accent)"> Also romanize after rebuild (th/ja/ko/zh/lo)
+      </label>
+    </div>
+    <div id="relyric-romanize-fields" style="display:none">
+      <label>Romanize as</label>
+      <select id="relyric-romanize-lang">
+        <option value="th" selected>Thai → RTGS</option>
+        <option value="ja">Japanese → romaji</option>
+        <option value="ko">Korean → Revised Romanization</option>
+        <option value="zh">Chinese → pinyin</option>
+        <option value="lo">Lao → Latin</option>
+      </select>
+      <div class="modal-hint">Needs real script in the as-sung track (not Latin gibberish). Indonesian/Vietnamese are already Latin — skip romanize.</div>
+    </div>
+    <div id="relyric-english-fields">
+      <label>English lyrics</label>
+      <div style="display:flex;gap:8px;margin-bottom:6px">
+        <button type="button" class="btn-go" style="padding:6px 12px;font-size:12px" onclick="autoTranslateRelyric()">Auto-translate</button>
+        <label style="display:flex;align-items:center;gap:6px;margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--textDim);cursor:pointer">
+          <input type="checkbox" id="relyric-replace-english" style="accent-color:var(--accent)"> Replace existing English
+        </label>
+      </div>
+      <div class="modal-hint" id="relyric-english-status">Primary stays on top. Paste English (one line per primary line) or Auto-translate, then Go.</div>
+    </div>
+    <div id="relyric-lyrics-wrap">
+      <label id="relyric-lyrics-label">Custom lyrics (optional)</label>
+      <textarea id="relyric-lyrics" placeholder="Paste lyrics here…"></textarea>
+    </div>
+    <div class="modal-hint" id="relyric-hint">We always try LRCLIB + karaoke YouTube + scrapers first. Paste only as backup/override. Whisper invents words only if every source fails.</div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeRelyricModal()">Cancel</button>
       <button class="btn-go" onclick="submitRelyric()">Go</button>

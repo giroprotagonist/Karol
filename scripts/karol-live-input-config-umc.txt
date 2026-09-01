@@ -1,0 +1,45 @@
+═══════════════════════════════════════════════════════════════
+  ABLETON LIVE — UMC PA (state of the art @ 48 kHz)
+═══════════════════════════════════════════════════════════════
+
+Chain: Karol → BlackHole → Karol Live Mic → Live → UMC404HD → PA
+
+CRITICAL: Monitor MUST be **In** — NOT Off.
+
+PREREQ: Quit Live (Cmd+Q), then run: scripts/karol-show-ready.sh
+
+───────────────────────────────────────────────────────────────
+Preferences → Audio
+───────────────────────────────────────────────────────────────
+  Sample Rate:         48000 Hz
+  Audio Input Device:  Karol Live Mic
+  Audio Output Device: UMC404HD 192k
+  Buffer Size:         512 samples (256 if stable — NOT 64)
+
+  Input Config:  enable channels 1, 2, 3, 4, 5, 6
+  Output Config: enable channels 1, 2
+
+───────────────────────────────────────────────────────────────
+Track wiring
+───────────────────────────────────────────────────────────────
+  Track 1 (UMC mic):
+    Audio From: Ext. In → Karol Live Mic / 3-4
+    Monitor: In · Arm: ON · Autotuna on chain
+
+  Track 2 (Karol backing):
+    Audio From: Ext. In → Karol Live Mic / 1-2
+    Monitor: In · Arm: OFF
+
+  Master: UMC404HD 192k / 1-2
+
+───────────────────────────────────────────────────────────────
+Karol Show tab
+───────────────────────────────────────────────────────────────
+  Out: 55–70%  ·  Vocals: 0%  ·  Play Karol → Space in Live
+
+───────────────────────────────────────────────────────────────
+Verify
+───────────────────────────────────────────────────────────────
+  KAROL_AUDIO_MODE=umc-pa scripts/karol-audio-verify.sh
+
+See docs/SHOW-READY.md for full methodology.

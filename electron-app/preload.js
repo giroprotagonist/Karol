@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
     prev: () => ipcRenderer.send('transport-prev'),
     seek: (time) => ipcRenderer.send('transport-seek', time),
     volume: (level) => ipcRenderer.send('transport-volume', level),
+    vocalMix: (level) => ipcRenderer.send('transport-vocal-mix', level),
     toggleGapHold: () => ipcRenderer.invoke('transport-toggle-gap-hold'),
     gapState: () => ipcRenderer.invoke('transport-gap-state'),
   },
@@ -57,8 +58,14 @@ contextBridge.exposeInMainWorld('karolAPI', {
     clear: () => ipcRenderer.invoke('queue-clear'),
     skipTo: (index) => ipcRenderer.invoke('queue-skip-to', index),
     get: () => ipcRenderer.invoke('queue-get'),
-    playNow: (videoId, title, requester, url) =>
-      ipcRenderer.invoke('queue-play-now', { videoId, title, requester, url }),
+    playNow: (videoId, title, requester, url, preferMusic) =>
+      ipcRenderer.invoke('queue-play-now', {
+        videoId,
+        title,
+        requester,
+        url,
+        preferMusic: preferMusic === true || preferMusic === 'music' || preferMusic === 'musicvideo',
+      }),
     needsMatch: () => ipcRenderer.invoke('queue-needs-match'),
     fillMatch: (payload) => ipcRenderer.invoke('queue-fill-match', payload),
   },
@@ -77,6 +84,8 @@ contextBridge.exposeInMainWorld('karolAPI', {
     tags: () => ipcRenderer.invoke('library-tags'),
     setTag: (videoId, tag) => ipcRenderer.invoke('library-set-tag', { videoId, tag }),
     reclassify: (videoId, tag, source) => ipcRenderer.invoke('library-set-tag', { videoId, tag, source }),
+    setRating: (videoId, rating) => ipcRenderer.invoke('library-set-rating', { videoId, rating }),
+    getRating: (videoId) => ipcRenderer.invoke('library-get-rating', videoId),
     status: (videoId) => ipcRenderer.invoke('library-status', videoId),
     lyrics: (videoId) => ipcRenderer.invoke('library-lyrics', videoId),
     filePath: (videoId) => ipcRenderer.invoke('library-file-path', videoId),
@@ -121,7 +130,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
       'player-status', 'queue-update', 'player-event',
       'download-progress', 'library-scan-progress', 'health-report',
       'monitor-mode', 'lyrics-updated', 'drive-status',
-      'interstitial-state',
+      'interstitial-state', 'phone-mirror-status',
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (_event, ...args) => callback(...args));
@@ -139,10 +148,18 @@ contextBridge.exposeInMainWorld('karolAPI', {
     powerStatus: () => ipcRenderer.invoke('karaoke-power-status'),
   },
 
-  // ── Settings (interstitial length, etc.) ──
+  // ── Settings (interstitial length, gap content, etc.) ──
   settings: {
     get: () => ipcRenderer.invoke('settings-get'),
     set: (patch) => ipcRenderer.invoke('settings-set', patch),
+  },
+
+  phoneMirror: {
+    status: () => ipcRenderer.invoke('phone-mirror-status'),
+    stop: () => ipcRenderer.invoke('phone-mirror-stop'),
+    findCaptureSource: () => ipcRenderer.invoke('phone-mirror-find-source'),
+    screenAccess: () => ipcRenderer.invoke('phone-mirror-screen-access'),
+    reportSlotBounds: (bounds) => ipcRenderer.send('phone-mirror-slot-bounds', bounds),
   },
 
   // ── Health ──
@@ -155,6 +172,9 @@ contextBridge.exposeInMainWorld('karolAPI', {
   // ── Lyric management ──
   lyrics: {
     reprocess: (videoId, forceWhisper, options) => ipcRenderer.invoke('reprocess-lyrics', { videoId, forceWhisper, ...options }),
+    translatePreview: (videoId) => ipcRenderer.invoke('lyrics-translate-preview', { videoId }),
+    addEnglish: (videoId, options) => ipcRenderer.invoke('lyrics-add-english', { videoId, ...(options || {}) }),
+    romanize: (videoId, options) => ipcRenderer.invoke('lyrics-romanize', { videoId, ...(options || {}) }),
     getOffset: (videoId) => ipcRenderer.invoke('get-lyric-offset', { videoId }),
     saveOffset: (videoId, offset) => ipcRenderer.invoke('save-lyric-offset', { videoId, offset }),
     diagnose: (videoId) => ipcRenderer.invoke('diagnose-lyrics', { videoId }),

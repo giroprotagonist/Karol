@@ -1,0 +1,27 @@
+#!/bin/bash
+# Install Autotuna preset scripts into Karol.app bundle.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPTS="$ROOT/scripts"
+KAROL_BUNDLE="/Applications/Karol.app/Contents/Resources/scripts"
+
+echo "Autotuna presets (apply via OSC when Live is open):"
+echo "  python3 $SCRIPTS/karol-believe-autotuna.py"
+echo "  python3 $SCRIPTS/karol-one-more-time-autotuna.py"
+echo "  python3 $SCRIPTS/karol-charli-autotuna.py"
+echo ""
+echo "Save as .adv in Live: Autotuna on track → run script → Save Preset As in device header."
+echo "  User Library/Presets/Audio Effects/Max Audio Effect/"
+echo ""
+
+if [[ -d "$KAROL_BUNDLE" ]]; then
+  for f in karol_autotuna_lib.py karol-autotuna-preset.py \
+           karol-believe-autotuna.py karol-one-more-time-autotuna.py karol-charli-autotuna.py; do
+    cp "$SCRIPTS/$f" "$KAROL_BUNDLE/$f"
+    chmod +x "$KAROL_BUNDLE/$f"
+  done
+  echo "Copied to $KAROL_BUNDLE"
+fi
+
+python3 "$SCRIPTS/karol-autotuna-preset.py" --list

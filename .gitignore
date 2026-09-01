@@ -67,5 +67,18 @@ __pycache__/
 !.karol/tags.json
 !.karol/schema.sql
 
-# Cursor IDE
-.cursor/
+# Swift compile outputs (sources are committed)
+scripts/blackhole-44100
+scripts/blackhole-48000
+scripts/karol-audio-probe
+scripts/karol-create-live-mic-aggregate
+scripts/karol-create-live-umc-aggregate
+
+# Runtime / local-only
+.karol/backups-*/
+.karol/karaoke-jobs.json*
+.karol/karol-state*.json
+.karol/thai-*
+main.js
+player.html
+server/db.php.remote-backup

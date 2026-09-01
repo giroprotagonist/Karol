@@ -17,7 +17,33 @@ Karol is a karaoke DJ system built for house parties and small venues.
 - MySQL-backed persistence for requests and tags
 - Cloudflare Tunnel for remote access to the library
 
-## Quick Start
+## Show night flow
+
+**DJ is the default; KJ is an interrupt.** Gap interstitial and Music Jukebox are one DJ layer.
+
+1. **Arm DJ once** — Music Videos tab → **Start Music Jukebox**. Full MVs play when no singers are pending; the same Music Videos pool also feeds Gap B-roll.
+2. **Singers join at next Gap** — Add karaoke to the **Singer queue** (or let QR requests land there). The current MV finishes, Gap shows up-next, then karaoke plays. Prefer Karaoke / Custom tabs for singables.
+3. **Empty singer list → DJ resumes** — Finished karaoke drops off the queue; if the DJ deck is still armed, the next MV starts after Gap without pressing Start again.
+4. **Gap / HOLD** — **HOLD** freezes the between-songs screen (B-roll keeps playing); **RESUME** continues. **Pause** only pauses the current song.
+5. **Live FX** — Laptop FX bar (phone is transport/queue only). Gap & HOLD stay on the laptop.
+
+Phone remote is an emergency subset: queue and transport work; Gap/HOLD and full library tools stay on the laptop.
+
+## Show ready (UMC PA + Live)
+
+**State-of-the-art path:** Karol → BlackHole → Karol Live Mic → Ableton Live → UMC404HD → PA @ **48 kHz**.
+
+```bash
+# Before every show (quit Live first)
+scripts/karol-show-ready.sh
+
+# After code changes
+scripts/karol-install-app.sh
+# or: scripts/karol-show-ready.sh --build
+```
+
+Full methodology: [docs/SHOW-READY.md](docs/SHOW-READY.md)
+
 
 ```bash
 # Install all workspace dependencies

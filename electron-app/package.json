@@ -27,7 +27,10 @@
         "NSQuitAlwaysKeepsWindows": false,
         "NSRemovableVolumesUsageDescription": "Karol needs access to your karaoke library on the external hard drive (/Volumes/maxone).",
         "NSDocumentsFolderUsageDescription": "Karol may read documents when importing media.",
-        "NSDownloadsUsageDescription": "Karol may read Downloads when importing media."
+        "NSDownloadsUsageDescription": "Karol may read Downloads when importing media.",
+        "NSScreenCaptureUsageDescription": "Karol captures the Karol Phone Mirror window to show your phone on the HDMI karaoke display during Gap.",
+        "NSCameraUsageDescription": "Karol may use camera devices for AV routing.",
+        "NSMicrophoneUsageDescription": "Karol may use audio input for phone mirror loopback."
       }
     },
     "files": [
@@ -38,6 +41,8 @@
       "player-state.js",
       "downloads.js",
       "requests.js",
+      "phone-mirror.js",
+      "translate-lyrics.js",
       "controller.html",
       "player.html",
       "lottie.min.js",
@@ -64,6 +69,17 @@
       {
         "from": "../library-dashboard",
         "to": "library-dashboard"
+      },
+      {
+        "from": "../scripts",
+        "to": "scripts",
+        "filter": [
+          "blackhole-44100",
+          "blackhole-44100.swift",
+          "karol-audio-setup.js",
+          "set-default-*.sh",
+          "karol-show-audio-*.sh"
+        ]
       }
     ]
   },

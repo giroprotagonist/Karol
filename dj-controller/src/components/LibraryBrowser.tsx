@@ -83,8 +83,24 @@ export default function LibraryBrowser({ host, connected, busy, videos, tags, sc
 		}
 		if (downloadFilter === 'downloaded') result = result.filter((v) => v.downloaded);
 		if (downloadFilter === 'missing') result = result.filter((v) => !v.downloaded);
-		if (tagFilter === 'karaoke') result = result.filter((v) => v.tag === 'karaoke');
-		if (tagFilter === 'song') result = result.filter((v) => v.tag === 'song' || v.tag === 'music');
+		if (tagFilter === 'karaoke') {
+			result = result.filter((v) => v.tag === 'karaoke' && v.source !== 'karaoke-maker');
+		}
+		if (tagFilter === 'custom') {
+			const ids = new Set(merged.map((v) => v.videoId));
+			result = result.filter((v) => {
+				const isCustom = v.source === 'karaoke-maker' || v.tag === 'custom';
+				if (!isCustom) return false;
+				// Never list Music Video twins under Custom
+				if ((v.tag === 'music' || v.tag === 'song') && !/-karaoke$/.test(v.videoId)) return false;
+				// Prefer '-karaoke' row when both base + variant are present
+				if (!/-karaoke$/.test(v.videoId) && ids.has(v.videoId + '-karaoke')) return false;
+				return true;
+			});
+		}
+		if (tagFilter === 'musicvideo' || tagFilter === 'song') {
+			result = result.filter((v) => v.tag === 'song' || v.tag === 'music');
+		}
 
 		result.sort((a, b) => {
 			const dir = sortAsc ? 1 : -1;
@@ -215,7 +231,8 @@ export default function LibraryBrowser({ host, connected, busy, videos, tags, sc
 				>
 				<option value="all">All types</option>
 				<option value="karaoke">Karaoke</option>
-				<option value="song">Songs</option>
+				<option value="custom">Custom</option>
+				<option value="musicvideo">Music Videos</option>
 				</select>
 				<select
 					className="lib-filter-sel"
@@ -280,7 +297,14 @@ export default function LibraryBrowser({ host, connected, busy, videos, tags, sc
 							</td></tr>
 						)}
 						{!loading && filtered.map((v) => {
-							const isKaraoke = v.tag === 'karaoke';
+							const isCustom = v.source === 'karaoke-maker' || v.tag === 'custom';
+							const isKaraoke = v.tag === 'karaoke' && !isCustom;
+							const typeLabel = isCustom ? 'Custom' : isKaraoke ? 'Karaoke' : 'Music Video';
+							const typeClass = isCustom
+								? 'lib-badge--custom'
+								: isKaraoke
+									? 'lib-badge--karaoke'
+									: 'lib-badge--mv';
 							return (
 								<tr
 									key={v.videoId}
@@ -306,11 +330,7 @@ export default function LibraryBrowser({ host, connected, busy, videos, tags, sc
 									<td className="lib-list-td lib-list-td--dur">{formatTime(v.duration)}</td>
 									<td className="lib-list-td lib-list-td--size">{fmtSize(v.size)}</td>
 									<td className="lib-list-td lib-list-td--type">
-										{isKaraoke ? (
-											<span className="lib-badge lib-badge--karaoke">Karaoke</span>
-										) : (
-											<span className="lib-badge lib-badge--dl">Song</span>
-										)}
+										<span className={`lib-badge ${typeClass}`}>{typeLabel}</span>
 										{!v.downloaded && (
 											<span className="lib-badge lib-badge--missing">Missing</span>
 										)}
@@ -410,8 +430,12 @@ export default function LibraryBrowser({ host, connected, busy, videos, tags, sc
 									) : (
 										<span className="lib-badge lib-badge--missing">Missing</span>
 									)}
-									{v.tag === 'karaoke' && (
+									{(v.source === 'karaoke-maker' || v.tag === 'custom') ? (
+										<span className="lib-badge lib-badge--custom">Custom</span>
+									) : v.tag === 'karaoke' ? (
 										<span className="lib-badge lib-badge--karaoke">Karaoke</span>
+									) : (
+										<span className="lib-badge lib-badge--mv">Music Video</span>
 									)}
 								</div>
 							</div>

@@ -512,7 +512,19 @@ export default function App() {
 				</div>
 			) : null}
 
-			{status?.interstitialMessage || status?.lastPlaybackError ? (
+			{status?.interstitialActive ? (
+				<div className="banner tablet-alert-banner" role="status">
+					Gap &amp; HOLD: use the laptop controller
+					{status.interstitialHeld ? ' (currently held)' : ''}
+				</div>
+			) : status?.showMode === 'dj' ? (
+				<div className="banner tablet-alert-banner" role="status">
+					DJ mode — singers join at next Gap
+					{typeof status.pendingKaraoke === 'number' && status.pendingKaraoke > 0
+						? ` · ${status.pendingKaraoke} waiting`
+						: ''}
+				</div>
+			) : status?.interstitialMessage || status?.lastPlaybackError ? (
 				<div className="banner tablet-alert-banner" role="alert">{status.interstitialMessage || status.lastPlaybackError}</div>
 			) : null}
 

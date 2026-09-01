@@ -399,7 +399,14 @@ function isExternalDriveMounted() {
     return false;
   }
 }
-if (isExternalDriveMounted()) {
+// NEVER mkdir/readdir maxone at module load — a stalled ExFAT USB hangs
+// the process before server.listen(), leaving :3131 dead (or owned by a
+// LaunchAgent orphan with no Electron IPC).
+function ensureLibraryDirsLazy() {
+  if (!isExternalDriveMounted()) {
+    console.warn('[library] External drive not mounted — skipping library mkdir:', EXTERNAL_DRIVE);
+    return;
+  }
   for (const dir of LIBRARY_SEARCH_DIRS) {
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -407,8 +414,6 @@ if (isExternalDriveMounted()) {
       console.warn('[library] External directory unavailable:', dir, e.code || e.message);
     }
   }
-} else {
-  console.warn('[library] External drive not mounted — skipping library mkdir:', EXTERNAL_DRIVE);
 }
 
 // Determine the download directory for a video based on its tag
@@ -538,7 +543,7 @@ function downloadVideo(videoId) {
     // batch dedup. On-demand downloads must always fetch even if the mp4
     // was cleaned up since the last batch run.
     const proc = require('child_process').spawn(YT_DLP_PATH, [
-      '-f', 'b[height<=1080]',
+      '-f', 'bv*[vcodec^=avc1][height<=1080]+ba/bv*[vcodec*=avc1][height<=1080]+ba/b[ext=mp4][vcodec*=avc1][height<=1080]/b[height<=720]/b[height<=1080]',
       '--merge-output-format', 'mp4',
       '--write-info-json',
       '--write-thumbnail',
@@ -1853,10 +1858,38 @@ router.get('/api/library/lyrics/:videoId', async (ctx) => {
     path.join(LIBRARY_KARAOKE_DIR, videoId + '.lrc.json'),      // exact match (handles non-standard naming)
   ];
 
+  // Prefer Electron library helpers when available (multi-track normalize)
+  try {
+    const electronLib = path.join(__dirname, '..', 'electron-app', 'library.js');
+    if (fs.existsSync(electronLib)) {
+      const library = require(electronLib);
+      if (library && typeof library.getLyrics === 'function') {
+        const ly = library.getLyrics(baseId) || library.getLyrics(videoId);
+        if (ly) {
+          ctx.body = { ok: true, videoId, ...ly };
+          return;
+        }
+      }
+    }
+  } catch (e) { /* fall through to raw file read */ }
+
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) {
         const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        // Lightweight dual-track normalize for API consumers
+        if (data.tracks && data.display) {
+          const pk = data.display.primary;
+          const sk = data.display.secondary;
+          if (pk && data.tracks[pk] && Array.isArray(data.tracks[pk].lines)) {
+            data.lines = data.tracks[pk].lines;
+            data.primaryTrack = pk;
+          }
+          if (sk && data.tracks[sk] && Array.isArray(data.tracks[sk].lines) && data.tracks[sk].lines.length) {
+            data.secondaryLines = data.tracks[sk].lines;
+            data.secondaryTrack = sk;
+          }
+        }
         ctx.body = { ok: true, videoId, ...data };
         return;
       }
@@ -1890,6 +1923,10 @@ router.get('/api/library/stream/:videoId', async (ctx) => {
     ctx.set('Accept-Ranges', 'bytes');
     ctx.set('Content-Type', 'video/mp4');
     ctx.set('Cache-Control', 'no-cache');
+    // Needed for the HDMI player's Web Audio beat-tap (<audio crossOrigin>)
+    ctx.set('Access-Control-Allow-Origin', '*');
+    ctx.set('Access-Control-Allow-Headers', 'Range');
+    ctx.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
@@ -1914,6 +1951,9 @@ router.get('/api/library/stream/:videoId', async (ctx) => {
   res.writeHead(200, {
     'Content-Type': 'video/mp4',
     'Cache-Control': 'no-cache',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Range',
+    'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
   });
 
   const proc = require('child_process').spawn(YT_DLP_PATH, [
@@ -1946,6 +1986,46 @@ router.get('/api/library/stream/:videoId', async (ctx) => {
   });
 });
 
+// Serve Demucs vocal / instrumental stems for live mix in the Electron player
+router.get('/api/library/stem/:videoId/:role', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  const role = String(ctx.params.role || '').toLowerCase();
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid video ID' }; return;
+  }
+  if (role !== 'vocals' && role !== 'instrumental') {
+    ctx.status = 400; ctx.body = { ok: false, error: 'role must be vocals or instrumental' }; return;
+  }
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const fileName = role === 'vocals'
+    ? (base + '-karaoke-vocals.wav')
+    : (base + '-instrumental.wav');
+  const stemPath = path.join(LIBRARY_KARAOKE_DIR, fileName);
+  if (!fs.existsSync(stemPath) || fs.statSync(stemPath).size < 10000) {
+    ctx.status = 404; ctx.body = { ok: false, error: 'Stem not found' }; return;
+  }
+  const stat = fs.statSync(stemPath);
+  const range = ctx.req.headers.range;
+  ctx.set('Accept-Ranges', 'bytes');
+  ctx.set('Content-Type', 'audio/wav');
+  ctx.set('Cache-Control', 'no-cache');
+  ctx.set('Access-Control-Allow-Origin', '*');
+  ctx.set('Access-Control-Allow-Headers', 'Range');
+  ctx.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+    ctx.status = 206;
+    ctx.set('Content-Range', 'bytes ' + start + '-' + end + '/' + stat.size);
+    ctx.set('Content-Length', String(end - start + 1));
+    ctx.body = fs.createReadStream(stemPath, { start, end });
+  } else {
+    ctx.set('Content-Length', String(stat.size));
+    ctx.body = fs.createReadStream(stemPath);
+  }
+});
+
 router.get('/api/library/file/:videoId', async (ctx) => {
   const videoId = ctx.params.videoId;
   if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
@@ -1968,6 +2048,9 @@ router.get('/api/library/file/:videoId', async (ctx) => {
   const stat = fs.statSync(mp4);
   const range = ctx.req.headers.range;
   ctx.set('Accept-Ranges', 'bytes');
+  ctx.set('Access-Control-Allow-Origin', '*');
+  ctx.set('Access-Control-Allow-Headers', 'Range');
+  ctx.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-');
     const start = parseInt(parts[0], 10);
@@ -2452,12 +2535,76 @@ router.post('/api/library/tags', async (ctx) => {
     artist: body.artist !== undefined ? String(body.artist) : existing.artist,
     source: body.source !== undefined ? String(body.source) : existing.source
   };
+  if (body.rating !== undefined) {
+    const n = Math.max(0, Math.min(5, Math.round(Number(body.rating) || 0)));
+    if (n === 0) delete tags[videoId].rating;
+    else tags[videoId].rating = n;
+  }
   saveTags(tags);
   // Sync to MySQL asynchronously
   mysql.tagSet(videoId, tag, body.artist || '', body.year || '', body.source || '').catch(e => {
     console.error('[library/tags] MySQL write error:', e.message);
   });
   ctx.body = { ok: true, videoId, tag: tags[videoId] };
+});
+
+// Star rating for custom karaoke tracks (1–5, or 0 to clear)
+router.post('/api/library/rating', async (ctx) => {
+  const body = ctx.request.body || {};
+  const videoId = body.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
+  }
+  try {
+    const electronLib = path.join(__dirname, '..', 'electron-app', 'library.js');
+    if (fs.existsSync(electronLib)) {
+      const library = require(electronLib);
+      if (library && typeof library.setRating === 'function') {
+        ctx.body = library.setRating(videoId, body.rating);
+        return;
+      }
+    }
+  } catch (e) {
+    console.error('[library/rating] electron lib failed:', e.message);
+  }
+  // Fallback: write tags.json directly
+  const tags = loadTags();
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const key = tags[base + '-karaoke'] ? (base + '-karaoke') : (tags[videoId] ? videoId : (base + '-karaoke'));
+  const existing = tags[key] || { tag: 'karaoke', year: '', artist: '', source: 'karaoke-maker' };
+  const n = Math.max(0, Math.min(5, Math.round(Number(body.rating) || 0)));
+  const next = { ...existing };
+  if (n === 0) delete next.rating;
+  else next.rating = n;
+  tags[key] = next;
+  saveTags(tags);
+  ctx.body = { ok: true, videoId: key, rating: n || null };
+});
+
+router.get('/api/library/rating/:videoId', async (ctx) => {
+  const videoId = ctx.params.videoId;
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}(-karaoke)?$/.test(videoId)) {
+    ctx.status = 400; ctx.body = { ok: false, error: 'Invalid videoId' }; return;
+  }
+  try {
+    const electronLib = path.join(__dirname, '..', 'electron-app', 'library.js');
+    if (fs.existsSync(electronLib)) {
+      const library = require(electronLib);
+      if (library && typeof library.getRating === 'function') {
+        ctx.body = library.getRating(videoId);
+        return;
+      }
+    }
+  } catch (e) { /* fall through */ }
+  const tags = loadTags();
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const entry = tags[base + '-karaoke'] || tags[videoId] || tags[base] || {};
+  const n = Number(entry.rating);
+  ctx.body = {
+    ok: true,
+    videoId,
+    rating: (Number.isFinite(n) && n > 0) ? Math.max(1, Math.min(5, Math.round(n))) : null,
+  };
 });
 
 // Batch download all videos from a playlist (background job)
@@ -2479,7 +2626,7 @@ router.post('/api/library/download-playlist', async (ctx) => {
     try {
       console.log('[library] Batch downloading playlist: ' + playlistId);
       const proc = require('child_process').spawn(YT_DLP_PATH, [
-        '-f', 'b[height<=1080]',
+        '-f', 'bv*[vcodec^=avc1][height<=1080]+ba/bv*[vcodec*=avc1][height<=1080]+ba/b[ext=mp4][vcodec*=avc1][height<=1080]/b[height<=720]/b[height<=1080]',
         '--merge-output-format', 'mp4',
         '--write-info-json',
         '--write-thumbnail',
@@ -2626,42 +2773,28 @@ function stopMdnsBroadcaster() {
   }
 }
 
-// ── BlackHole sample rate fix: ensures 44.1 kHz to match UMC404HD ──
-// CoreAudio may reset BlackHole to 48 kHz after reboot; this Swift binary sets it.
-function alignBlackHoleSampleRate() {
-  const { exec } = require('child_process');
-  const binPath = path.resolve(__dirname, '..', 'scripts', 'blackhole-44100');
-  if (!fs.existsSync(binPath)) {
-    console.log('[blackhole-sr] Swift binary not found at ' + binPath + ' (run: swiftc -o scripts/blackhole-44100 scripts/blackhole-44100.swift)');
-    return;
+// ── Audio chain helpers (scripts/karol-audio-setup.js) ──
+let karolAudio;
+try {
+  karolAudio = require(path.resolve(__dirname, '..', 'scripts', 'karol-audio-setup.js'));
+} catch (_) {
+  try {
+    karolAudio = require(path.join(process.resourcesPath, 'scripts', 'karol-audio-setup.js'));
+  } catch (_) {
+    karolAudio = null;
   }
-  exec(binPath, { timeout: 5000 }, (err, stdout, stderr) => {
-    if (err) {
-      console.warn('[blackhole-sr] Failed: ' + (stderr || err.message).trim());
-    } else {
-      console.log('[blackhole-sr] ' + stdout.trim());
-    }
-  });
 }
 
-// ── Set Karol as macOS default output device ──
-// Sets the Karol aggregate device as the system default output so audio
-// routes correctly through BlackHole → Ableton → UMC404HD.
-// This Swift binary sets Karol (Multi-Output: BlackHole 2ch + UMC404HD) as default.
+function alignBlackHoleSampleRate() {
+  if (karolAudio) karolAudio.alignBlackHoleSampleRate();
+}
+
 function setDefaultAudioOutput() {
-  const { exec } = require('child_process');
-  const binPath = path.resolve(__dirname, '..', 'scripts', 'set-default-karol');
-  if (!fs.existsSync(binPath)) {
-    console.warn('[audio-default] Binary not found: ' + binPath);
-    return;
-  }
-  exec(binPath, { timeout: 5000 }, (err, stdout, stderr) => {
-    if (err) {
-      console.warn('[audio-default] Failed: ' + (stderr || err.message).trim());
-    } else {
-      console.log('[audio-default] ' + stdout.trim());
-    }
-  });
+  if (karolAudio) karolAudio.setDefaultKarolAggregate();
+}
+
+function configureAudioOnStartup() {
+  if (karolAudio) karolAudio.configureAudioOnStartup();
 }
 
 // ── Audio chain verification: confirms the Karol aggregate device,
@@ -2729,30 +2862,11 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log('Karol API online at http://0.0.0.0:' + PORT);
   console.log('  Electron app in control — all playback handled locally');
   console.log('  Ableton, Hardware mixer routes ready');
-  tryLoadCacheFromDisk();  // Load pre-built cache if available, avoids re-scanning
-  // Auto-recover tags.json if it was lost (deferred to avoid blocking startup)
-  try {
-    const tags = loadTags();
-    let archiveCount = 0;
-    try {
-      if (fs.existsSync(ARCHIVE_PATH)) {
-        archiveCount = fs.readFileSync(ARCHIVE_PATH, 'utf8').split('\n').filter(Boolean).length;
-      }
-    } catch (_) {}
-    if (archiveCount > 10 && Object.keys(tags).length < archiveCount * 0.1) {
-      console.log('[startup] Tags.json has ' + Object.keys(tags).length + ' entries but archive has ' + archiveCount + ' — rebuilding from info.json files ...');
-      rebuildTagsFromDisk();
-    }
-  } catch (_) {}
-  // startAbletonPoll();  // DISABLED for stability
-  // startMdnsBroadcaster(getLanIp());  // DISABLED for stability
-
-  // verifyAudioChain();  // DISABLED — system_profiler hangs and kills server
-  // Fire-and-forget: pre-build video library cache in a forked subprocess
-  // so the first API request doesn't have to wait 20+ seconds for the scan.
-  // Now lazy: buildLibraryCache() called on first /api/library/list request.
-  // buildLibraryCache().catch(() => {});  // DISABLED — execFile kills server on macOS 26
-
+  tryLoadCacheFromDisk();  // /tmp cache only — never touch USB here
+  setTimeout(() => configureAudioOnStartup(), 3000);
+  // Do NOT touch maxone/ExFAT here (mkdir, tags, archive). Even in setImmediate
+  // a stalled USB freezes the Node event loop and HTTP accepts but never replies.
+  // Dirs are created on demand by download / make-karaoke paths.
   console.log('[announce] Karol server is running.');
 });
 

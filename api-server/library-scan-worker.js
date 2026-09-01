@@ -3,6 +3,46 @@
 const fs = require('fs');
 const path = require('path');
 
+const LOCK_PATH = '/tmp/karol-library-scan.lock';
+let lockFd = null;
+function acquireScanLock() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      lockFd = fs.openSync(LOCK_PATH, 'wx');
+      fs.writeFileSync(lockFd, String(process.pid));
+      return;
+    } catch (e) {
+      let stale = false;
+      try {
+        const oldPid = parseInt(fs.readFileSync(LOCK_PATH, 'utf8').trim(), 10);
+        if (!oldPid) stale = true;
+        else {
+          try { process.kill(oldPid, 0); } catch (_) { stale = true; }
+          if (!stale) {
+            console.error('[library-scan] Another scan already running (pid ' + oldPid + ') — exit');
+            process.exit(3);
+          }
+        }
+      } catch (_) { stale = true; }
+      if (stale) {
+        try { fs.unlinkSync(LOCK_PATH); } catch (_) {}
+        continue;
+      }
+    }
+  }
+  console.error('[library-scan] Could not acquire scan lock — exit');
+  process.exit(3);
+}
+function releaseScanLock() {
+  try { if (lockFd != null) fs.closeSync(lockFd); } catch (_) {}
+  try { fs.unlinkSync(LOCK_PATH); } catch (_) {}
+  lockFd = null;
+}
+acquireScanLock();
+process.on('exit', releaseScanLock);
+process.on('SIGINT', () => { releaseScanLock(); process.exit(130); });
+process.on('SIGTERM', () => { releaseScanLock(); process.exit(143); });
+
 const [archivePath, libraryDir, downloadsDir, tagsPath] = process.argv.slice(2);
 
 const downloadedVideoIds = new Set();
@@ -61,6 +101,9 @@ for (const dir of scanDirs) {
   let files;
   try { files = fs.readdirSync(dir); } catch (e) { continue; }
   for (const f of files) {
+    // ExFAT/macOS litter — scanning these doubled I/O on karaoke/ (~10k ._ files)
+    // and made the library "stuck scanning" while two workers fought the USB.
+    if (!f || f.startsWith('._') || f === '.DS_Store') continue;
     const extMatch = f.match(/\.(mp4|mkv|mp3|info\.json|vtt|webp|jpg)$/);
     if (!extMatch) continue;
 
@@ -74,10 +117,33 @@ for (const dir of scanDirs) {
     // Index ALL files that exist on disk — the archive only tracks download status,
     // it doesn't gate whether a file is a valid library entry
     if (!videoIdFromFile) continue;
+    // Reject playlist IDs / garbage stems (real YT ids are exactly 11 chars;
+    // karaoke variants are "<11>-karaoke"). Orphan playlist .info.json/.jpg
+    // used to create fake Music Video rows like "Naynay Bday".
+    const baseIdCheck = videoIdFromFile.endsWith('-karaoke')
+      ? videoIdFromFile.slice(0, -8)
+      : videoIdFromFile;
+    if (!/^[A-Za-z0-9_-]{11}$/.test(baseIdCheck)) continue;
 
     const entry = ensure(videoIdFromFile);
     if (extMatch[1] === 'mp4' || extMatch[1] === 'mkv' || extMatch[1] === 'mp3') {
-      try { entry.size = fs.statSync(path.join(dir, f)).size; } catch (e) {}
+      try {
+        const full = path.join(dir, f);
+        // Dual-presence: pipeline leaves karaoke/{id}.mp4 (source) beside
+        // karaoke/{id}-karaoke.mp4. The Music Video row must reflect songs/.
+        const isKaraokeDir = path.basename(dir) === 'karaoke';
+        const isBareId = !videoIdFromFile.endsWith('-karaoke');
+        if (isKaraokeDir && isBareId) {
+          const songsTwin = path.join(libraryDir, 'songs', f);
+          if (fs.existsSync(songsTwin) && fs.statSync(songsTwin).size >= 50_000) {
+            // Skip — songs/ pass (later) owns the base-id media size.
+          } else {
+            entry.size = fs.statSync(full).size;
+          }
+        } else {
+          entry.size = fs.statSync(full).size;
+        }
+      } catch (e) {}
     } else if (extMatch[1] === 'info.json') {
       try { entry.meta = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (e) {}
     } else if (extMatch[1] === 'vtt') {
@@ -97,7 +163,10 @@ for (const videoId of Object.keys(fileMap)) {
   const f = fileMap[videoId] || { size: 0, subs: [], meta: null };
   const isKaraokeVariant = videoId.endsWith('-karaoke');
   const baseVideoId = isKaraokeVariant ? videoId.slice(0, -8) : videoId;
-  // Skip bogus entries: no metadata title AND no thumbnail = ID-only noise.
+  // Skip sidecar-only ghosts (info.json/webp with no playable media).
+  // These appeared as duplicate Custom/Music rows after MVs were moved beside
+  // an existing `-karaoke.mp4` pipeline output.
+  if (!f.size) continue;
   // Karaoke variants without their own info.json borrow the base entry's meta
   // so older pipeline outputs still appear as distinct rows.
   let meta = f.meta;
@@ -105,11 +174,18 @@ for (const videoId of Object.keys(fileMap)) {
     meta = fileMap[baseVideoId].meta;
   }
   if (!meta?.title && !meta?.thumbnail) continue;
-  // For BASE rows, karaoke-variant tags may enrich (legacy tags.json keyed
-  // some base metadata under the '-karaoke' key). Variant rows use exact key.
-  const tagEntry = isKaraokeVariant
-    ? { ...(tagsData[baseVideoId] || {}), ...(tagsData[videoId] || {}) }
-    : { ...(tagsData[videoId] || {}), ...(tagsData[videoId + '-karaoke'] || {}) };
+  // For BASE rows, never merge the '-karaoke' tag's source/tag onto the Music
+  // Video row (that duplicated Custom entries as both `{id}` and `{id}-karaoke`).
+  // Sibling metadata (title/artist/…) may still fill gaps.
+  const own = tagsData[videoId] || {};
+  const sibling = tagsData[isKaraokeVariant ? baseVideoId : (videoId + '-karaoke')] || {};
+  const tagEntry = isKaraokeVariant ? { ...sibling, ...own } : { ...own };
+  if (!isKaraokeVariant) {
+    if (!tagEntry.title && sibling.title) tagEntry.title = sibling.title;
+    if (!tagEntry.artist && sibling.artist) tagEntry.artist = sibling.artist;
+    if (!tagEntry.year && sibling.year) tagEntry.year = sibling.year;
+    if (!tagEntry.upload_date && sibling.upload_date) tagEntry.upload_date = sibling.upload_date;
+  }
   // Title: info.json → tags.json (exact key, then variant/base keys) — only
   // ever fall back to the raw video id when no better source exists anywhere.
   const tagTitle = ((tagsData[videoId] || {}).title
@@ -118,6 +194,15 @@ for (const videoId of Object.keys(fileMap)) {
   const bestTitle = (meta?.title || '').trim() || tagTitle || videoId;
   // Sanitize: strip control chars and escape backslashes that would break JSON
   const rawTitle = bestTitle.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\\/g, '\\\\');
+  // '<id>-karaoke' files are only produced by the local karaoke pipeline;
+  // stamp provenance even when tags.json lost it. Base Music Video rows must
+  // never inherit karaoke-maker (Custom filter keys off that source).
+  let source = tagEntry.source || '';
+  if (isKaraokeVariant) {
+    source = source || 'karaoke-maker';
+  } else if (source === 'karaoke-maker') {
+    source = '';
+  }
   videos.push({
     videoId,
     title: rawTitle,
@@ -130,13 +215,17 @@ for (const videoId of Object.keys(fileMap)) {
     tag: isKaraokeVariant ? 'karaoke' : (tagEntry.tag || 'music'),
     year: tagEntry.year || String(tagEntry.upload_date || meta?.upload_date || '').slice(0, 4),
     artist: tagEntry.artist || '',
-    // '<id>-karaoke' files are only produced by the local karaoke pipeline;
-    // stamp provenance even when tags.json lost it so the Custom filter and
-    // the MySQL catalog sync stay correct across tag rebuilds.
-    source: tagEntry.source || (/^[A-Za-z0-9_-]{11}-karaoke$/.test(videoId) ? 'karaoke-maker' : ''),
+    source,
     isKaraokeVariant,
     baseVideoId,
     hasKaraoke: !isKaraokeVariant && !!fileMap[videoId + '-karaoke'],
+    rating: (function () {
+      var n = Number(tagEntry.rating);
+      if (!Number.isFinite(n) || n <= 0) {
+        n = Number(sibling.rating);
+      }
+      return (Number.isFinite(n) && n > 0) ? Math.max(1, Math.min(5, Math.round(n))) : null;
+    })(),
   });
 }
 videos.sort((a, b) => b.size - a.size);

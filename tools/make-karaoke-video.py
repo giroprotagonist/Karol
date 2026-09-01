@@ -55,14 +55,34 @@ LRCLIB_SEARCH_API = "https://lrclib.net/api/search"
 LRCLIB_UA = {"User-Agent": "KarolKaraoke/1.0 (https://github.com/karol)"}
 # ffmpeg-full (keg-only on macOS) has drawtext/libfreetype compiled in
 # Regular Homebrew ffmpeg does not. Try full first, fall back to Homebrew.
-_FFMPEG_BIN = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg" if os.path.exists("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg") else "/opt/homebrew/bin/ffmpeg"
+_HOMEBREW_BIN = "/opt/homebrew/bin"
+_FFMPEG_BIN = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg" if os.path.exists("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg") else f"{_HOMEBREW_BIN}/ffmpeg"
 _FFMPEG_BIN = shutil.which(_FFMPEG_BIN) or shutil.which("ffmpeg") or "ffmpeg"
-_FFPROBE_BIN = "/opt/homebrew/bin/ffprobe"
+_FFPROBE_BIN = f"{_HOMEBREW_BIN}/ffprobe"
 if not shutil.which(_FFPROBE_BIN):
     _FFPROBE_BIN = shutil.which("ffprobe") or "ffprobe"
-_YTDLP_BIN = "/opt/homebrew/bin/yt-dlp"
+_YTDLP_BIN = f"{_HOMEBREW_BIN}/yt-dlp"
+# yt-dlp needs a dir with both ffmpeg + ffprobe (not ffmpeg-full alone).
+_YTDLP_FFMPEG_LOCATION = _HOMEBREW_BIN if os.path.exists(f"{_HOMEBREW_BIN}/ffmpeg") else (
+    os.path.dirname(_FFMPEG_BIN) if os.path.dirname(_FFMPEG_BIN) else _FFMPEG_BIN
+)
 _YT_COOKIES = os.path.expanduser("/Users/macdonk/Documents/GitHub/Karol/.karol/yt-cookies.txt")
 _cookie_refreshed_at = 0.0
+
+# Electron/GUI launches often have PATH=/usr/bin:/bin:/usr/sbin:/sbin — no Homebrew.
+# Prepend so demucs, yt-dlp postprocessors, and bare "ffmpeg" lookups work.
+def _ensure_homebrew_on_path() -> None:
+    extras = []
+    for d in (_HOMEBREW_BIN, os.path.dirname(_FFMPEG_BIN) if _FFMPEG_BIN else ""):
+        if d and os.path.isdir(d) and d not in extras:
+            extras.append(d)
+    cur = os.environ.get("PATH", "")
+    parts = [p for p in cur.split(":") if p]
+    prepend = [d for d in extras if d not in parts]
+    if prepend:
+        os.environ["PATH"] = ":".join(prepend + parts)
+
+_ensure_homebrew_on_path()
 
 # Set by main() for whisper language override
 _WHISPER_LANG: Optional[str] = None
@@ -392,12 +412,13 @@ def pre_render_quality_gate(
     if failed:
         log("quality-gate", f"Failed gates: {', '.join(failed)}")
 
-    # Critical gates that block library lyric overwrites
+    # Critical gates that block library lyric overwrites.
+    # lyric_no_overlap is warn-only: YouTube auto-captions routinely overlap and
+    # blocking would drop Thai gold-standard LRCs while still publishing audio.
     critical = {
         "lyric_word_count_min_30",
         "whisper_word_count",
         "ground_truth_yield_min_50",
-        "lyric_no_overlap",
     }
     failed_critical = [k for k in failed if k in critical]
     if failed_critical:
@@ -409,7 +430,7 @@ def pre_render_quality_gate(
 
 def _lrc_score(data: dict) -> tuple[int, int, float]:
     """Score an LRC JSON: (word_count, line_count, first_start). Higher words/lines = better."""
-    lines = data.get("lines", []) if isinstance(data, dict) else []
+    lines = _primary_lines(data) if isinstance(data, dict) else []
     words = 0
     for line in lines:
         arr = line.get("words") or []
@@ -423,9 +444,292 @@ def _lrc_score(data: dict) -> tuple[int, int, float]:
     return words, len(lines), first
 
 
+def _primary_lines(data: dict) -> list:
+    """Return the display-primary lines from a multi-track or legacy LRC."""
+    if not isinstance(data, dict):
+        return []
+    tracks = data.get("tracks") if isinstance(data.get("tracks"), dict) else None
+    if tracks:
+        display = data.get("display") if isinstance(data.get("display"), dict) else {}
+        primary = display.get("primary")
+        if primary and isinstance(tracks.get(primary), dict) and tracks[primary].get("lines"):
+            return tracks[primary]["lines"]
+        for key in ("romanized", "sung", "english"):
+            if isinstance(tracks.get(key), dict) and tracks[key].get("lines"):
+                return tracks[key]["lines"]
+        for tr in tracks.values():
+            if isinstance(tr, dict) and tr.get("lines"):
+                return tr["lines"]
+    return data.get("lines") or []
+
+
+def _track_meta(key: str) -> tuple[str, str, str]:
+    """Return (lang, label, role) defaults for a track key."""
+    if key == "english":
+        return "en", "English", "translation"
+    if key == "romanized":
+        return "", "Romanized", "primary"
+    if key == "native":
+        return "", "Native", "native"
+    if key == "sung":
+        return "", "As sung", "primary"
+    return "", key.replace("_", " ").title(), "primary"
+
+
+def normalize_lyric_tracks(data: dict) -> dict:
+    """Mirror primary track into top-level lines; attach display keys.
+
+    Display stack for players: tertiary (above, e.g. native Thai) → primary
+    (sing/highlight, e.g. RTGS) → secondary (below, e.g. English).
+    """
+    if not isinstance(data, dict):
+        return data
+    tracks = data.get("tracks") if isinstance(data.get("tracks"), dict) else None
+    if not tracks:
+        return data
+    display = data.get("display") if isinstance(data.get("display"), dict) else {}
+    primary = display.get("primary")
+    secondary = display.get("secondary")
+    tertiary = display.get("tertiary")
+    if not primary or primary not in tracks:
+        if "romanized" in tracks:
+            primary = "romanized"
+        elif "sung" in tracks:
+            primary = "sung"
+        elif "english" in tracks:
+            primary = "english"
+        else:
+            primary = next(iter(tracks), None)
+    if secondary == primary or (secondary and secondary not in tracks):
+        secondary = "english" if ("english" in tracks and primary != "english") else None
+    if (
+        not tertiary
+        or tertiary not in tracks
+        or tertiary == primary
+        or tertiary == secondary
+    ):
+        # Prefer native script above RTGS when all three layers exist
+        if primary == "romanized":
+            if "native" in tracks and secondary != "native":
+                tertiary = "native"
+            elif "sung" in tracks and secondary != "sung":
+                tertiary = "sung"
+            else:
+                tertiary = None
+        else:
+            tertiary = None
+    if primary and isinstance(tracks.get(primary), dict):
+        data["lines"] = tracks[primary].get("lines") or []
+        am = tracks[primary].get("alignMode")
+        if am:
+            data["alignMode"] = am
+            # Keep catalog provenance (lrclib_synced etc.); alignMode carries timing method
+            prev_src = str(data.get("source") or "")
+            if not (
+                prev_src.startswith("lrclib")
+                or prev_src in ("user_paste", "karaoke_captions", "genius", "azlyrics", "scrape")
+            ):
+                data["source"] = am
+    data["display"] = {
+        "primary": primary,
+        "secondary": secondary,
+        "tertiary": tertiary,
+    }
+    return data
+
+
+def merge_lyric_track(
+    existing: Optional[dict],
+    incoming: dict,
+    track_key: str = "sung",
+    *,
+    protect_english: bool = True,
+    force: bool = False,
+    legacy_as: str = "english",
+    lang: Optional[str] = None,
+    label: Optional[str] = None,
+    role: Optional[str] = None,
+    display_primary: Optional[str] = None,
+    display_secondary: Optional[str] = None,
+) -> dict:
+    """Merge incoming single-track LRC into existing multi-track without dropping other tracks."""
+    import copy
+    base = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+    incoming = incoming if isinstance(incoming, dict) else {}
+    incoming_lines = incoming.get("lines") if isinstance(incoming.get("lines"), list) else []
+    key = track_key or "sung"
+
+    if not isinstance(base.get("tracks"), dict):
+        base["tracks"] = {}
+
+    # Migrate legacy top-level lines into a named track once
+    if (isinstance(base.get("lines"), list) and base["lines"]
+            and not base["tracks"]):
+        lg, ll, lr = _track_meta(legacy_as)
+        base["tracks"][legacy_as] = {
+            "lang": lg,
+            "label": ll,
+            "role": lr,
+            "lines": base["lines"],
+            "alignMode": base.get("alignMode") or base.get("source") or "",
+        }
+
+    if (protect_english and key == "english"
+            and isinstance(base["tracks"].get("english"), dict)
+            and base["tracks"]["english"].get("lines")
+            and not force):
+        log("lyrics", "Preserving existing tracks.english (protect_english)")
+        return normalize_lyric_tracks(base)
+
+    dlang, dlabel, drole = _track_meta(key)
+    base["tracks"][key] = {
+        "lang": lang if lang is not None else dlang,
+        "label": label or dlabel,
+        "role": role or drole,
+        "lines": incoming_lines,
+        "alignMode": incoming.get("alignMode") or incoming.get("source") or "",
+    }
+
+    if incoming.get("videoId"):
+        base["videoId"] = incoming["videoId"]
+    if incoming.get("duration") is not None:
+        base["duration"] = incoming["duration"]
+    if incoming.get("title"):
+        base["title"] = base.get("title") or incoming["title"]
+    if incoming.get("artist"):
+        base["artist"] = base.get("artist") or incoming["artist"]
+    if incoming.get("lrclibId") is not None and key != "english":
+        base["lrclibId"] = incoming["lrclibId"]
+
+    primary = display_primary or (
+        "romanized" if key == "romanized"
+        else ("sung" if key == "sung" else (base.get("display") or {}).get("primary") or key)
+    )
+    if display_secondary is not None:
+        secondary = display_secondary
+    else:
+        secondary = "english" if ("english" in base["tracks"] and primary != "english") else None
+    # EN-only: primary english, no secondary
+    if primary == "english" and secondary == "english":
+        secondary = None
+    base["display"] = {"primary": primary, "secondary": secondary}
+    return normalize_lyric_tracks(base)
+
+
+def publish_merged_lrc(
+    src_path: Path | str,
+    dest_path: Path | str,
+    track_key: str = "sung",
+    *,
+    force: bool = False,
+    protect_english: bool = True,
+    legacy_as: str = "english",
+) -> bool:
+    """Publish src LRC into dest as a named track, preserving other tracks on disk.
+
+    Returns True if dest was written.
+    """
+    src_path = Path(src_path)
+    dest_path = Path(dest_path)
+    if not src_path.exists():
+        return False
+    try:
+        incoming = json.loads(src_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        log("library", f"Failed to read incoming LRC: {e}")
+        return False
+
+    existing = None
+    if dest_path.exists():
+        try:
+            existing = json.loads(dest_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = None
+
+    # If incoming already has tracks, merge those keys in without wiping others
+    if isinstance(incoming.get("tracks"), dict) and incoming["tracks"]:
+        base = existing if isinstance(existing, dict) else {}
+        if not isinstance(base.get("tracks"), dict):
+            base["tracks"] = {}
+        if (isinstance(base.get("lines"), list) and base["lines"] and not base["tracks"]):
+            lg, ll, lr = _track_meta(legacy_as)
+            base["tracks"][legacy_as] = {
+                "lang": lg, "label": ll, "role": lr,
+                "lines": base["lines"],
+                "alignMode": base.get("alignMode") or base.get("source") or "",
+            }
+        for k, tr in incoming["tracks"].items():
+            if (protect_english and k == "english"
+                    and isinstance(base["tracks"].get("english"), dict)
+                    and base["tracks"]["english"].get("lines") and not force):
+                continue
+            base["tracks"][k] = tr
+        if incoming.get("display"):
+            base["display"] = incoming["display"]
+        if incoming.get("videoId"):
+            base["videoId"] = incoming["videoId"]
+        if incoming.get("duration") is not None:
+            base["duration"] = incoming["duration"]
+        merged = normalize_lyric_tracks(base)
+    else:
+        # Decide overwrite for this track only
+        if existing is not None and not force:
+            # Writing a non-english track into an existing multi-track file is always OK
+            has_other = (
+                isinstance(existing.get("tracks"), dict)
+                and any(k != track_key for k in existing["tracks"])
+            ) or (
+                isinstance(existing.get("lines"), list)
+                and existing["lines"]
+                and track_key != "english"
+            )
+            if not has_other:
+                # Single-track replace still uses quality ranking
+                tmp = dest_path.parent / f".cmp-{dest_path.name}.{os.getpid()}"
+                try:
+                    tmp.write_text(json.dumps(incoming), encoding="utf-8")
+                    if not should_overwrite_lrc(dest_path, tmp, force=False):
+                        log("library", f"Kept existing LRC (new result not better): {dest_path}")
+                        return False
+                finally:
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+
+        merged = merge_lyric_track(
+            existing,
+            incoming,
+            track_key,
+            protect_english=protect_english,
+            force=force,
+            legacy_as=legacy_as,
+        )
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    staging = dest_path.parent / f".staging-{dest_path.name}.{os.getpid()}.part"
+    try:
+        staging.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+        with open(staging, "rb+") as f:
+            os.fsync(f.fileno())
+        os.replace(staging, dest_path)
+    finally:
+        if staging.exists():
+            try:
+                staging.unlink()
+            except OSError:
+                pass
+    repair_lrc_json_words(dest_path)
+    log("library", f"Published track '{track_key}' → {dest_path}")
+    return True
+
+
 def _lrc_source_rank(data: dict) -> int:
-    """Higher = more trusted catalog timing. Synced LRCLIB beats Whisper/approx."""
+    """Higher = more trusted. Force-aligned catalog text beats raw LRCLIB times."""
     mode = str(data.get("alignMode") or data.get("source") or "").lower()
+    # Demucs-vocal Whisper keep-text is the gold timing for catalog words
+    if "keep-text" in mode:
+        return 105
     if mode.startswith("lrclib_synced"):
         return 100
     if "lrclib" in mode and "synced" in mode:
@@ -441,6 +745,110 @@ def _lrc_source_rank(data: dict) -> int:
     if mode in ("whisper_invent", "whisper"):
         return 5
     return 40  # unknown / plain
+
+
+def _iter_lrc_json_lines(data: dict) -> list[dict]:
+    """Primary track lines from multi-track or legacy single-track LRC JSON."""
+    if not isinstance(data, dict):
+        return []
+    tracks = data.get("tracks") if isinstance(data.get("tracks"), dict) else None
+    if tracks:
+        try:
+            key = _primary_track_key(data)
+        except Exception:  # noqa: BLE001
+            key = "sung"
+        lines = (tracks.get(key) or {}).get("lines") or []
+        if lines:
+            return list(lines)
+        for tr in tracks.values():
+            if isinstance(tr, dict) and tr.get("lines"):
+                return list(tr["lines"])
+    return list(data.get("lines") or [])
+
+
+def _lrc_json_timing_broken(data: dict, duration: float) -> bool:
+    """True when catalog/proportional timings are unusable for this cut."""
+    if duration <= 1:
+        return False
+    lines = _iter_lrc_json_lines(data)
+    if not lines:
+        return True
+    past = 0
+    for ln in lines:
+        st = float(ln.get("startTime") or 0)
+        en = float(ln.get("endTime") or st)
+        if st >= duration - 0.25:
+            past += 1
+        if en > duration + 2.0 and st < duration:
+            # end clipped past EOF is common; start past EOF is fatal
+            pass
+        if st >= duration:
+            past += 1
+    if past >= 1:
+        return True
+    # Giant first-line smear (proportional fill across a huge LRCLIB gap)
+    first = lines[0]
+    f_st = float(first.get("startTime") or 0)
+    f_en = float(first.get("endTime") or f_st)
+    if (f_en - f_st) > 25.0:
+        return True
+    if len(lines) >= 2:
+        gap = float(lines[1].get("startTime") or 0) - f_st
+        if gap > 40.0:
+            return True
+    return False
+
+
+def _clamp_lrc_json_to_duration(data: dict, duration: float) -> None:
+    """In-place clamp of cue times so nothing starts past EOF (last-resort publish)."""
+    if duration <= 1:
+        return
+    max_start = max(0.0, duration - 0.35)
+
+    def _clamp_lines(lines: list) -> None:
+        for ln in lines or []:
+            st = float(ln.get("startTime") or 0)
+            en = float(ln.get("endTime") or st)
+            if st > max_start:
+                st = max_start
+            if en > duration:
+                en = duration
+            if en < st:
+                en = min(duration, st + 0.4)
+            ln["startTime"] = round(st, 2)
+            ln["endTime"] = round(en, 2)
+            words = ln.get("words") or []
+            if words:
+                for w in words:
+                    ws = float(w.get("startTime") or st)
+                    we = float(w.get("endTime") or ws)
+                    ws = min(max(ws, st), en)
+                    we = min(max(we, ws), en)
+                    w["startTime"] = round(ws, 2)
+                    w["endTime"] = round(we, 2)
+
+    tracks = data.get("tracks") if isinstance(data.get("tracks"), dict) else None
+    if tracks:
+        for tr in tracks.values():
+            if isinstance(tr, dict):
+                _clamp_lines(tr.get("lines") or [])
+    _clamp_lines(data.get("lines") or [])
+
+
+def _catalog_text_source(source: str) -> bool:
+    """Sources whose *words* we keep and force-align (never invent)."""
+    s = (source or "").lower()
+    if not s:
+        return False
+    if s.startswith("lrclib"):
+        return True
+    if s in ("user_paste", "karaoke_captions", "genius", "azlyrics", "scrape"):
+        return True
+    if s.endswith("+force") and any(
+        s.startswith(p) for p in ("lrclib", "user_paste", "karaoke", "genius", "azlyrics")
+    ):
+        return True
+    return False
 
 
 def should_overwrite_lrc(existing_path: Path, new_path: Path, force: bool = False) -> bool:
@@ -469,15 +877,22 @@ def should_overwrite_lrc(existing_path: Path, new_path: Path, force: bool = Fals
 
     old_rank = _lrc_source_rank(old)
     new_rank = _lrc_source_rank(new)
+    # keep-text (105) may replace raw lrclib_synced (100); never the reverse
     if old_rank >= 100 and new_rank < 100:
         log("quality-gate",
-            f"Keeping existing lrclib_synced LRC — refusing downgrade "
-            f"(new alignMode={new.get('alignMode') or new.get('source')!r})")
+            f"Keeping existing catalog LRC — refusing downgrade "
+            f"(old rank={old_rank}, new alignMode={new.get('alignMode') or new.get('source')!r})")
         return False
     if old_rank > new_rank + 15:
         log("quality-gate",
             f"Keeping existing LRC (rank {old_rank}) — new rank {new_rank} is worse")
         return False
+    # Prefer force-aligned keep-text over raw catalog times even when ranks are close
+    if new_rank >= 105 and old_rank <= 100 and "keep-text" in str(
+        new.get("alignMode") or ""
+    ).lower():
+        log("quality-gate", "Allowing keep-text force-align overwrite of raw catalog timings")
+        return True
 
     old_w, old_n, old_start = _lrc_score(old)
     new_w, new_n, new_start = _lrc_score(new)
@@ -605,12 +1020,20 @@ def refresh_yt_cookies(force: bool = False) -> bool:
     return False
 
 
+def ytdlp_ffmpeg_args() -> list[str]:
+    """Point yt-dlp at Homebrew ffmpeg/ffprobe (GUI apps often lack them on PATH)."""
+    return ["--ffmpeg-location", _YTDLP_FFMPEG_LOCATION]
+
+
 def ytdlp_auth_args() -> list[str]:
-    """Auth flags for yt-dlp: prefer logged-in cookie jar, else live Chrome."""
+    """Common yt-dlp flags: ffmpeg location + auth (cookie jar or live Chrome)."""
     refresh_yt_cookies()
+    args = list(ytdlp_ffmpeg_args())
     if os.path.exists(_YT_COOKIES) and os.path.getsize(_YT_COOKIES) > 100:
-        return ["--cookies", _YT_COOKIES]
-    return ["--cookies-from-browser", "chrome"]
+        args.extend(["--cookies", _YT_COOKIES])
+    else:
+        args.extend(["--cookies-from-browser", "chrome"])
+    return args
 
 
 def get_video_duration(video_path: str) -> float:
@@ -627,6 +1050,156 @@ def get_video_duration(video_path: str) -> float:
         return float(info["format"]["duration"])
     except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, ValueError):
         fatal(f"Could not determine duration of {video_path}")
+
+
+def verify_downloaded_video(mp4_path: str, info_path: Optional[str] = None) -> tuple[bool, str]:
+    """Reject truncated/corrupt muxes (frozen video = short video stream vs container)."""
+    if not mp4_path or not os.path.exists(mp4_path):
+        return False, "missing-file"
+    try:
+        size = os.path.getsize(mp4_path)
+    except OSError as e:
+        return False, f"stat-fail:{e}"
+    if size < 50_000:
+        return False, f"too-small:{size}"
+
+    expected_duration = None
+    expected_size = None
+    candidates = []
+    if info_path:
+        candidates.append(info_path)
+    candidates.append(os.path.splitext(mp4_path)[0] + ".info.json")
+    if mp4_path.endswith("-karaoke.mp4"):
+        candidates.append(mp4_path.replace("-karaoke.mp4", "-karaoke.info.json"))
+    for p in candidates:
+        if not p or not os.path.exists(p):
+            continue
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                info = json.load(f)
+            if info.get("duration") is not None:
+                expected_duration = float(info["duration"])
+            expected_size = info.get("filesize") or info.get("filesize_approx")
+            if expected_duration or expected_size:
+                break
+        except Exception:
+            continue
+
+    try:
+        r = subprocess.run(
+            [
+                _FFPROBE_BIN, "-v", "error",
+                "-show_entries", "format=duration,size:stream=codec_type,codec_name,duration",
+                "-of", "json", mp4_path,
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            return False, f"ffprobe-fail:{(r.stderr or '')[:120]}"
+        data = json.loads(r.stdout or "{}")
+    except Exception as e:
+        return False, f"ffprobe-fail:{e}"
+
+    streams = data.get("streams") or []
+    fmt = data.get("format") or {}
+    videos = [s for s in streams if s.get("codec_type") == "video" and s.get("codec_name") != "png"]
+    audios = [s for s in streams if s.get("codec_type") == "audio"]
+    if not videos or not audios:
+        return False, "missing-av"
+    try:
+        fdur = float(fmt.get("duration") or 0)
+    except (TypeError, ValueError):
+        fdur = 0.0
+    try:
+        vdur = float(videos[0].get("duration") or 0)
+    except (TypeError, ValueError):
+        vdur = 0.0
+    try:
+        adur = float(audios[0].get("duration") or 0)
+    except (TypeError, ValueError):
+        adur = 0.0
+    ref = max(fdur, expected_duration or 0.0)
+    if ref < 5 and max(vdur, adur, fdur) < 5:
+        return False, f"too-short:{max(vdur, adur, fdur):.2f}"
+    if ref > 15 and vdur > 0 and vdur < ref * 0.85:
+        return False, f"truncated-video vid={vdur:.2f}s ref={ref:.1f}s"
+    if ref > 15 and adur > 0 and adur < ref * 0.85:
+        return False, f"truncated-audio aud={adur:.2f}s ref={ref:.1f}s"
+    if expected_duration and fdur > 0 and fdur < expected_duration * 0.90:
+        return False, f"short-container fmt={fdur:.1f}s meta={expected_duration:.0f}s"
+    if (
+        expected_size
+        and expected_size > 500_000
+        and size < expected_size * 0.50
+        and size < expected_size - 5_000_000
+    ):
+        return False, f"filesize size={size} meta={expected_size}"
+    return True, f"{videos[0].get('codec_name')}+{audios[0].get('codec_name')} {max(vdur, fdur):.1f}s"
+
+
+def quarantine_bad_download(mp4_path: str, reason: str) -> None:
+    try:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dest = f"{mp4_path}.bad-{stamp}"
+        os.rename(mp4_path, dest)
+        log("download", f"Quarantined incomplete/corrupt video → {dest} ({reason})")
+    except OSError as e:
+        log("download", f"Could not quarantine {mp4_path}: {e}")
+
+
+def find_original_source_mp4(video_id: str) -> Optional[Path]:
+    """Locate a verified original-mix MP4 (not karaoke instrumental).
+
+    Preference order:
+      1. karaoke/{id}.mp4  (pipeline-preserved source)
+      2. songs/{id}.mp4    (Music Videos dual-presence)
+      3. Deskreen/{id}.mp4 (legacy flat library)
+    Corrupt/empty muxes are quarantined and skipped.
+    """
+    candidates = [
+        LIBRARY_KARAOKE_DIR / f"{video_id}.mp4",
+        LIBRARY_DIR / "songs" / f"{video_id}.mp4",
+        LIBRARY_DIR / f"{video_id}.mp4",
+    ]
+    for cand in candidates:
+        if not cand.exists() or cand.stat().st_size < 50_000:
+            continue
+        # Never treat the karaoke render as "original"
+        if cand.name.endswith("-karaoke.mp4"):
+            continue
+        ok, detail = verify_downloaded_video(str(cand))
+        if ok:
+            return cand
+        log("source", f"Skipping bad original candidate {cand.name} ({detail})")
+        # Only quarantine files we own in karaoke/ (don't rename songs/)
+        if cand.parent == LIBRARY_KARAOKE_DIR:
+            quarantine_bad_download(str(cand), detail)
+    return None
+
+
+def ensure_both_stems(
+    video_id: str,
+    instrumental_path: Optional[str],
+    vocals_path: Optional[str],
+) -> tuple[str, str]:
+    """Require Demucs instrumental + vocals for custom karaoke vocal-mix.
+
+    Karaoke.mp4 carries the instrumental; the vocal WAV sidecar is what the
+    player mixes for guide vocals. Both must exist and be same-generation.
+    """
+    if not instrumental_path or not os.path.exists(instrumental_path):
+        fatal("Demucs did not produce an instrumental stem")
+    if os.path.getsize(instrumental_path) < 10000:
+        fatal(f"Instrumental stem too small: {instrumental_path}")
+    if not vocals_path or not os.path.exists(vocals_path):
+        fatal(
+            "Demucs did not produce a vocal stem — custom karaoke requires both "
+            "instrumental (muxed into -karaoke.mp4) and vocals (-karaoke-vocals.wav) "
+            "for in-sync vocal mix"
+        )
+    if os.path.getsize(vocals_path) < 10000:
+        fatal(f"Vocal stem too small: {vocals_path}")
+    return instrumental_path, vocals_path
 
 
 # ── Vocal Onset Detection ────────────────────────────────────────────
@@ -986,11 +1559,25 @@ def lrc_quality_check(
         log("quality", f"FAIL: First meaningful line at {meaningful_first:.1f}s (>30% of {duration:.0f}s)")
         return ('fail', None)
 
-    # ── Last line check (should be near end of song) ──
+    # ── Last line / past-EOF checks (catalog often targets a different cut) ──
     time_remaining = duration - last_ts
     if time_remaining > duration * 0.5:
         log("quality", f"FAIL: Last line at {last_ts:.1f}s, {time_remaining:.0f}s remaining (>50%)")
         return ('fail', None)
+    if last_ts >= duration:
+        log("quality", f"FAIL: Last line at {last_ts:.1f}s is past duration {duration:.1f}s")
+        return ('fail', None)
+    past_cues = sum(1 for ts, _ in lines_raw if ts >= duration - 0.25)
+    if past_cues >= 1:
+        log("quality", f"FAIL: {past_cues} cue(s) at/past duration {duration:.1f}s")
+        return ('fail', None)
+
+    # ── Giant first-line smear (huge inter-tag gap → proportional word fill) ──
+    if len(meaningful_lines) >= 2:
+        first_span = meaningful_lines[1][0] - meaningful_lines[0][0]
+        if first_span > 25.0:
+            log("quality", f"FAIL: First-line gap {first_span:.1f}s > 25s (catalog timing mismatch)")
+            return ('fail', None)
 
     # ── Vocal onset correction ──
     if vocal_onset is None:
@@ -1021,7 +1608,8 @@ def lrc_quality_check(
             return ('fail', None)
         return ('ok', None)
 
-    # Small offset (< 20s): correct
+    # Small offset (< 20s): correct (was a dead indented return — now live)
+    if abs(offset) < 20.0:
         return ('correct', round(offset, 2))
 
     # Large offset (>20s) but line density is reasonable: still correct
@@ -1041,31 +1629,69 @@ def step_download(video_id: str, out_dir: str) -> str:
     """
     log("download", f"Downloading video {video_id} ...")
     mp4_candidate = os.path.join(out_dir, f"{video_id}.mp4")
+    info_candidate = os.path.join(out_dir, f"{video_id}.info.json")
     if os.path.exists(mp4_candidate) and os.path.getsize(mp4_candidate) > 10000:
-        log("download", "MP4 already exists, skipping download")
-        return mp4_candidate
+        ok, detail = verify_downloaded_video(mp4_candidate, info_candidate)
+        if ok:
+            log("download", f"MP4 already exists and verified ({detail}), skipping download")
+            return mp4_candidate
+        log("download", f"Existing MP4 failed integrity check ({detail}) — re-downloading")
+        quarantine_bad_download(mp4_candidate, detail)
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     out_tmpl = os.path.join(out_dir, "%(id)s.%(ext)s")
 
-    # 1) Required: video + metadata (no subs — all-lang subs hit YouTube 429s)
-    cmd = [
+    # Prefer H.264 ≤1080p (AV1 "best" often truncates). mweb first avoids SABR-only web formats.
+    ytdlp_format = (
+        "bv*[vcodec^=avc1][height<=1080]+ba/"
+        "bv*[vcodec*=avc1][height<=1080]+ba/"
+        "b[ext=mp4][vcodec*=avc1][height<=1080]/"
+        "b[height<=720]/b[height<=1080]/b"
+    )
+    base_cmd = [
         _YTDLP_BIN,
-        "-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+        *ytdlp_ffmpeg_args(),
+        "-f", ytdlp_format,
         "--merge-output-format", "mp4",
         "--write-info-json",
         "--write-thumbnail",
         "-o", out_tmpl,
         "--no-playlist",
+        "--socket-timeout", "30",
+        "--retries", "5",
+        "--fragment-retries", "5",
+    ]
+    # ios helps when SABR blocks mweb/tv adaptive HTTPS (yt-dlp#12482).
+    # Cookies skip ios, so on 403 retry once without cookies + ios-only.
+    cmd = [
+        *base_cmd,
+        "--extractor-args", "youtube:player_client=mweb,ios,tv,web",
         *ytdlp_auth_args(),
         url,
     ]
-    run(cmd, timeout=300)
+    result = run(cmd, timeout=300, check=False)
+    if result.returncode != 0:
+        err = (result.stderr or "") + (result.stdout or "")
+        log("download", f"Primary yt-dlp failed (exit {result.returncode}); retrying without cookies via ios")
+        for remnant in Path(out_dir).glob(f"{video_id}*"):
+            if remnant.suffix in (".mp4", ".webm", ".m4a", ".part") or ".f" in remnant.name:
+                try:
+                    remnant.unlink()
+                except OSError:
+                    pass
+        cmd_ios = [
+            *base_cmd,
+            "--extractor-args", "youtube:player_client=ios",
+            url,
+        ]
+        run(cmd_ios, timeout=300)
 
     # Find the downloaded mp4 (yt-dlp might add format suffix)
     expected = Path(out_dir) / f"{video_id}.mp4"
     found = None
     for f in Path(out_dir).glob(f"{video_id}*.mp4"):
+        if ".bad-" in f.name:
+            continue
         if os.path.getsize(f) > 10000:
             if f != expected:
                 f.rename(expected)
@@ -1073,16 +1699,29 @@ def step_download(video_id: str, out_dir: str) -> str:
             break
     if not found:
         fatal(f"No MP4 found after download in {out_dir}")
-    log("download", f"Downloaded: {found}")
 
-    # 2) Best-effort English subs only (never fail the pipeline)
+    ok, detail = verify_downloaded_video(str(found), info_candidate)
+    if not ok:
+        quarantine_bad_download(str(found), detail)
+        fatal(f"Download incomplete/corrupt for {video_id}: {detail}")
+    log("download", f"Downloaded and verified: {found} ({detail})")
+
+    # 2) Best-effort captions (never fail the pipeline).
+    # Prefer the Whisper/UI language (e.g. th.*) so Thai MVs don't land English-only
+    # auto-captions as the sung track; still pull en.* for secondary translation.
     try:
-        log("download", "Fetching English subtitles (best-effort) ...")
+        lang = (_WHISPER_LANG or "").strip().lower()
+        if lang and lang != "en":
+            sub_langs = f"{lang}.*,{lang},en.*,en"
+            log("download", f"Fetching {lang}+en subtitles (best-effort) ...")
+        else:
+            sub_langs = "en.*,en"
+            log("download", "Fetching English subtitles (best-effort) ...")
         run([
             _YTDLP_BIN,
             "--skip-download",
             "--write-subs", "--write-auto-subs",
-            "--sub-langs", "en.*,en",
+            "--sub-langs", sub_langs,
             "--convert-subs", "lrc",
             "-o", out_tmpl,
             "--no-playlist",
@@ -1109,11 +1748,22 @@ def step_stem_separation(video_id: str, mp4_path: str, tmp_dir: str) -> tuple[st
     instrumental_path = os.path.join(tmp_dir, f"{video_id}-instrumental.wav")
     vocals_path = os.path.join(tmp_dir, f"{video_id}-vocals.wav")
 
-    if os.path.exists(instrumental_path) and os.path.getsize(instrumental_path) > 100000:
-        log("demucs", "Instrumental already exists, skipping separation")
-        if os.path.exists(vocals_path) and os.path.getsize(vocals_path) > 10000:
-            return (instrumental_path, vocals_path)
-        return (instrumental_path, None)
+    # Only skip Demucs when BOTH stems already exist — otherwise we'd drop
+    # vocals and break live vocal-mix for custom tracks.
+    if (
+        os.path.exists(instrumental_path) and os.path.getsize(instrumental_path) > 100000
+        and os.path.exists(vocals_path) and os.path.getsize(vocals_path) > 10000
+    ):
+        log("demucs", "Instrumental + vocals already exist, skipping separation")
+        return (instrumental_path, vocals_path)
+    if os.path.exists(instrumental_path) and not (
+        os.path.exists(vocals_path) and os.path.getsize(vocals_path) > 10000
+    ):
+        log("demucs", "Instrumental exists but vocals missing — re-running Demucs")
+        try:
+            os.unlink(instrumental_path)
+        except OSError:
+            pass
 
     # Demucs can't handle MP4 directly — extract audio to WAV first
     audio_wav = os.path.join(tmp_dir, f"{video_id}.wav")
@@ -1735,7 +2385,69 @@ def _lrc_json_is_garbage(data: dict) -> bool:
             text = " ".join(w.get("text", "") for w in line["words"]).strip()
         if text:
             plain_parts.append(text)
-    return _looks_like_garbage_lyrics("\n".join(plain_parts))
+    if _looks_like_garbage_lyrics("\n".join(plain_parts)):
+        return True
+    return _embedded_caption_timing_is_garbage(lines)
+
+
+def _embedded_caption_timing_is_garbage(lines: list) -> bool:
+    """Reject YouTube auto-caption rolling windows that survive text-only garbage checks.
+
+    Typical failure mode: each phrase is emitted 2–3 times (full cue + 10ms micro-cue
+    + pad), with heavy overlaps. Scoring treated these as 'synced' and locked out Whisper,
+    so reprocess kept republishing unreadable karaoke (e.g. Dutch ASR on English rap).
+    """
+    if not lines or len(lines) < 4:
+        return False
+    texts = []
+    micro = 0
+    consec_dups = 0
+    overlaps = 0
+    for i, line in enumerate(lines):
+        text = (line.get("text") or "").strip()
+        if not text and line.get("words"):
+            text = " ".join(w.get("text", "") for w in line["words"]).strip()
+        texts.append(text)
+        try:
+            dur = float(line.get("endTime") or 0) - float(line.get("startTime") or 0)
+        except (TypeError, ValueError):
+            dur = 0.0
+        if 0 < dur < 0.05:
+            micro += 1
+        if i > 0 and text and text == texts[i - 1]:
+            consec_dups += 1
+        if i > 0:
+            try:
+                prev_end = float(lines[i - 1].get("endTime") or 0)
+                cur_start = float(line.get("startTime") or 0)
+            except (TypeError, ValueError):
+                continue
+            if prev_end > cur_start + 0.05:
+                overlaps += 1
+    n = len(lines)
+    uniq = len({t for t in texts if t})
+    uniq_ratio = uniq / max(1, n)
+    # Rolling auto-captions: lots of identical repeats + micro gaps / overlaps
+    if consec_dups >= max(4, int(n * 0.35)) and uniq_ratio < 0.55:
+        return True
+    if micro >= max(3, int(n * 0.2)) and consec_dups >= max(3, int(n * 0.25)):
+        return True
+    if overlaps >= max(4, int(n * 0.25)) and uniq_ratio < 0.6:
+        return True
+    return False
+
+
+def _dedupe_caption_cues(cues: list[tuple[float, str]]) -> list[tuple[float, str]]:
+    """Merge consecutive identical LRC/VTT caption cues (YouTube rolling windows)."""
+    deduped: list[tuple[float, str]] = []
+    for start, text in cues:
+        text = re.sub(r"\s+", " ", (text or "")).strip()
+        if not text or text in ("[เพลง]", "[Music]", "[music]", "♪", "🎵"):
+            continue
+        if deduped and deduped[-1][1] == text:
+            continue  # keep earliest start; end is derived from next distinct cue
+        deduped.append((start, text))
+    return deduped
 
 
 def parse_vtt_to_lrc_json(vtt_path: str, video_id: str, duration: float) -> Optional[str]:
@@ -1808,7 +2520,13 @@ def parse_vtt_to_lrc_json(vtt_path: str, video_id: str, duration: float) -> Opti
 
         # Accumulate text lines for the current cue
         if current_start is not None:
-            current_text.append(line)
+            # Strip YouTube karaoke word tags: <00:00:01.234><c>word</c>
+            cleaned = vtt_re.sub(r"<\d{2}:\d{2}:\d{2}\.\d{3}>", "", line)
+            cleaned = vtt_re.sub(r"</?c[^>]*>", "", cleaned)
+            cleaned = vtt_re.sub(r"<[^>]+>", "", cleaned)
+            cleaned = cleaned.strip()
+            if cleaned:
+                current_text.append(cleaned)
 
     # Flush final cue
     if current_start is not None and current_text:
@@ -1821,6 +2539,23 @@ def parse_vtt_to_lrc_json(vtt_path: str, video_id: str, duration: float) -> Opti
         return None
 
     log("lyrics", f"VTT parsed: {len(lines_data)} cues from {vtt_path}")
+
+    # Deduplicate consecutive identical cues (YouTube auto-captions repeat rolling text)
+    deduped = []
+    for start, end, text in lines_data:
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text or text in ("[เพลง]", "[Music]", "[music]", "♪", "🎵"):
+            continue
+        if deduped and deduped[-1][2] == text:
+            # Extend previous cue end
+            ps, _pe, pt = deduped[-1]
+            deduped[-1] = (ps, max(end, _pe), pt)
+            continue
+        deduped.append((start, end, text))
+    lines_data = deduped
+    if not lines_data:
+        log("lyrics", "VTT parsed but no usable cues after cleanup")
+        return None
 
     # Convert to LRC JSON format with word-level timing
     lrc_lines = []
@@ -1856,8 +2591,10 @@ def parse_vtt_to_lrc_json(vtt_path: str, video_id: str, duration: float) -> Opti
         "source": "vtt-captions",
     }
 
-    # Write LRC JSON to the same temp directory as the VTT
-    json_path = os.path.join(os.path.dirname(vtt_path), f"{video_id}-karaoke.lrc.json")
+    # Unique path per caption file — Stage 1 collects many langs; a shared
+    # `{id}-karaoke.lrc.json` would let the last parse overwrite the winner's JSON.
+    src_stem = Path(vtt_path).stem  # e.g. VIDEOID.th-th
+    json_path = os.path.join(os.path.dirname(vtt_path), f"{src_stem}.lrc.json")
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(lrc_json, f, indent=2, ensure_ascii=False)
 
@@ -1893,6 +2630,14 @@ def parse_lrc_file_to_lrc_json(lrc_path: str, video_id: str, duration: float) ->
         log("lyrics", f"LRC file had no usable cues: {lrc_path}")
         return None
 
+    before = len(cues)
+    cues = _dedupe_caption_cues(cues)
+    if before != len(cues):
+        log("lyrics", f"LRC dedupe: {before} → {len(cues)} cues (dropped rolling repeats)")
+    if not cues:
+        log("lyrics", f"LRC file had no usable cues after dedupe: {lrc_path}")
+        return None
+
     lrc_lines = []
     for i, (start, text) in enumerate(cues):
         end = cues[i + 1][0] if i + 1 < len(cues) else min(duration, start + 3.0)
@@ -1917,7 +2662,9 @@ def parse_lrc_file_to_lrc_json(lrc_path: str, video_id: str, duration: float) ->
             "words": word_entries,
         })
 
-    json_path = os.path.join(os.path.dirname(lrc_path), f"{video_id}-karaoke.lrc.json")
+    # Unique path per caption file (see parse_vtt_to_lrc_json)
+    src_stem = Path(lrc_path).stem
+    json_path = os.path.join(os.path.dirname(lrc_path), f"{src_stem}.lrc.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({
             "videoId": video_id,
@@ -2272,18 +3019,34 @@ def _score_lyric_candidate(
     return score
 
 
+def _text_has_thai(text: str) -> bool:
+    return bool(re.search(r"[\u0E00-\u0E7F]", text or ""))
+
+
 def _collect_embedded_caption_candidates(tmp_dir: str, video_id: str, duration: float) -> list[dict]:
     """Find yt-dlp caption files in tmp and convert them to scored Stage 1 candidates."""
     found: list[dict] = []
-    patterns = [
+    lang = (_WHISPER_LANG or "").strip().lower()
+    patterns: list[str] = []
+    # Prefer native-language captions first when a non-English language is set
+    if lang and lang != "en":
+        patterns.extend([
+            f"{video_id}.{lang}.lrc",
+            f"{video_id}.{lang}-{lang}.lrc",
+            f"{video_id}.{lang}.vtt",
+            f"{video_id}.{lang}-{lang}.vtt",
+            f"{video_id}.{lang}-orig.lrc",
+            f"{video_id}.{lang}-orig.vtt",
+        ])
+    patterns.extend([
         f"{video_id}.en.lrc",
         f"{video_id}.en-en.lrc",
         f"{video_id}.en.vtt",
         f"{video_id}.en-en.vtt",
         f"{video_id}.en-orig.lrc",
         f"{video_id}.en-orig.vtt",
-    ]
-    # Also pick up locale variants like .en-es-419.lrc that still carry English text
+    ])
+    # Also pick up locale variants like .en-es-419.lrc / .th-en.lrc
     try:
         for name in os.listdir(tmp_dir):
             lower = name.lower()
@@ -2303,8 +3066,34 @@ def _collect_embedded_caption_candidates(tmp_dir: str, video_id: str, duration: 
         emb_json = captions_file_to_lrc_json(path, video_id, duration)
         if not emb_json:
             continue
+        # Reject rolling / gibberish auto-captions before they lock out Whisper
+        try:
+            with open(emb_json, encoding="utf-8") as jf:
+                emb_data = json.load(jf)
+            if _lrc_json_is_garbage(emb_data):
+                log("lyrics", f"Skipping garbage embedded captions: {name}")
+                continue
+        except (OSError, json.JSONDecodeError, TypeError):
+            log("lyrics", f"Skipping unreadable embedded captions: {name}")
+            continue
         emb_plain = _plain_from_lrc_json(emb_json)
         score = _score_lyric_candidate(emb_plain, True, duration, "embedded_subs")
+        # Thai gold standard: strongly prefer Thai-script captions when --language th
+        if lang == "th":
+            name_l = name.lower()
+            if _text_has_thai(emb_plain):
+                score += 40.0
+                # Prefer clean line-level th-th over word-level th-orig karaoke markup
+                if name_l.endswith(".th-th.lrc") or name_l.endswith(".th-th.vtt"):
+                    score += 25.0
+                elif ".th-orig." in name_l:
+                    score -= 20.0
+            else:
+                # English-only auto-captions on Thai MVs — demote so Whisper/Thai
+                # captions can win instead of locking English into tracks.sung
+                score -= 35.0
+                if ".en." in name_l or name_l.endswith(".en.lrc") or name_l.endswith(".en.vtt"):
+                    score -= 10.0
         if score <= 0:
             log("lyrics", f"Skipping low-quality embedded captions: {name}")
             continue
@@ -2407,17 +3196,29 @@ def step_whisper_lyrics(
         return None
 
     # ── One-time audio prepare: resample to 16kHz mono WAV ──
+    # Always refresh — stale/truncated whisper.wav from a prior run breaks alignment.
     audio_wav = os.path.join(tmp_dir, f"{video_id}-whisper.wav")
-    use_stem = vocal_wav_path and os.path.exists(vocal_wav_path) and os.path.getsize(vocal_wav_path) > 10000 \
-               and (not _WHISPER_LANG or _WHISPER_LANG == "en")
+    if os.path.exists(audio_wav):
+        try:
+            os.remove(audio_wav)
+        except OSError:
+            pass
+    # Prefer Demucs vocal stem for ALL languages (not just en). Karaoke mp4 is
+    # instrumental-only and yields near-zero Whisper transcripts for non-en.
+    use_stem = bool(
+        vocal_wav_path
+        and os.path.exists(vocal_wav_path)
+        and os.path.getsize(vocal_wav_path) > 10000
+    )
     if use_stem:
-        log("whisper", "Using Demucs vocal stem as audio source")
+        log("whisper", f"Using Demucs vocal stem as audio source (lang={_WHISPER_LANG or 'auto'})")
         run([_FFMPEG_BIN, "-y", "-i", vocal_wav_path,
              "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
              audio_wav], timeout=60)
     elif mp4_path.endswith('.wav'):
         audio_wav = mp4_path
-    elif not os.path.exists(audio_wav) or os.path.getsize(audio_wav) < 10000:
+    else:
+        log("whisper", f"Extracting mix audio from {os.path.basename(mp4_path)}")
         run([_FFMPEG_BIN, "-y", "-i", mp4_path,
              "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
              audio_wav], timeout=120)
@@ -2660,7 +3461,10 @@ def step_whisper_lyrics(
         json.dump(lrc_json, f, indent=2, ensure_ascii=False)
     log("whisper", f"LRC JSON saved: {json_path}")
     if _RMANIZE_LANG:
-        romanize_lrc_json(json_path, _RMANIZE_LANG)
+        try:
+            romanize_lrc_json(json_path, _RMANIZE_LANG)
+        except RuntimeError as e:
+            log("romanize", f"Romanize skipped: {e}")
     return json_path
 
 
@@ -3131,7 +3935,10 @@ def step_align_lyrics(
         json.dump(lrc_json, f, indent=2, ensure_ascii=False)
     log("lyrics", f"Force-aligned LRC saved: {json_path}")
     if _RMANIZE_LANG:
-        romanize_lrc_json(json_path, _RMANIZE_LANG)
+        try:
+            romanize_lrc_json(json_path, _RMANIZE_LANG)
+        except RuntimeError as e:
+            log("romanize", f"Romanize skipped: {e}")
     return json_path
 
 
@@ -3212,6 +4019,8 @@ def repair_lrc_json_words(lrc_path: str | Path) -> bool:
     are stale and the player renders wrong lyrics.  This function detects the
     mismatch and rebuilds words from text with even timing distribution.
 
+    Repairs top-level lines and every tracks.*.lines array.
+
     Returns True if any words were repaired.
     """
     lrc_path = Path(lrc_path)
@@ -3222,43 +4031,51 @@ def repair_lrc_json_words(lrc_path: str | Path) -> bool:
     except (json.JSONDecodeError, OSError):
         return False
 
-    lines = data.get("lines", [])
+    def _repair_lines(lines: list, align_mode: str = "") -> int:
+        if align_mode == "reconcile+force":
+            return 0
+        fixed = 0
+        for line in lines or []:
+            text = (line.get("text") or "").strip()
+            if not text:
+                continue
+            words_list = line.get("words", [])
+            if not words_list:
+                continue
+            word_concat = "".join(w.get("text", "") for w in words_list).replace(" ", "")
+            text_concat = text.replace(" ", "").replace(",", "").replace(".", "").replace("!", "").replace("?", "").replace("'", "").replace(";", "").replace(":", "")
+            if word_concat.lower() != text_concat.lower():
+                raw_words = text.split()
+                start = line.get("startTime", 0)
+                end = line.get("endTime", start + 1)
+                dur = max(end - start, 0.1)
+                new_words = []
+                for i, w in enumerate(raw_words):
+                    w_start = start + (dur * i / len(raw_words))
+                    w_end = start + (dur * (i + 1) / len(raw_words))
+                    new_words.append({
+                        "text": w,
+                        "startTime": round(w_start, 3),
+                        "endTime": round(w_end, 3),
+                    })
+                line["words"] = new_words
+                fixed += 1
+        return fixed
+
     # Force-aligned LRCs already have consistent text/words — don't even-space them
-    if data.get("alignMode") == "reconcile+force":
+    if data.get("alignMode") == "reconcile+force" and not data.get("tracks"):
         return False
-    repaired = 0
-    for line in lines:
-        text = (line.get("text") or "").strip()
-        if not text:
-            continue
-        words_list = line.get("words", [])
-        if not words_list:
-            continue
-        # Compare normalized concatenation
-        word_concat = "".join(w.get("text", "") for w in words_list).replace(" ", "")
-        text_concat = text.replace(" ", "").replace(",", "").replace(".", "").replace("!", "").replace("?", "").replace("'", "").replace(";", "").replace(":", "")
-        if word_concat.lower() != text_concat.lower():
-            # Rebuild words from text
-            raw_words = text.split()
-            start = line.get("startTime", 0)
-            end = line.get("endTime", start + 1)
-            dur = max(end - start, 0.1)
-            new_words = []
-            for i, w in enumerate(raw_words):
-                w_start = start + (dur * i / len(raw_words))
-                w_end = start + (dur * (i + 1) / len(raw_words))
-                new_words.append({
-                    "text": w,
-                    "startTime": round(w_start, 3),
-                    "endTime": round(w_end, 3),
-                })
-            line["words"] = new_words
-            repaired += 1
+
+    repaired = _repair_lines(data.get("lines", []), data.get("alignMode") or "")
+    if isinstance(data.get("tracks"), dict):
+        for tr in data["tracks"].values():
+            if isinstance(tr, dict):
+                repaired += _repair_lines(tr.get("lines") or [], tr.get("alignMode") or data.get("alignMode") or "")
 
     if repaired:
-        data["lines"] = lines
+        data = normalize_lyric_tracks(data)
         lrc_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        log("lyrics", f"Repaired words array on {repaired} of {len(lines)} lines in {lrc_path.name}")
+        log("lyrics", f"Repaired words array on {repaired} line(s) in {lrc_path.name}")
     return repaired > 0
 
 
@@ -3362,61 +4179,931 @@ def step_save_lrc_json(
     return json_path
 
 
-def romanize_lrc_json(json_path: str, lang: str) -> None:
-    """Transliterate all lyric text in an LRC JSON from native script to Latin.
+# Built-in Lao → Latin map (karaoke-friendly / ALA-LC-ish). No external dep.
+_LAO_CONSONANTS = {
+    "ກ": "k", "ຂ": "kh", "ຄ": "kh", "ງ": "ng", "ຈ": "ch", "ສ": "s", "ຊ": "x",
+    "ຍ": "ny", "ດ": "d", "ຕ": "t", "ຖ": "th", "ທ": "th", "ນ": "n", "ບ": "b",
+    "ປ": "p", "ຜ": "ph", "ຝ": "f", "ພ": "ph", "ຟ": "f", "ມ": "m", "ຢ": "y",
+    "ຣ": "r", "ລ": "l", "ວ": "w", "ຫ": "h", "ອ": "o", "ຮ": "h", "ໜ": "n", "ໝ": "m",
+}
+_LAO_VOWELS = {
+    "ະ": "a", "ັ": "a", "າ": "a", "ຳ": "am", "ິ": "i", "ີ": "i", "ຶ": "ue",
+    "ື": "ue", "ຸ": "u", "ູ": "u", "ເ": "e", "ແ": "ae", "ໂ": "o", "ໃ": "ai",
+    "ໄ": "ai", "ົ": "o", "ຽ": "ia", "ໍ": "o", "຺": "",
+}
+_LAO_MARKS = set("່້໊໋์໌")  # tone / cancellation — drop for Latin karaoke
 
-    Supported:
-      - 'th' (Thai RTGS via pythainlp)
-      - 'ja' (Japanese romaji via pykakasi)
-    Falls back to no-op if the required library is missing.
+
+def _romanize_lao(text: str) -> str:
+    out = []
+    for ch in text or "":
+        if ch in _LAO_MARKS or ch == "\u200b":
+            continue
+        if ch in _LAO_CONSONANTS:
+            out.append(_LAO_CONSONANTS[ch])
+        elif ch in _LAO_VOWELS:
+            out.append(_LAO_VOWELS[ch])
+        elif "\u0E80" <= ch <= "\u0EFF":
+            out.append("")  # unknown Lao letter — skip rather than leave script
+        else:
+            out.append(ch)
+    # Collapse spaces introduced by dropped marks
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
+def _get_romanizer(lang: str):
+    """Return a callable(text)->romanized for lang, or raise RuntimeError."""
+    code = (lang or "").split("-")[0].lower()
+    if code in ("id", "vi", "en", "fr", "es"):
+        raise RuntimeError(
+            f"Language '{code}' is already Latin script — romanize is not applicable"
+        )
+    if code == "th":
+        try:
+            from pythainlp.transliterate import romanize as th_romanize
+        except ImportError as e:
+            raise RuntimeError("pythainlp not installed — cannot romanize Thai") from e
+        log("romanize", "Using pythainlp RTGS engine for Thai")
+        return lambda t: th_romanize(t, engine="royin")
+    if code == "ja":
+        try:
+            import pykakasi
+            kks = pykakasi.kakasi()
+        except ImportError as e:
+            raise RuntimeError("pykakasi not installed — cannot romanize Japanese") from e
+        log("romanize", "Using pykakasi Hepburn for Japanese")
+        return lambda t: " ".join(r["hepburn"] for r in kks.convert(t or ""))
+    if code == "ko":
+        try:
+            from korean_romanizer.romanizer import Romanizer as KoRomanizer
+        except ImportError as e:
+            raise RuntimeError("korean-romanizer not installed — cannot romanize Korean") from e
+        log("romanize", "Using korean-romanizer (Revised Romanization)")
+        def _ko(t):
+            try:
+                return KoRomanizer(t or "").romanize()
+            except Exception:
+                return t or ""
+        return _ko
+    if code == "zh":
+        try:
+            from pypinyin import lazy_pinyin
+        except ImportError as e:
+            raise RuntimeError("pypinyin not installed — cannot romanize Chinese") from e
+        log("romanize", "Using pypinyin for Chinese")
+        return lambda t: " ".join(lazy_pinyin(t or ""))
+    if code == "lo":
+        log("romanize", "Using built-in Lao romanizer")
+        return _romanize_lao
+    raise RuntimeError(
+        f"No romanizer for language '{lang}'. Supported: th, ja, ko, zh, lo"
+    )
+
+
+def romanize_lrc_json(json_path: str, lang: str) -> bool:
+    """Transliterate lyric text into tracks.romanized; keep native/sung.
+
+    Supported: th (RTGS), ja (Hepburn), ko (RR), zh (pinyin), lo (built-in).
+    Never destroys tracks.english.
+    Returns True on success. Raises RuntimeError on missing engine / bad input
+    when called from --romanize-only; callers that soft-skip should catch.
     """
     try:
         with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        log("romanize", f"Failed to open LRC JSON: {e}")
-        return
+        raise RuntimeError(f"Failed to open LRC JSON: {e}") from e
 
-    romanizer = None
-    if lang == "th":
-        try:
-            from pythainlp.transliterate import romanize as th_romanize
-            romanizer = lambda t: th_romanize(t, engine="royin")
-            log("romanize", "Using pythainlp RTGS engine for Thai romanization")
-        except ImportError:
-            log("romanize", "pythainlp not installed — skipping romanization")
-            return
-    elif lang == "ja":
-        try:
-            import pykakasi
-            kks = pykakasi.kakasi()
-            def _ja_romaji(t):
-                result = kks.convert(t)
-                return " ".join(r["hepburn"] for r in result)
-            romanizer = _ja_romaji
-            log("romanize", "Using pykakasi for Japanese romanization")
-        except ImportError:
-            log("romanize", "pykakasi not installed — skipping romanization")
-            return
-    else:
-        log("romanize", f"No romanizer for language '{lang}'")
-        return
+    code = (lang or "").split("-")[0].lower()
+    romanizer = _get_romanizer(code)
 
+    import copy
+    if not isinstance(data.get("tracks"), dict):
+        data["tracks"] = {}
+
+    # Source native lines: prefer existing native/sung, else top-level lines
+    native_lines = None
+    if isinstance(data["tracks"].get("native"), dict) and data["tracks"]["native"].get("lines"):
+        native_lines = copy.deepcopy(data["tracks"]["native"]["lines"])
+    elif isinstance(data["tracks"].get("sung"), dict) and data["tracks"]["sung"].get("lines"):
+        native_lines = copy.deepcopy(data["tracks"]["sung"]["lines"])
+    elif data.get("lines"):
+        native_lines = copy.deepcopy(data["lines"])
+    if not native_lines:
+        raise RuntimeError("No lines to romanize")
+
+    if "sung" not in data["tracks"] and "native" not in data["tracks"]:
+        data["tracks"]["sung"] = {
+            "lang": code,
+            "label": "As sung",
+            "role": "primary",
+            "lines": copy.deepcopy(native_lines),
+            "alignMode": data.get("alignMode") or data.get("source") or "",
+        }
+    if "native" not in data["tracks"]:
+        data["tracks"]["native"] = {
+            "lang": code,
+            "label": "Native",
+            "role": "native",
+            "lines": copy.deepcopy(native_lines),
+            "alignMode": data.get("alignMode") or data.get("source") or "",
+        }
+
+    rom_lines = copy.deepcopy(native_lines)
     changed = 0
-    for line in data.get("lines", []):
-        orig = line["text"]
+    for line in rom_lines:
+        orig = line.get("text") or ""
         line["text"] = romanizer(orig)
         if line["text"] != orig:
             changed += 1
-        for w in line.get("words", []):
-            orig_w = w["text"]
+        for w in line.get("words") or []:
+            orig_w = w.get("text") or ""
             w["text"] = romanizer(orig_w)
             if w["text"] != orig_w:
                 changed += 1
 
+    data["tracks"]["romanized"] = {
+        "lang": f"{code}-Latn",
+        "label": "Romanized",
+        "role": "primary",
+        "lines": rom_lines,
+        "alignMode": data.get("alignMode") or data.get("source") or "",
+    }
+    has_english = (
+        isinstance(data["tracks"].get("english"), dict)
+        and data["tracks"]["english"].get("lines")
+    )
+    has_sung = (
+        isinstance(data["tracks"].get("sung"), dict)
+        and data["tracks"]["sung"].get("lines")
+    )
+    # Plan default: romanized primary; english secondary; native/sung tertiary (above)
+    secondary = "english" if has_english else None
+    tertiary = None
+    if "native" in data["tracks"] and data["tracks"]["native"].get("lines"):
+        tertiary = "native"
+    elif has_sung:
+        tertiary = "sung"
+    data["display"] = {"primary": "romanized", "secondary": secondary, "tertiary": tertiary}
+    data = normalize_lyric_tracks(data)
+
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    log("romanize", f"Romanized {changed} text field(s) in {len(data.get('lines',[]))} lines → {json_path}")
+    log("romanize", f"Romanized {changed} text field(s) → tracks.romanized ({len(rom_lines)} lines) in {json_path}")
+    return True
+
+
+def _primary_track_key(data: dict) -> str:
+    display = data.get("display") if isinstance(data.get("display"), dict) else {}
+    primary = display.get("primary")
+    tracks = data.get("tracks") if isinstance(data.get("tracks"), dict) else {}
+    if primary and primary in tracks:
+        return primary
+    if tracks.get("romanized"):
+        return "romanized"
+    if tracks.get("sung"):
+        return "sung"
+    if tracks.get("english"):
+        return "english"
+    return "sung"
+
+
+def _lines_to_plain_text(lines: list) -> str:
+    return "\n".join((l.get("text") or "").strip() for l in (lines or []) if (l.get("text") or "").strip())
+
+
+def _apply_timings_keep_text(old_lines: list, timed_lines: list) -> list:
+    """Copy start/end from timed_lines onto old_lines by index; keep old text; rebuild words."""
+    out = []
+    n = len(old_lines or [])
+    for i in range(n):
+        old = old_lines[i] or {}
+        timed = timed_lines[i] if i < len(timed_lines or []) else {}
+        start = float(timed.get("startTime", old.get("startTime", 0)) or 0)
+        end = float(timed.get("endTime", old.get("endTime", start + 1)) or (start + 1))
+        if end <= start:
+            end = start + 0.35
+        text = str(old.get("text") or "").strip()
+        # Prefer force-align word anchors when present (same count); else proportional
+        timed_words = timed.get("words") if isinstance(timed.get("words"), list) else None
+        words_raw = text.split()
+        line = {"text": text, "startTime": round(start, 3), "endTime": round(end, 3), "words": []}
+        if words_raw and timed_words and len(timed_words) == len(words_raw):
+            for j, w in enumerate(words_raw):
+                tw = timed_words[j] or {}
+                ws = float(tw.get("startTime", start) or start)
+                we = float(tw.get("endTime", end) or end)
+                if we <= ws:
+                    we = ws + 0.12
+                line["words"].append({
+                    "text": w,
+                    "startTime": round(ws, 3),
+                    "endTime": round(we, 3),
+                })
+            line["startTime"] = round(float(line["words"][0]["startTime"]), 3)
+            line["endTime"] = round(float(line["words"][-1]["endTime"]), 3)
+        elif words_raw:
+            dur = max(end - start, 0.1)
+            total = sum(len(w) for w in words_raw) or 1
+            t = start
+            for w in words_raw:
+                share = len(w) / total
+                w_end = t + share * dur
+                line["words"].append({
+                    "text": w,
+                    "startTime": round(t, 3),
+                    "endTime": round(w_end, 3),
+                })
+                t = w_end
+            line["words"][-1]["endTime"] = round(end, 3)
+        out.append(line)
+    return out
+
+
+def _fix_leading_timing_smear(lines: list, vocal_onset: Optional[float]) -> list:
+    """Clamp intro smear: force-align often parks the first line at t=0 through silence.
+
+    If line 0 starts near 0 but ends after vocal onset (and line 1 is already in the
+    sung region), snap line 0's start to onset and rebuild its word timings
+    proportionally. Text is never changed.
+    """
+    if not lines:
+        return lines
+    onset = float(vocal_onset) if vocal_onset is not None else None
+    line0 = dict(lines[0] or {})
+    start = float(line0.get("startTime") or 0)
+    end = float(line0.get("endTime") or 0)
+    if end <= start:
+        return lines
+
+    snap_to = None
+    next_start = None
+    if len(lines) > 1:
+        next_start = float((lines[1] or {}).get("startTime") or 0)
+
+    if onset is not None and start < onset - 0.5 and end > onset + 0.3:
+        # Prefer landing slightly before onset so the cue is early, not late
+        snap_to = max(0.0, onset - 0.1)
+        # If next line is soon after onset, keep line0 from eating into it
+        if next_start is not None and next_start > snap_to + 0.4:
+            snap_to = min(snap_to, next_start - 0.35)
+    elif start < 0.5 and end - start >= 4.0 and next_start is not None and 4.0 <= next_start <= 20.0:
+        # No onset available: pull start to ~1.2s before the compact next line
+        snap_to = max(0.0, next_start - 1.2)
+
+    if snap_to is None or snap_to <= start + 0.05:
+        return lines
+    snap_to = min(snap_to, end - 0.35)
+    if snap_to <= start:
+        return lines
+
+    log("retime", f"Clamping leading smear: line0 {start:.2f}s → {snap_to:.2f}s"
+                  + (f" (onset={onset:.2f}s)" if onset is not None else ""))
+
+    text = str(line0.get("text") or "").strip()
+    words_raw = text.split()
+    line0["startTime"] = round(snap_to, 3)
+    line0["endTime"] = round(end, 3)
+    rebuilt = []
+    if words_raw:
+        dur = max(end - snap_to, 0.1)
+        total = sum(len(w) for w in words_raw) or 1
+        t = snap_to
+        for w in words_raw:
+            share = len(w) / total
+            w_end = t + share * dur
+            rebuilt.append({
+                "text": w,
+                "startTime": round(t, 3),
+                "endTime": round(w_end, 3),
+            })
+            t = w_end
+        rebuilt[-1]["endTime"] = round(end, 3)
+    line0["words"] = rebuilt
+    lines = list(lines)
+    lines[0] = line0
+    return lines
+
+
+def _rebuild_line_words(text: str, start: float, end: float) -> list[dict]:
+    """Proportional word timings inside [start, end] (keep-text safe)."""
+    words_raw = str(text or "").split()
+    if not words_raw:
+        return []
+    if end <= start:
+        end = start + max(0.35, 0.12 * len(words_raw))
+    dur = max(end - start, 0.1)
+    total = sum(len(w) for w in words_raw) or 1
+    out = []
+    t = start
+    for w in words_raw:
+        share = len(w) / total
+        w_end = t + share * dur
+        out.append({
+            "text": w,
+            "startTime": round(t, 3),
+            "endTime": round(w_end, 3),
+        })
+        t = w_end
+    out[-1]["endTime"] = round(end, 3)
+    return out
+
+
+def _score_timing_structure(lines: list, duration: float) -> float:
+    """0–100 structural quality (independent of Whisper word yield).
+
+    Penalizes crushed clusters (many lines in a tiny window) and giant smears.
+    """
+    if not lines or duration <= 1:
+        return 0.0
+    score = 100.0
+    spans = []
+    for ln in lines:
+        st = float(ln.get("startTime") or 0)
+        en = float(ln.get("endTime") or st)
+        spans.append(max(0.0, en - st))
+        if st >= duration - 0.25:
+            score -= 8.0
+        if (en - st) > 20.0:
+            score -= 12.0
+        elif (en - st) > 12.0:
+            score -= 5.0
+
+    # Crushed runs: ≥4 consecutive lines averaging <1.4s
+    i = 0
+    n = len(lines)
+    while i < n:
+        j = i
+        while j < n and spans[j] < 1.4:
+            j += 1
+        run = j - i
+        if run >= 4:
+            window = float(lines[j - 1].get("endTime") or 0) - float(lines[i].get("startTime") or 0)
+            if window < run * 1.5:
+                score -= min(40.0, 6.0 * run)
+                log("retime",
+                    f"Structure: crushed run lines {i}-{j - 1} "
+                    f"({run} lines in {window:.1f}s)")
+        i = max(j, i + 1)
+
+    return max(0.0, min(100.0, score))
+
+
+def _repair_timing_structure(lines: list, duration: float) -> list:
+    """Expand crushed runs and cap giant smears — text unchanged.
+
+    Used after keep-text force-align when Whisper packs many LRCLIB lines into a
+    tiny hear-window (classic catalog-cut mismatch).
+    """
+    if not lines or duration <= 1:
+        return lines
+    out = [dict(ln or {}) for ln in lines]
+    n = len(out)
+    changed = False
+
+    # Cap absurd single-line smears (>18s with following content soon after gap)
+    for i in range(n):
+        st = float(out[i].get("startTime") or 0)
+        en = float(out[i].get("endTime") or st)
+        span = en - st
+        if span <= 18.0:
+            continue
+        # End this line earlier: leave room for following lines or clip to 12s
+        next_st = float(out[i + 1].get("startTime") or duration) if i + 1 < n else duration
+        # If next line starts inside the smear, we'll redistribute the run below
+        if next_st <= st + 1.0:
+            continue
+        new_en = min(en, st + 12.0, next_st - 0.15)
+        if new_en > st + 0.5 and new_en < en - 0.5:
+            out[i]["endTime"] = round(new_en, 3)
+            out[i]["words"] = _rebuild_line_words(out[i].get("text") or "", st, new_en)
+            changed = True
+            log("retime", f"Capped smear line {i}: {span:.1f}s → {new_en - st:.1f}s")
+
+    # Expand crushed runs into the idle time until the next sparse line / gap
+    i = 0
+    while i < n:
+        st_i = float(out[i].get("startTime") or 0)
+        en_i = float(out[i].get("endTime") or st_i)
+        if (en_i - st_i) >= 1.4:
+            i += 1
+            continue
+        j = i
+        while j < n and (float(out[j].get("endTime") or 0) - float(out[j].get("startTime") or 0)) < 1.4:
+            j += 1
+        run = j - i
+        if run < 4:
+            i = max(j, i + 1)
+            continue
+        run_start = float(out[i].get("startTime") or 0)
+        run_end = float(out[j - 1].get("endTime") or run_start)
+        # Find a generous target end: skip ahead past short/crushed neighbors to the
+        # next real anchor (span≥3s) or a large gap, so verse lines get room to breathe.
+        target_end = run_end
+        k = j
+        while k < n:
+            st_k = float(out[k].get("startTime") or 0)
+            en_k = float(out[k].get("endTime") or st_k)
+            gap = st_k - target_end
+            span_k = en_k - st_k
+            if gap > 8.0:
+                # instrumental / pause — expand up to just before it
+                target_end = st_k - 0.25
+                break
+            if span_k >= 3.0:
+                target_end = st_k - 0.2
+                break
+            # Absorb trailing micro-lines into this redistribution window
+            target_end = en_k
+            k += 1
+        else:
+            target_end = min(duration - 0.4, run_start + run * 4.0)
+        # Minimum singable budget: ~2.4s per line (short phrases still OK)
+        min_budget = run_start + run * 2.4
+        target_end = max(target_end, min_budget, run_end)
+        target_end = min(target_end, run_start + 55.0, duration - 0.3)
+        window = target_end - run_start
+        if window < run * 1.8:
+            i = max(j, i + 1)
+            continue
+        # If we absorbed micro-lines, include them in the redistribute set
+        j = max(j, k) if k > j else j
+        run = j - i
+        weights = []
+        for kk in range(i, j):
+            wc = len(str(out[kk].get("text") or "").split()) or 1
+            weights.append(max(wc, 2))
+        total_w = float(sum(weights)) or 1.0
+        t = run_start
+        for idx, kk in enumerate(range(i, j)):
+            share = weights[idx] / total_w
+            seg = max(1.6, share * window)
+            if idx == run - 1:
+                end = target_end
+            else:
+                end = min(target_end - 0.25 * (run - 1 - idx), t + seg)
+            if end <= t:
+                end = t + 1.4
+            text = out[kk].get("text") or ""
+            out[kk]["startTime"] = round(t, 3)
+            out[kk]["endTime"] = round(end, 3)
+            out[kk]["words"] = _rebuild_line_words(text, t, end)
+            t = end
+            changed = True
+        log("retime",
+            f"Expanded crushed run lines {i}-{j - 1}: "
+            f"{run} lines across {window:.1f}s (was {run_end - run_start:.1f}s)")
+        i = j
+
+    # Ensure monotonic non-overlapping cues
+    for i in range(1, n):
+        prev_en = float(out[i - 1].get("endTime") or 0)
+        st = float(out[i].get("startTime") or 0)
+        en = float(out[i].get("endTime") or st)
+        if st < prev_en:
+            st = prev_en
+            if en <= st:
+                en = st + 0.4
+            out[i]["startTime"] = round(st, 3)
+            out[i]["endTime"] = round(en, 3)
+            out[i]["words"] = _rebuild_line_words(out[i].get("text") or "", st, en)
+            changed = True
+
+    # Last resort: if crushed runs remain, redistribute within gap-defined sections
+    # (instrumental gaps >6s). Keeps LRCLIB text; spreads lines so they're singable.
+    if _score_timing_structure(out, duration) < 85.0:
+        sections = []
+        start = 0
+        for i in range(1, n):
+            gap = float(out[i].get("startTime") or 0) - float(out[i - 1].get("endTime") or 0)
+            if gap > 6.0:
+                t0 = float(out[start].get("startTime") or 0)
+                t1 = float(out[i].get("startTime") or 0) - 0.3
+                sections.append((start, i, t0, t1))
+                start = i
+        t0 = float(out[start].get("startTime") or 0)
+        t1 = min(duration - 0.5, float(out[-1].get("endTime") or duration) + 2.0)
+        sections.append((start, n, t0, t1))
+        for a, b, t0, t1 in sections:
+            if b - a < 2 or t1 <= t0 + 1.0:
+                continue
+            weights = [max(len(str(out[k].get("text") or "").split()), 2) for k in range(a, b)]
+            weights = [w + (2 if w >= 6 else 0) for w in weights]
+            tw = float(sum(weights)) or 1.0
+            window = t1 - t0
+            t = t0
+            for idx, k in enumerate(range(a, b)):
+                share = weights[idx] / tw
+                seg = max(1.8, share * window)
+                end = t1 if idx == (b - a - 1) else min(t1 - 0.25 * (b - a - 1 - idx), t + seg)
+                if end <= t:
+                    end = t + 1.8
+                text = out[k].get("text") or ""
+                out[k]["startTime"] = round(t, 3)
+                out[k]["endTime"] = round(end, 3)
+                out[k]["words"] = _rebuild_line_words(text, t, end)
+                t = end
+                changed = True
+        log("retime", f"Section-redistributed {len(sections)} gap-bounded blocks (structure repair)")
+        # Monotonic again
+        for i in range(1, n):
+            prev_en = float(out[i - 1].get("endTime") or 0)
+            st = float(out[i].get("startTime") or 0)
+            en = float(out[i].get("endTime") or st)
+            if st < prev_en:
+                st = prev_en
+                if en <= st:
+                    en = st + 0.4
+                out[i]["startTime"] = round(st, 3)
+                out[i]["endTime"] = round(en, 3)
+                out[i]["words"] = _rebuild_line_words(out[i].get("text") or "", st, en)
+
+    if changed:
+        log("retime", "Structural timing repair applied (text preserved)")
+    return out
+
+
+def _composite_align_score(yield_pct: float, structure: float) -> float:
+    """Blend Whisper yield with structural singability (favor structure when close)."""
+    y = max(0.0, min(100.0, float(yield_pct) or 0.0))
+    s = max(0.0, min(100.0, float(structure) or 0.0))
+    return 0.45 * y + 0.55 * s
+
+
+def _audio_rms_stats(path: str, probe_secs: float = 90.0) -> dict:
+    """Cheap RMS probe: overall level + fraction of loud frames (speech/vocals)."""
+    import wave
+    import array
+    try:
+        with wave.open(path, "rb") as w:
+            ch = w.getnchannels()
+            sr = w.getframerate()
+            sw = w.getsampwidth()
+            n = w.getnframes()
+            max_frames = int(min(n, probe_secs * sr))
+            raw = w.readframes(max_frames)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e), "overall": 0.0, "loud_frac": 0.0, "peak": 0.0}
+
+    if sw == 2:
+        samples = array.array("h")
+        samples.frombytes(raw)
+    elif sw == 1:
+        samples = array.array("b")
+        samples.frombytes(raw)
+        samples = array.array("h", ((s - 128) * 256 for s in samples))
+    else:
+        return {"ok": False, "error": f"unsupported sampwidth={sw}", "overall": 0.0, "loud_frac": 0.0, "peak": 0.0}
+
+    if ch > 1:
+        mono = array.array("h")
+        for i in range(0, len(samples), ch):
+            mono.append(int(sum(samples[i:i + ch]) / ch))
+        samples = mono
+    if not samples:
+        return {"ok": False, "error": "empty", "overall": 0.0, "loud_frac": 0.0, "peak": 0.0}
+
+    scale = float(1 << 15)
+    # Frame at ~0.5s
+    frame = max(1, sr // 2)
+    loud = 0
+    frames = 0
+    sum_sq = 0.0
+    peak = 0.0
+    for i in range(0, len(samples), frame):
+        block = samples[i:i + frame]
+        if not block:
+            continue
+        bsq = 0.0
+        for s in block:
+            v = s / scale
+            av = abs(v)
+            if av > peak:
+                peak = av
+            bsq += v * v
+            sum_sq += v * v
+        rms = (bsq / len(block)) ** 0.5
+        frames += 1
+        if rms >= 0.015:
+            loud += 1
+    overall = (sum_sq / max(1, len(samples))) ** 0.5
+    loud_frac = loud / max(1, frames)
+    # Healthy vocal stem / mix with singing: overall > ~0.02 and loud_frac > ~0.25
+    ok = overall >= 0.02 and loud_frac >= 0.25 and peak >= 0.05
+    return {"ok": ok, "overall": overall, "loud_frac": loud_frac, "peak": peak, "error": None}
+
+
+def _extract_mix_wav(src_mp4: str, dest_wav: str) -> str:
+    """Extract mono 16kHz mix from an mp4 for Whisper alignment."""
+    run([
+        _FFMPEG_BIN, "-y", "-i", src_mp4,
+        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+        dest_wav,
+    ], timeout=120)
+    if not os.path.exists(dest_wav) or os.path.getsize(dest_wav) < 10000:
+        fatal(f"Failed to extract mix audio from {src_mp4}")
+    return dest_wav
+
+
+def _ensure_original_mix_for_retime(video_id: str, tmp_dir: str) -> str:
+    """Return a path to original-mix audio (prefer local source mp4, else redownload)."""
+    mix_wav = os.path.join(tmp_dir, f"{video_id}-original-mix.wav")
+
+    source_mp4 = find_original_source_mp4(video_id)
+    if source_mp4 is not None:
+        log("retime", f"Extracting original mix from {source_mp4}")
+        return _extract_mix_wav(str(source_mp4), mix_wav)
+
+    # Redownload original YouTube media into temp, then extract audio
+    dl_dir = os.path.join(tmp_dir, "yt-redownload")
+    os.makedirs(dl_dir, exist_ok=True)
+    log("retime", "Original mp4 missing/weak — redownloading YouTube audio for align")
+    mp4 = step_download(video_id, dl_dir)
+    return _extract_mix_wav(mp4, mix_wav)
+
+
+def force_align_keep_text_file(
+    lrc_path: str,
+    video_id: str,
+    duration: float,
+    tmp_dir: str,
+    *,
+    vocal_wav_path: Optional[str] = None,
+    mp4_path: Optional[str] = None,
+    whisper_model: str = "medium",
+    language: Optional[str] = None,
+    min_yield: float = 40.0,
+    preserve_text_source: bool = True,
+) -> tuple[bool, float, str]:
+    """Force-align keep-text in place on an LRC JSON file.
+
+    Returns ``(ok, yield_pct, detail)``. Never invents words. Prefers Demucs
+    vocals, then original mix. On failure leaves the file unchanged.
+    """
+    path = Path(lrc_path)
+    if not path.exists():
+        return False, 0.0, "lrc missing"
+
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return False, 0.0, f"read failed: {e}"
+
+    text_source = str(existing.get("source") or existing.get("alignMode") or "")
+    tracks = existing.get("tracks") if isinstance(existing.get("tracks"), dict) else {}
+    if not tracks:
+        lines = existing.get("lines") or []
+        tracks = {
+            "sung": {
+                "lang": language or "",
+                "label": "As sung",
+                "role": "primary",
+                "lines": lines,
+                "alignMode": existing.get("alignMode") or existing.get("source") or "",
+            }
+        }
+        existing["tracks"] = tracks
+        existing["display"] = {"primary": "sung", "secondary": None}
+
+    primary_key = _primary_track_key(existing)
+    primary_lines = list((tracks.get(primary_key) or {}).get("lines") or existing.get("lines") or [])
+    if not primary_lines:
+        return False, 0.0, "no primary lines"
+
+    plain = _lines_to_plain_text(primary_lines)
+    dur = float(duration or existing.get("duration") or 0) or float(
+        primary_lines[-1].get("endTime") or 0
+    ) or 180.0
+
+    vocals = Path(vocal_wav_path) if vocal_wav_path else (
+        LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke-vocals.wav"
+    )
+    source_mp4 = Path(mp4_path) if mp4_path else (LIBRARY_KARAOKE_DIR / f"{video_id}.mp4")
+    karaoke_mp4 = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke.mp4"
+    if not source_mp4.exists() and Path(mp4_path or "").exists():
+        source_mp4 = Path(mp4_path)
+
+    model = whisper_model or "medium"
+    if language and language != "en" and model.endswith(".en"):
+        model = model.replace(".en", "") or "medium"
+
+    global _WHISPER_LANG
+    if language:
+        _WHISPER_LANG = language
+
+    work = os.path.join(tmp_dir, f"{video_id}-force-align")
+    os.makedirs(work, exist_ok=True)
+
+    attempts: list[tuple[str, Optional[str], str]] = []
+    # Prefer original mix first when present — Demucs vocals + spoken-intro skip
+    # often crush the opening verse on catalog-cut mismatches. Vocals still tried.
+    if source_mp4.exists() and source_mp4.stat().st_size > 10000:
+        attempts.append(("original-mp4", None, str(source_mp4)))
+    else:
+        attempts.append(("original-redownload", None, "__REDOWNLOAD__"))
+    if vocals.exists() and vocals.stat().st_size > 10000:
+        stats = _audio_rms_stats(str(vocals))
+        log("retime",
+            f"Vocal stem RMS: overall={stats['overall']:.4f} "
+            f"loud={stats['loud_frac']:.0%} peak={stats['peak']:.3f} ok={stats['ok']}")
+        if stats.get("ok"):
+            fallback = str(source_mp4 if source_mp4.exists() else karaoke_mp4)
+            attempts.append(("demucs-vocals", str(vocals), fallback))
+        else:
+            log("retime", "Vocal stem weak/silent — skipping demucs attempt")
+
+    if not attempts:
+        return False, 0.0, "no audio for align"
+
+    best: Optional[tuple[float, float, float, list]] = None  # composite, yield, structure, timed
+    for attempt_i, (label, vocal_path, audio_path) in enumerate(attempts):
+        attempt_dir = os.path.join(work, f"attempt-{attempt_i}-{label}")
+        os.makedirs(attempt_dir, exist_ok=True)
+        align_vocal = vocal_path
+        align_mp4 = audio_path
+        if audio_path == "__REDOWNLOAD__":
+            try:
+                mix_wav = _ensure_original_mix_for_retime(video_id, attempt_dir)
+            except Exception as e:  # noqa: BLE001
+                log("retime", f"Redownload failed: {e}")
+                continue
+            align_vocal = None
+            align_mp4 = mix_wav
+        elif label == "original-mp4" or (align_vocal is None and str(audio_path).endswith(".mp4")):
+            mix_wav = os.path.join(attempt_dir, f"{video_id}-mix.wav")
+            try:
+                _extract_mix_wav(audio_path, mix_wav)
+            except Exception as e:  # noqa: BLE001
+                log("retime", f"Mix extract failed ({e}) — trying next")
+                continue
+            align_mp4 = mix_wav
+
+        log("retime",
+            f"Force-align attempt {attempt_i + 1}/{len(attempts)} via {label} "
+            f"(model={model}, lang={_WHISPER_LANG or 'auto'}, lines={len(primary_lines)})")
+        aligned_path = step_align_lyrics(
+            video_id,
+            plain,
+            align_mp4,
+            dur,
+            attempt_dir,
+            vocal_wav_path=align_vocal,
+            whisper_model=model,
+            strict=False,
+        )
+        if not aligned_path or not os.path.exists(aligned_path):
+            log("retime", f"Attempt {label} produced no LRC — trying next source")
+            continue
+        try:
+            aligned = json.loads(Path(aligned_path).read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            log("retime", f"Attempt {label} unreadable ({e}) — trying next")
+            continue
+        timed = aligned.get("lines") or []
+        # Apply keep-text + structural repair before scoring singability
+        candidate = _apply_timings_keep_text(primary_lines, timed)
+        candidate = _repair_timing_structure(candidate, dur)
+        yield_pct = float(aligned.get("alignYield") or 0.0)
+        structure = _score_timing_structure(candidate, dur)
+        composite = _composite_align_score(yield_pct, structure)
+        log("retime",
+            f"Attempt {label}: yield={yield_pct:.1f}% structure={structure:.0f} "
+            f"composite={composite:.1f} timed_lines={len(timed)}")
+        if best is None or composite > best[0]:
+            best = (composite, yield_pct, structure, candidate)
+        # Early exit only when BOTH yield and structure are strong
+        if yield_pct >= max(min_yield, 55.0) and structure >= 80.0:
+            log("retime", f"Early stop — strong align via {label}")
+            break
+        log("retime", f"Continuing — need better composite (best so far {best[0]:.1f})")
+
+    if best is None:
+        return False, 0.0, "no timed LRC from any audio"
+    composite, yield_pct, structure, new_primary = best
+    if yield_pct < min_yield and structure < 50.0:
+        return False, yield_pct, f"yield {yield_pct:.1f}% / structure {structure:.0f} too low"
+
+    onset = None
+    if vocals.exists():
+        try:
+            onset = detect_vocal_onset(str(vocals), dur)
+        except Exception as e:  # noqa: BLE001
+            log("retime", f"Onset detect failed: {e}")
+    new_primary = _fix_leading_timing_smear(new_primary, onset)
+    new_primary = _repair_timing_structure(new_primary, dur)
+
+    tracks[primary_key] = dict(tracks.get(primary_key) or {})
+    tracks[primary_key]["lines"] = new_primary
+    tracks[primary_key]["alignMode"] = "reconcile+force|keep-text"
+    tracks[primary_key]["alignYield"] = yield_pct
+    tracks[primary_key]["alignStructure"] = structure
+
+    for key, tr in list(tracks.items()):
+        if key == primary_key or not isinstance(tr, dict):
+            continue
+        other = tr.get("lines") or []
+        if not other:
+            continue
+        remapped = []
+        for i, ol in enumerate(other):
+            src = new_primary[i] if i < len(new_primary) else new_primary[-1]
+            remapped.extend(_apply_timings_keep_text([ol], [src]))
+        tr["lines"] = remapped
+        tr["lines"] = _repair_timing_structure(tr["lines"], dur)
+
+    existing["tracks"] = tracks
+    if not isinstance(existing.get("display"), dict):
+        existing["display"] = {
+            "primary": primary_key,
+            "secondary": "english" if tracks.get("english") and primary_key != "english" else None,
+        }
+    # Preserve catalog source BEFORE normalize (normalize no longer clobbers lrclib_*)
+    if preserve_text_source and (
+        text_source.startswith("lrclib")
+        or _catalog_text_source(text_source)
+        or text_source in ("user_paste", "karaoke_captions")
+    ):
+        existing["source"] = text_source.split("+")[0] if "+" in text_source else text_source
+        if existing["source"] in ("reconcile+force", "reconcile+force|keep-text", ""):
+            existing["source"] = "lrclib_synced" if "lrclib" in text_source else text_source
+    elif str(existing.get("lrclibId") or ""):
+        existing["source"] = "lrclib_synced"
+    existing = normalize_lyric_tracks(existing)
+    existing["alignMode"] = "reconcile+force|keep-text"
+    existing["alignYield"] = yield_pct
+    existing["alignStructure"] = structure
+    existing["duration"] = dur
+    if str(existing.get("lrclibId") or "") and not str(existing.get("source") or "").startswith("lrclib"):
+        existing["source"] = "lrclib_synced"
+
+    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    repair_lrc_json_words(path)
+    first_t = new_primary[0].get("startTime") if new_primary else None
+    detail = (
+        f"yield={yield_pct:.1f}% structure={structure:.0f} composite={composite:.1f} "
+        f"lines={len(new_primary)} first={first_t}"
+    )
+    log("retime", f"KEEP_TEXT_ALIGN_OK: {video_id} {detail}")
+    return True, yield_pct, detail
+
+
+def _run_retime_keep_text(
+    video_id: str,
+    whisper_model: str = "medium",
+    language: Optional[str] = None,
+    no_cleanup: bool = False,
+) -> None:
+    """Force-align existing lyric text to vocals; never invent or replace wording.
+
+    Audio priority for Whisper hear/align:
+      1. Demucs vocal stem (if present and RMS-healthy)
+      2. Original YouTube mix (local ``{id}.mp4`` or redownload)
+    Never use karaoke.mp4 (instrumental) — it yields ~0% force-align.
+    On low yield, retry once with original mix. Refuse to write smear timings.
+    """
+    dest_lrc = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke.lrc.json"
+    if not dest_lrc.exists():
+        fatal(f"No LRC JSON for {video_id} at {dest_lrc}")
+
+    # Backup once
+    bak = dest_lrc.with_suffix(dest_lrc.suffix + ".pre-retime-bak")
+    if not bak.exists():
+        shutil.copy2(dest_lrc, bak)
+        log("retime", f"Backup → {bak.name}")
+
+    try:
+        existing = json.loads(dest_lrc.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        fatal(f"Failed to read LRC: {e}")
+
+    duration = float(existing.get("duration") or 0) or 180.0
+    tmp_dir = os.path.join(TEMP_BASE, f"{video_id}-retime")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    ok, yield_pct, detail = force_align_keep_text_file(
+        str(dest_lrc),
+        video_id,
+        duration,
+        tmp_dir,
+        whisper_model=whisper_model,
+        language=language,
+        min_yield=40.0,
+        preserve_text_source=True,
+    )
+    if not ok:
+        fatal(
+            f"Force-align failed ({detail}) — refusing to overwrite timings (text preserved). "
+            f"Restore from {bak.name} if current file was previously smeared."
+        )
+
+    try:
+        write_bundle_manifest(video_id, LIBRARY_KARAOKE_DIR)
+    except Exception as e:  # noqa: BLE001
+        log("retime", f"Bundle warning: {e}")
+
+    if not no_cleanup:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    log("complete", f"RETIME_OK: {video_id} {detail}")
 
 
 def step_render(
@@ -3610,11 +5297,98 @@ def _atomic_publish(src: str | Path, dest: Path) -> None:
                 pass
 
 
+def _run_rebuild_stems_only(video_id: str, no_cleanup: bool = False) -> None:
+    """Demucs + remux karaoke.mp4; refresh both WAV stems; keep lyrics untouched.
+
+    Always Demucs from the *original* mix (source .mp4). If missing, re-download
+    from YouTube into the karaoke library — never Demucs karaoke instrumental
+    (that yields empty/weak vocals).
+    """
+    karaoke_mp4 = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke.mp4"
+    source_mp4_dest = LIBRARY_KARAOKE_DIR / f"{video_id}.mp4"
+
+    tmp_dir = os.path.join(TEMP_BASE, f"{video_id}-stems")
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    # Prefer any verified original (karaoke/ preserved, songs/, or flat library)
+    found = find_original_source_mp4(video_id)
+    if found is not None:
+        log("stems", f"Using existing source {found} ")
+        if found.resolve() != source_mp4_dest.resolve():
+            source_mp4_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(found, source_mp4_dest)
+            log("stems", f"Copied original into karaoke dir → {source_mp4_dest}")
+        mp4_path = str(source_mp4_dest if source_mp4_dest.exists() else found)
+    else:
+        if not karaoke_mp4.exists():
+            fatal(f"No karaoke or source mp4 for {video_id} — cannot rebuild stems")
+        log("stems", f"Downloading original mix for Demucs: {video_id}")
+        dl_path = step_download(video_id, tmp_dir)
+        shutil.copy2(dl_path, source_mp4_dest)
+        info_src = Path(dl_path).with_suffix(".info.json")
+        if info_src.exists():
+            shutil.copy2(info_src, LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke.info.json")
+        log("stems", f"Preserved source → {source_mp4_dest}")
+        mp4_path = str(source_mp4_dest)
+
+    duration = get_video_duration(mp4_path) or 0.0
+    log("stems", f"Rebuild stems only for {video_id} from {Path(mp4_path).name}")
+
+    instrumental_path, vocals_path = step_stem_separation(video_id, mp4_path, tmp_dir)
+    instrumental_path, vocals_path = ensure_both_stems(
+        video_id, instrumental_path, vocals_path
+    )
+
+    # Remux: keep existing karaoke video track if present, else source video
+    video_src = str(karaoke_mp4 if karaoke_mp4.exists() else mp4_path)
+    out_mp4 = os.path.join(tmp_dir, f"{video_id}-karaoke.mp4")
+    run([
+        _FFMPEG_BIN, "-y",
+        "-i", video_src,
+        "-i", instrumental_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-shortest",
+        out_mp4,
+    ], timeout=600)
+    if not os.path.exists(out_mp4) or os.path.getsize(out_mp4) < 10000:
+        fatal("Stem remux failed — no karaoke mp4 produced")
+
+    _atomic_publish(out_mp4, karaoke_mp4)
+    log("stems", f"Published remuxed karaoke → {karaoke_mp4}")
+
+    # Persist both stems (always overwrite on rebuild-stems)
+    dest_vocals = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke-vocals.wav"
+    dest_inst = LIBRARY_KARAOKE_DIR / f"{video_id}-instrumental.wav"
+    shutil.copy2(vocals_path, dest_vocals)
+    log("stems", f"Saved vocal stem → {dest_vocals}")
+    shutil.copy2(instrumental_path, dest_inst)
+    log("stems", f"Saved instrumental stem → {dest_inst}")
+
+    try:
+        write_bundle_manifest(video_id, LIBRARY_KARAOKE_DIR)
+    except Exception as e:  # noqa: BLE001
+        log("stems", f"Bundle warning: {e}")
+
+    if not no_cleanup:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    print(f"STEMS_OK videoId={video_id} vocals={dest_vocals.exists()} instrumental={dest_inst.exists()} duration={duration:.1f}")
+    log("complete", f"STEMS_OK: {video_id}")
+
+
 def write_bundle_manifest(video_id: str, karaoke_dir: Path) -> Optional[Path]:
     """Write ``{video_id}-karaoke.bundle.json`` LAST, after all assets are in
     place. It lists the required bundle files with sha256 + size; its presence
     marks the karaoke variant as locally `ready`. Cloud durability (R2
-    upload/verify) is tracked separately in MySQL media_assets."""
+    upload/verify) is tracked separately in MySQL media_assets.
+
+    Optional local stem roles (vocals / instrumental) are recorded when present
+    but do not affect the `complete` flag (not published to R2 in v1).
+    """
     karaoke_id = f"{video_id}-karaoke"
     role_files = {
         "media": f"{karaoke_id}.mp4",
@@ -3625,6 +5399,12 @@ def write_bundle_manifest(video_id: str, karaoke_dir: Path) -> Optional[Path]:
         if (karaoke_dir / f"{karaoke_id}{ext}").exists():
             role_files["thumbnail"] = f"{karaoke_id}{ext}"
             break
+
+    # Optional sidecar stems — local mix only
+    optional_roles = {
+        "vocals": f"{video_id}-karaoke-vocals.wav",
+        "instrumental": f"{video_id}-instrumental.wav",
+    }
 
     files: dict = {}
     missing = []
@@ -3641,6 +5421,16 @@ def write_bundle_manifest(video_id: str, karaoke_dir: Path) -> Optional[Path]:
     if "thumbnail" not in role_files:
         missing.append("thumbnail")
 
+    for role, name in optional_roles.items():
+        path = karaoke_dir / name
+        if path.exists() and path.stat().st_size > 10000:
+            files[name] = {
+                "role": role,
+                "size": path.stat().st_size,
+                "sha256": _sha256_file(path),
+                "optional": True,
+            }
+
     bundle = {
         "videoId": karaoke_id,
         "baseVideoId": video_id,
@@ -3649,6 +5439,8 @@ def write_bundle_manifest(video_id: str, karaoke_dir: Path) -> Optional[Path]:
         "complete": not missing,
         "missingRoles": missing,
         "files": files,
+        "hasVocals": any(f.get("role") == "vocals" for f in files.values()),
+        "hasInstrumental": any(f.get("role") == "instrumental" for f in files.values()),
     }
     bundle_path = karaoke_dir / f"{karaoke_id}.bundle.json"
     temp = karaoke_dir / f".staging-{karaoke_id}.bundle.json.{os.getpid()}"
@@ -3666,12 +5458,14 @@ def step_register(
     artist_override: Optional[str] = None,
     title_override: Optional[str] = None,
     vocals_path: Optional[str] = None,
+    instrumental_path: Optional[str] = None,
     force_overwrite_lyrics: bool = False,
+    lyrics_track: str = "sung",
 ) -> None:
     """Register the karaoke video in the Karol library.
 
     Moves files into .karol/library/karaoke/ and updates tags.json.
-    Saves the vocal stem WAV for future reprocessing.
+    Always persists vocal + instrumental stems when provided.
     """
     log("library", "Registering in Karol library ...")
 
@@ -3698,22 +5492,36 @@ def step_register(
     ]
     src_lrc_json = next((p for p in src_candidates if p.exists()), None)
     if src_lrc_json is not None:
-        if should_overwrite_lrc(dest_lrc_json, src_lrc_json, force=force_overwrite_lyrics):
-            _atomic_publish(src_lrc_json, dest_lrc_json)
-            # ── Repair: ensure word arrays match line text (prevents stale-word bugs) ──
-            repair_lrc_json_words(dest_lrc_json)
+        # Track-aware publish: merge into named track; never drop other tracks
+        # (especially tracks.english). force_overwrite only affects the target track.
+        published = publish_merged_lrc(
+            src_lrc_json,
+            dest_lrc_json,
+            track_key=lyrics_track or "sung",
+            force=bool(force_overwrite_lyrics),
+            protect_english=True,
+            legacy_as="english",
+        )
+        if published:
             log("library", f"Copied LRC JSON → {dest_lrc_json}")
         else:
             log("library", f"Kept existing LRC JSON (new result not better): {dest_lrc_json}")
     else:
         log("library", f"No LRC JSON found next to karaoke MP4 in {parent}")
 
-    # Copy vocal stem WAV for future reprocessing (onset detection, Whisper)
+    # Always persist both Demucs stems when available
     if vocals_path and os.path.exists(vocals_path) and os.path.getsize(vocals_path) > 10000:
         dest_vocals = karaoke_dir / f"{video_id}-karaoke-vocals.wav"
         if vocals_path != str(dest_vocals):
-            shutil.move(vocals_path, dest_vocals)
+            shutil.copy2(vocals_path, dest_vocals)
             log("library", f"Saved vocal stem → {dest_vocals}")
+    else:
+        log("library", "WARNING: registering without vocal stem — vocal mix will be unavailable")
+    if instrumental_path and os.path.exists(instrumental_path) and os.path.getsize(instrumental_path) > 10000:
+        dest_inst = karaoke_dir / f"{video_id}-instrumental.wav"
+        if instrumental_path != str(dest_inst):
+            shutil.copy2(instrumental_path, dest_inst)
+            log("library", f"Saved instrumental stem → {dest_inst}")
 
     # Copy info.json from the download if it exists
     src_info = Path(mp4_path).with_suffix(".info.json")
@@ -3762,7 +5570,38 @@ def step_register(
         # this value, and scan rebuilds must not be able to clobber it.
         "source": "karaoke-maker",
         "duration": duration,
+        # Preserve DJ star ratings across Re-Lyric / republish
+        **({"rating": existing["rating"]} if existing.get("rating") else {}),
     }
+
+    # Dual-presence: keep the original MV under songs/ as Music Videos (tag
+    # music) while karaoke lives as {id}-karaoke. Archive alone used to mark
+    # the id "downloaded" without a songs/ file → playlist sync skipped it.
+    songs_dir = LIBRARY_DIR / "songs"
+    songs_mp4 = songs_dir / f"{video_id}.mp4"
+    try:
+        src_mp4 = Path(mp4_path)
+        if src_mp4.exists() and src_mp4.stat().st_size > 100_000:
+            # Prefer a non-karaoke original; skip if source is already the karaoke render
+            if "-karaoke" not in src_mp4.stem:
+                if not songs_mp4.exists() or songs_mp4.stat().st_size < 100_000:
+                    songs_dir.mkdir(parents=True, exist_ok=True)
+                    _atomic_publish(src_mp4, songs_mp4)
+                    log("library", f"Preserved Music Video → {songs_mp4}")
+                base = tags.get(video_id) if isinstance(tags.get(video_id), dict) else {}
+                if not isinstance(base, dict):
+                    base = {}
+                if base.get("tag") not in ("music", "song"):
+                    tags[video_id] = {
+                        **base,
+                        "tag": "music",
+                        "artist": base.get("artist") or artist,
+                        "title": base.get("title") or title,
+                        "year": base.get("year", ""),
+                        "source": "" if base.get("source") == "karaoke-maker" else base.get("source", ""),
+                    }
+    except OSError as e:
+        log("library", f"Music Video preserve warning: {e}")
 
     TAGS_PATH.write_text(json.dumps(tags, indent=2))
     log("library", "Updated tags.json")
@@ -3807,8 +5646,9 @@ def main() -> None:
                        help="With --reprocess: download fresh original video, re-run Demucs, mux new "
                             "instrumental onto the video stream (-c:v copy — no video re-encode)")
     parser.add_argument("--force-whisper", action="store_true",
-                       help="If Stage 1 finds no lyric text, invent with Whisper (default). "
-                            "Does NOT skip LRCLIB/karaoke/scrapers — those always run first.")
+                       help="Prefer Whisper invent over YouTube embedded auto-captions. "
+                            "Still allows LRCLIB / karaoke captions / pasted lyrics to win first; "
+                            "skips only low-trust embedded_subs so re-lyric can escape bad ASR.")
     parser.add_argument("--force-overwrite-lyrics", action="store_true",
                        help="Allow replacing an existing lrclib_synced LRC with a non-synced result. "
                             "Without this flag, synced LRCLIB on disk is sticky.")
@@ -3825,11 +5665,32 @@ def main() -> None:
     parser.add_argument("--karaoke-match", type=str, default=None,
                        help="YouTube video ID of the matching karaoke version (skip search)")
     parser.add_argument("--romanize", type=str, default=None,
-                       help="Transliterate lyrics to Latin script (e.g., 'th' for Thai RTGS, 'ja' for Japanese romaji, 'ko' for Korean RR)")
+                       help="Transliterate lyrics to Latin: th (RTGS), ja (Hepburn), "
+                            "ko (Revised Romanization), zh (pinyin), lo (Lao). "
+                            "Not applicable for already-Latin languages (id/vi/en).")
+    parser.add_argument("--romanize-only", action="store_true",
+                       help="Only romanize an existing karaoke LRC (no download, Demucs, Whisper, or rebuild). "
+                            "Requires --romanize LANG. Writes tracks.romanized; keeps native/sung and english.")
+    parser.add_argument("--rebuild-stems-only", action="store_true",
+                       help="Re-run Demucs on existing/source audio; refresh vocal + instrumental WAVs "
+                            "and remux karaoke.mp4 instrumental. Keeps lyrics untouched.")
+    parser.add_argument("--lyrics-track", type=str, default="sung",
+                       choices=("sung", "english", "romanized"),
+                       help="Named track to write newly generated lyrics into (default: sung). "
+                            "Never deletes other tracks; existing tracks.english is protected "
+                            "unless --lyrics-track english is combined with --force-overwrite-lyrics.")
     parser.add_argument("--lyrics-file", type=str, default=None,
                        help="Path to a plain-text file with ground-truth lyrics for Whisper alignment (skips LRCLIB)")
     parser.add_argument("--whisper-model", type=str, default="medium.en",
                        help="Whisper model: tiny.en, tiny, medium.en, medium, large-v3, large (default: medium.en)")
+    parser.add_argument("--retime-keep-text", action="store_true",
+                       help="Re-align existing LRC timings via Whisper force-align, keeping all "
+                            "display text (and tracks.english) unchanged. Uses Demucs vocals when "
+                            "healthy; falls back to original YouTube mix (local mp4 or redownload) "
+                            "on weak vocals / low yield. Never aligns against karaoke instrumental.")
+    parser.add_argument("--skip-auto-retime", action="store_true",
+                       help="Do not auto force-align catalog (LRCLIB/paste) text to Demucs vocals "
+                            "after Stage 1. Escape hatch only — gold path runs keep-text align by default.")
     args = parser.parse_args()
 
     global _WHISPER_LANG
@@ -3838,6 +5699,46 @@ def main() -> None:
     _RMANIZE_LANG = args.romanize
 
     video_id = extract_video_id(args.url)
+
+    # ── Romanize only: transliterate existing LRC → tracks.romanized ──
+    if args.romanize_only:
+        if not args.romanize:
+            fatal("--romanize-only requires --romanize LANG (e.g. th, ja, ko, zh, lo)")
+        json_path = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke.lrc.json"
+        if not json_path.exists():
+            alt = LIBRARY_KARAOKE_DIR / f"{video_id}.lrc.json"
+            json_path = alt if alt.exists() else json_path
+        if not json_path.exists():
+            fatal(f"No karaoke LRC JSON found for {video_id} at {json_path}")
+        log("romanize", f"Romanize-only: {json_path} (lang={args.romanize})")
+        try:
+            romanize_lrc_json(str(json_path), args.romanize)
+        except RuntimeError as e:
+            fatal(str(e))
+        after = json.loads(json_path.read_text(encoding="utf-8"))
+        has_rom = isinstance(after.get("tracks"), dict) and bool(
+            (after.get("tracks") or {}).get("romanized")
+        )
+        if not has_rom:
+            fatal(f"Romanization produced no tracks.romanized for {video_id}")
+        n_lines = len(((after.get("tracks") or {}).get("romanized") or {}).get("lines") or [])
+        print(f"ROMANIZE_OK videoId={video_id} lang={args.romanize} lines={n_lines}")
+        return
+
+    # ── Rebuild stems only: Demucs + remux; keep lyrics ──
+    if args.rebuild_stems_only:
+        _run_rebuild_stems_only(video_id, no_cleanup=bool(args.no_cleanup))
+        return
+
+    # ── Re-time only: keep perfect lyric text, re-lock timings to vocals ──
+    if args.retime_keep_text:
+        _run_retime_keep_text(
+            video_id,
+            whisper_model=args.whisper_model or "medium",
+            language=args.language,
+            no_cleanup=bool(args.no_cleanup),
+        )
+        return
 
     # ── Validate mode ──
     if args.validate:
@@ -4061,11 +5962,10 @@ def main() -> None:
 
         if args.reprocess:
             karaoke_existing = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke.mp4"
-            original = LIBRARY_DIR / f"{video_id}.mp4"
-            karaoke_original = LIBRARY_KARAOKE_DIR / f"{video_id}.mp4"
-            if not original.exists() and karaoke_original.exists():
-                original = karaoke_original
-                log("reprocess", f"Using preserved source from karaoke dir: {original}")
+            found_original = find_original_source_mp4(video_id)
+            original = found_original  # Path | None
+            if found_original is not None:
+                log("reprocess", f"Using verified original source: {found_original}")
 
             if not karaoke_existing.exists() and not args.rebuild_audio:
                 fatal(f"No existing karaoke MP4 found for {video_id}")
@@ -4099,6 +5999,8 @@ def main() -> None:
 
                 instrumental_path, vocal_stem_path = step_stem_separation(
                     video_id, mp4_path, tmp_dir)
+                instrumental_path, vocal_stem_path = ensure_both_stems(
+                    video_id, instrumental_path, vocal_stem_path)
                 audit.set_demucs_model("htdemucs_ft")
                 audit.set_audio_source("fresh_download", True)
                 audit.record_step("demucs", ended_at=time.time(),
@@ -4134,7 +6036,7 @@ def main() -> None:
                     log("reprocess", f"Found existing vocal stem: {vocal_stem_path}")
 
                 if args.force_whisper or args.title:
-                    if original.exists():
+                    if original is not None and original.exists():
                         whisper_source = str(original)
                         log("reprocess", f"Using original video for transcription: {original}")
                     else:
@@ -4178,7 +6080,7 @@ def main() -> None:
                 onset_audio = os.path.join(tmp_dir, f"{video_id}-onset-audio.wav")
                 if not os.path.exists(onset_audio):
                     # If we have the original video, extract audio from it (fast, no download needed)
-                    if original.exists():
+                    if original is not None and original.exists():
                         run([
                             _FFMPEG_BIN, "-y", "-i", str(original),
                             "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
@@ -4218,6 +6120,8 @@ def main() -> None:
                 log("warn", f"Song is {duration/60:.0f} minutes. Processing will take longer.")
 
             instrumental_path, vocal_stem_path = step_stem_separation(video_id, mp4_path, tmp_dir)
+            instrumental_path, vocal_stem_path = ensure_both_stems(
+                video_id, instrumental_path, vocal_stem_path)
             audit.set_demucs_model("htdemucs_ft")
             audit.record_step("demucs", metadata={"model": "htdemucs_ft"})
 
@@ -4363,9 +6267,11 @@ def main() -> None:
         # ── Stage 1: collect text from every catalog source ──
         log("lyrics", "Stage 1: collecting lyric text (LRCLIB → scrapers → paste → embedded)")
 
-        # Sticky: existing library lrclib_synced is sacred unless --force-overwrite-lyrics
+        # Sticky: existing library catalog text is sacred unless --force-overwrite-lyrics,
+        # but raw lrclib_synced *timings* still get Demucs+Whisper keep-text align below.
         dest_lrc_lib = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke.lrc.json"
         existing_synced_kept = False
+        skip_auto_retime = False
         if dest_lrc_lib.exists() and not args.force_overwrite_lyrics:
             try:
                 existing_lrc = json.loads(dest_lrc_lib.read_text(encoding="utf-8"))
@@ -4377,23 +6283,20 @@ def main() -> None:
                         title_override=args.title,
                     )
                 elif _lrc_source_rank(existing_lrc) >= 100:
-                    # Still refresh from same lrclibId if possible; never fall to Whisper
-                    pref_id = existing_lrc.get("lrclibId")
-                    catalog_text, catalog_synced, catalog_lrclib_id = step_fetch_lyrics(
-                        video_id, duration,
-                        artist_override=args.artist,
-                        title_override=args.title,
-                        preferred_lrclib_id=int(pref_id) if pref_id else None,
+                    am = str(existing_lrc.get("alignMode") or "").lower()
+                    timing_ok = (
+                        "keep-text" in am
+                        and not _lrc_json_timing_broken(existing_lrc, duration)
                     )
-                    if catalog_synced and catalog_text:
-                        log("lyrics", "Existing lrclib_synced on disk — refreshing from LRCLIB synced hit")
-                    else:
-                        # Keep disk file as Stage 1 winner via copy into tmp
-                        log("lyrics", "Existing lrclib_synced on disk — keeping (LRCLIB refresh missed synced)")
+                    pref_id = existing_lrc.get("lrclibId")
+                    if timing_ok:
+                        # Already gold-path aligned — keep without re-Whisper
+                        log("lyrics",
+                            "Existing keep-text LRC on disk with healthy timing — sticky keep")
                         keep_path = os.path.join(tmp_dir, f"{video_id}-karaoke.lrc.json")
                         shutil.copy2(dest_lrc_lib, keep_path)
                         candidates.append({
-                            "source": "lrclib_synced",
+                            "source": str(existing_lrc.get("source") or "lrclib_synced"),
                             "text": _plain_from_lrc_json(str(dest_lrc_lib)),
                             "synced": True,
                             "lrc_text": "",
@@ -4404,7 +6307,39 @@ def main() -> None:
                             ),
                         })
                         existing_synced_kept = True
+                        skip_auto_retime = True
                         catalog_text, catalog_synced, catalog_lrclib_id = "", False, None
+                    else:
+                        # Refresh text from LRCLIB; Stage 2 + auto-retime will fix timing
+                        catalog_text, catalog_synced, catalog_lrclib_id = step_fetch_lyrics(
+                            video_id, duration,
+                            artist_override=args.artist,
+                            title_override=args.title,
+                            preferred_lrclib_id=int(pref_id) if pref_id else None,
+                        )
+                        if catalog_synced and catalog_text:
+                            log("lyrics",
+                                "Existing catalog LRC needs timing refresh — "
+                                "re-fetching synced text for Demucs+Whisper keep-text align")
+                        else:
+                            log("lyrics",
+                                "Existing catalog LRC needs timing refresh — "
+                                "keeping disk text for keep-text align")
+                            keep_path = os.path.join(tmp_dir, f"{video_id}-karaoke.lrc.json")
+                            shutil.copy2(dest_lrc_lib, keep_path)
+                            candidates.append({
+                                "source": str(existing_lrc.get("source") or "lrclib_synced"),
+                                "text": _plain_from_lrc_json(str(dest_lrc_lib)),
+                                "synced": True,
+                                "lrc_text": "",
+                                "json_path": keep_path,
+                                "lrclib_id": pref_id,
+                                "score": _score_lyric_candidate(
+                                    _plain_from_lrc_json(str(dest_lrc_lib)), True, duration, "lrclib_synced",
+                                ),
+                            })
+                            existing_synced_kept = True
+                            catalog_text, catalog_synced, catalog_lrclib_id = "", False, None
                 else:
                     catalog_text, catalog_synced, catalog_lrclib_id = step_fetch_lyrics(
                         video_id, duration,
@@ -4459,9 +6394,14 @@ def main() -> None:
             log("lyrics", f"Paste candidate: score={candidates[-1]['score']:.0f} "
                           f"words={len(pasted_lyrics.split())}")
 
-        # Embedded yt-dlp subs already on disk (from download)
-        for emb in _collect_embedded_caption_candidates(tmp_dir, video_id, duration):
-            candidates.append(emb)
+        # Embedded yt-dlp subs already on disk (from download).
+        # --force-whisper: skip embedded auto-captions so Whisper invent can run
+        # when LRCLIB/karaoke/paste are empty (otherwise bad YT ASR locks forever).
+        if args.force_whisper:
+            log("lyrics", "force-whisper: skipping embedded auto-caption Stage 1 candidates")
+        else:
+            for emb in _collect_embedded_caption_candidates(tmp_dir, video_id, duration):
+                candidates.append(emb)
 
         # Pick best Stage 1 candidate
         candidates = [c for c in candidates if c.get("score", -1) > 0]
@@ -4515,12 +6455,13 @@ def main() -> None:
                     log("lyrics", f"Auto-correcting LRC timestamps by {correction_offset:+.1f}s")
                     lrc_text = correct_lrc_timestamps(lrc_text, correction_offset)
                 elif verdict == 'fail':
-                    # Never demote synced LRCLIB to Whisper/approx — catalog timing wins.
+                    # Keep catalog *text* but mark for Demucs+Whisper keep-text align
+                    # (never demote to Whisper invent / approx).
                     log("lyrics",
-                        "LRCLIB synced failed quality check — KEEPING synced LRC "
-                        "(refusing Whisper/approx demotion)")
+                        "LRCLIB synced failed quality check — keeping text; "
+                        "will force-align to Demucs vocals (keep-text)")
                 else:
-                    log("lyrics", "LRC quality check OK — using as-is")
+                    log("lyrics", "LRC quality check OK — using as-is (then keep-text align)")
             log("lyrics", f"Source: {lyric_source or 'lrclib_synced'}")
 
         elif best and best.get("text"):
@@ -4554,11 +6495,11 @@ def main() -> None:
                         lyric_source = f"{best['source']}+approx"
                         log("lyrics", f"Source: {lyric_source}")
 
-        # Last resort: invent words with Whisper (only if Stage 1 empty, or --force-whisper with no usable text)
-        if (not json_path and lrc_text != "WHISPER_DONE" and (not lrc_text or not lrc_text.strip())) or (
-            args.force_whisper and not best and not json_path
-        ):
-            log("lyrics", "Stage 1 empty — Whisper invent (last resort)")
+        # Last resort: invent words with Whisper when Stage 1 empty (or force-whisper
+        # skipped embedded_subs and no catalog/paste/karaoke text won).
+        if not json_path and lrc_text != "WHISPER_DONE" and (not lrc_text or not lrc_text.strip()):
+            log("lyrics", "Stage 1 empty — Whisper invent (last resort)"
+                          + (" [force-whisper]" if args.force_whisper else ""))
             log("lyrics", "Source: Whisper full transcription")
             whisper_audio = mp4_path
             whisper_stem = vocal_stem_path if (vocal_stem_path and os.path.exists(str(vocal_stem_path))) else None
@@ -4598,9 +6539,6 @@ def main() -> None:
                 else:
                     log("lyrics", "No lyrics available. Rendering video without lyric overlay.")
 
-        # If --force-whisper and we have plain text but user wants invent anyway — ignore
-        # (force-whisper no longer skips Stage 1; it only invents when Stage 1 is empty)
-
         # Step 4: Build LRC from synced LRC text (not yet JSON)
         if lrc_text and not is_synced and json_path is None:
             align_json = step_align_lyrics(
@@ -4632,19 +6570,33 @@ def main() -> None:
                 ),
             )
             if _RMANIZE_LANG:
-                romanize_lrc_json(json_path, _RMANIZE_LANG)
+                try:
+                    romanize_lrc_json(json_path, _RMANIZE_LANG)
+                except RuntimeError as e:
+                    log("romanize", f"Romanize skipped: {e}")
 
-        # Stamp alignMode / lrclibId onto any produced JSON that is missing them
+        # Stamp lrclibId / catalog source onto any produced JSON that is missing them.
+        # Do NOT clobber reconcile+force|keep-text alignMode with raw lrclib_synced.
         if json_path and os.path.exists(json_path) and (lyric_source or (best and best.get("lrclib_id"))):
             try:
                 with open(json_path, encoding="utf-8") as f:
                     stamped = json.load(f)
                 changed = False
                 mode = lyric_source or (best.get("source") if best else "") or ""
-                if mode.startswith("lrclib") and stamped.get("alignMode") != mode:
-                    stamped["alignMode"] = mode
-                    stamped["source"] = mode
-                    changed = True
+                cur_am = str(stamped.get("alignMode") or "")
+                if mode.startswith("lrclib") and "keep-text" not in cur_am.lower():
+                    if stamped.get("source") != mode.split("+")[0]:
+                        stamped["source"] = mode.split("+")[0]
+                        changed = True
+                    # Only set alignMode to lrclib_* when not already force-aligned
+                    if not cur_am or cur_am.startswith("lrclib"):
+                        if stamped.get("alignMode") != mode:
+                            stamped["alignMode"] = mode
+                            changed = True
+                elif mode.startswith("lrclib") and "keep-text" in cur_am.lower():
+                    if not str(stamped.get("source") or "").startswith("lrclib"):
+                        stamped["source"] = mode.split("+")[0]
+                        changed = True
                 rid = best.get("lrclib_id") if best else None
                 if rid is not None and stamped.get("lrclibId") != int(rid):
                     stamped["lrclibId"] = int(rid)
@@ -4674,6 +6626,111 @@ def main() -> None:
         if lyric_source:
             log("lyrics", f"Final lyric source: {lyric_source}")
 
+        # Canonicalize winner JSON next to the karaoke MP4 so step_register finds it.
+        # Caption Stage 1 writes unique `{id}.{lang}.lrc.json` paths to avoid clobber;
+        # register still expects `{id}-karaoke.lrc.json`.
+        if json_path and os.path.exists(json_path):
+            canonical = os.path.join(tmp_dir, f"{video_id}-karaoke.lrc.json")
+            if os.path.abspath(json_path) != os.path.abspath(canonical):
+                shutil.copy2(json_path, canonical)
+                json_path = canonical
+                log("lyrics", f"Canonicalized LRC JSON → {os.path.basename(canonical)}")
+            if _RMANIZE_LANG:
+                try:
+                    romanize_lrc_json(json_path, _RMANIZE_LANG)
+                except RuntimeError as e:
+                    log("romanize", f"Romanize skipped: {e}")
+
+        # ── Gold path: Demucs vocals + Whisper force-align keep-text ──
+        # After any catalog text win, replace LRCLIB/proportional timings with
+        # hear→reconcile→force unless already keep-text with healthy cues.
+        if (
+            json_path
+            and os.path.exists(json_path)
+            and not skip_auto_retime
+            and not getattr(args, "skip_auto_retime", False)
+        ):
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    pre_align = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pre_align = {}
+            am = str(pre_align.get("alignMode") or "").lower()
+            src = (
+                lyric_source
+                or str(pre_align.get("source") or "")
+                or (best.get("source") if best else "")
+                or ""
+            )
+            already_gold = "keep-text" in am and not _lrc_json_timing_broken(pre_align, duration)
+            catalog_win = _catalog_text_source(src) or (
+                best and best.get("synced") and _catalog_text_source(best.get("source") or "lrclib_synced")
+            )
+            # Also force-align karaoke_captions / embedded pre-timed if timing broken
+            timing_broken = _lrc_json_timing_broken(pre_align, duration)
+            if already_gold:
+                log("lyrics", "Skip auto keep-text align — already gold timing")
+            elif catalog_win or timing_broken:
+                log("lyrics",
+                    f"Auto keep-text force-align "
+                    f"(source={src or 'catalog'}, timing_broken={timing_broken})")
+                # Ensure source stamp before align so provenance survives
+                if catalog_win and not str(pre_align.get("source") or "").startswith("lrclib"):
+                    if src.startswith("lrclib") or (best and best.get("lrclib_id")):
+                        pre_align["source"] = "lrclib_synced" if (best and best.get("synced")) else (
+                            src.split("+")[0] if src else "lrclib_synced"
+                        )
+                        try:
+                            with open(json_path, "w", encoding="utf-8") as f:
+                                json.dump(pre_align, f, indent=2, ensure_ascii=False)
+                        except OSError:
+                            pass
+                stem = vocal_stem_path if (vocal_stem_path and os.path.exists(str(vocal_stem_path))) else None
+                if not stem:
+                    lib_stem = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke-vocals.wav"
+                    if lib_stem.exists():
+                        stem = str(lib_stem)
+                ok_align, yld, detail = force_align_keep_text_file(
+                    json_path,
+                    video_id,
+                    duration,
+                    tmp_dir,
+                    vocal_wav_path=stem,
+                    mp4_path=mp4_path if isinstance(mp4_path, str) else None,
+                    whisper_model=getattr(args, "whisper_model", None) or "large-v3",
+                    language=getattr(args, "language", None) or _WHISPER_LANG,
+                    min_yield=40.0,
+                    preserve_text_source=True,
+                )
+                if ok_align:
+                    lyric_source = f"{(src or 'catalog').split('+')[0]}+keep-text"
+                    log("lyrics", f"Auto keep-text align OK: {detail}")
+                    if audit:
+                        audit.data["timing"] = "keep_text_force"
+                        audit.data["alignYield"] = yld
+                else:
+                    log("lyrics",
+                        f"Auto keep-text align failed ({detail}) — "
+                        f"keeping catalog/onset timings; audit=catalog_fallback")
+                    if audit:
+                        audit.data["timing"] = "catalog_fallback"
+                        audit.data["alignYield"] = yld
+                    # Refuse to publish past-EOF catalog cues when align failed
+                    try:
+                        with open(json_path, encoding="utf-8") as f:
+                            fallback = json.load(f)
+                        if _lrc_json_timing_broken(fallback, duration):
+                            log("lyrics",
+                                "WARNING: catalog timings still broken after failed align — "
+                                "clamping cues to duration")
+                            _clamp_lrc_json_to_duration(fallback, duration)
+                            with open(json_path, "w", encoding="utf-8") as f:
+                                json.dump(fallback, f, indent=2, ensure_ascii=False)
+                    except (json.JSONDecodeError, OSError):
+                        pass
+            else:
+                log("lyrics", f"Skip auto keep-text align — source={src or '(none)'} not catalog text")
+
         # ── Pre-render quality gate ──
         # Load lyrics data for quality inspection
         lyrics_for_gate = {}
@@ -4699,9 +6756,13 @@ def main() -> None:
         is_whisper_used = bool(
             lyric_source.endswith("+align")
             or lyric_source.endswith("+force")
+            or lyric_source.endswith("+keep-text")
             or lyric_source == "whisper_invent"
             or args.force_whisper
-            or (isinstance(lyrics_for_gate, dict) and lyrics_for_gate.get("alignMode") == "reconcile+force")
+            or (isinstance(lyrics_for_gate, dict) and (
+                lyrics_for_gate.get("alignMode") == "reconcile+force"
+                or "keep-text" in str(lyrics_for_gate.get("alignMode") or "")
+            ))
         )
         # Determine chunk count from audit
         chunk_count = audit.data.get("chunkCount", 0)
@@ -4741,9 +6802,23 @@ def main() -> None:
                         shutil.rmtree(tmp_dir, ignore_errors=True)
                     log("complete", f"LYRICS_BLOCKED: quality gate refused overwrite for {video_id}")
                     sys.exit(2)
-                # Explicit Re-Lyric no longer bypasses quality — synced LRCLIB is sticky
-                if not should_overwrite_lrc(dest_lrc, Path(json_path),
-                                           force=bool(args.force_overwrite_lyrics)):
+                # Explicit Re-Lyric: merge into named track (default sung) without
+                # destroying tracks.english. Full-file rank guard only applies when
+                # replacing a single-track / same-track English sheet.
+                track_key = getattr(args, "lyrics_track", None) or "sung"
+                dest_has_tracks = False
+                try:
+                    if dest_lrc.exists():
+                        _ex = json.loads(dest_lrc.read_text(encoding="utf-8"))
+                        dest_has_tracks = bool(_ex.get("tracks"))
+                except (json.JSONDecodeError, OSError):
+                    pass
+                same_track_replace = track_key == "english" or (
+                    not dest_has_tracks and track_key == "english"
+                )
+                if same_track_replace and not should_overwrite_lrc(
+                    dest_lrc, Path(json_path), force=bool(args.force_overwrite_lyrics)
+                ):
                     audit.record_step("render", ended_at=time.time(),
                                       metadata={"fast_path": "lyrics_only_kept_existing"})
                     audit_path = audit.write(str(LIBRARY_KARAOKE_DIR))
@@ -4753,10 +6828,16 @@ def main() -> None:
                     log("complete", f"LYRICS_KEPT: existing LRC is better for {video_id}")
                     return
                 if args.reprocess:
-                    log("quality-gate", "Re-Lyric — writing new LRC (passed overwrite guard)")
+                    log("quality-gate", f"Re-Lyric — writing track '{track_key}' (preserving other tracks)")
                 log("render", "All assets exist — lyrics-only update (skipping Demucs + re-encode)")
-                shutil.copy2(json_path, dest_lrc)
-                repair_lrc_json_words(dest_lrc)
+                publish_merged_lrc(
+                    json_path,
+                    dest_lrc,
+                    track_key=track_key,
+                    force=bool(args.force_overwrite_lyrics),
+                    protect_english=True,
+                    legacy_as="english",
+                )
                 log("library", f"Lyrics-only update → {dest_lrc}")
                 try:
                     write_bundle_manifest(video_id, LIBRARY_KARAOKE_DIR)
@@ -4795,11 +6876,16 @@ def main() -> None:
                 log("render", "Reprocess without --rebuild-audio — skipping Demucs/re-encode")
                 if json_path and os.path.exists(json_path) and gate_ok:
                     dest_lrc = LIBRARY_KARAOKE_DIR / f"{video_id}-karaoke.lrc.json"
-                    # Synced LRCLIB sticky even on Re-Lyric unless --force-overwrite-lyrics
-                    if should_overwrite_lrc(dest_lrc, Path(json_path),
-                                           force=bool(args.force_overwrite_lyrics)):
-                        shutil.copy2(json_path, dest_lrc)
-                        repair_lrc_json_words(dest_lrc)
+                    track_key = getattr(args, "lyrics_track", None) or "sung"
+                    published = publish_merged_lrc(
+                        json_path,
+                        dest_lrc,
+                        track_key=track_key,
+                        force=bool(args.force_overwrite_lyrics),
+                        protect_english=True,
+                        legacy_as="english",
+                    )
+                    if published:
                         log("library", f"Lyrics-only update → {dest_lrc}")
                         try:
                             write_bundle_manifest(video_id, LIBRARY_KARAOKE_DIR)
@@ -4881,7 +6967,9 @@ def main() -> None:
             artist_override=args.artist,
             title_override=args.title,
             vocals_path=vocal_stem_path,
+            instrumental_path=instrumental_path,
             force_overwrite_lyrics=bool(args.force_overwrite_lyrics),
+            lyrics_track=getattr(args, "lyrics_track", None) or "sung",
         )
 
         # ── Write audit log ──
@@ -4889,19 +6977,31 @@ def main() -> None:
         audit_path = audit.write(str(LIBRARY_KARAOKE_DIR))
         log("audit", f"Audit log written: {audit_path}")
 
-        # Preserve fresh source for future reprocessing (overwrite on rebuild)
+        # Preserve fresh source for future reprocessing.
+        # Overwrite when rebuilding, missing, or existing file fails integrity
+        # (e.g. empty mux with 0 streams left behind by an older download).
         source_mp4_dest = LIBRARY_KARAOKE_DIR / f"{video_id}.mp4"
         if mp4_path and os.path.exists(mp4_path) and not mp4_path.endswith('-karaoke.mp4'):
-            if args.rebuild_audio or not source_mp4_dest.exists():
+            need_preserve = args.rebuild_audio or not source_mp4_dest.exists()
+            if source_mp4_dest.exists() and not need_preserve:
+                ok_src, detail_src = verify_downloaded_video(str(source_mp4_dest))
+                if not ok_src:
+                    log("library", f"Existing preserved source bad ({detail_src}) — replacing")
+                    quarantine_bad_download(str(source_mp4_dest), detail_src)
+                    need_preserve = True
+            if need_preserve:
                 shutil.copy2(mp4_path, source_mp4_dest)
                 log("library", f"Preserved source video → {source_mp4_dest}")
 
-        # Preserve instrumental WAV (overwrite on rebuild)
+        # Always keep instrumental WAV in sync with the muxed karaoke audio
         inst_dest = LIBRARY_KARAOKE_DIR / f"{video_id}-instrumental.wav"
         if instrumental_path and os.path.exists(instrumental_path) and os.path.getsize(instrumental_path) > 10000:
             if args.rebuild_audio or not inst_dest.exists():
                 shutil.copy2(instrumental_path, inst_dest)
                 log("library", f"Preserved instrumental WAV → {inst_dest}")
+            else:
+                # Keep sidecar aligned with latest Demucs when we just ran it
+                shutil.copy2(instrumental_path, inst_dest)
 
         if not args.no_cleanup:
             log("cleanup", "Removing temp directory ...")

@@ -1,0 +1,68 @@
+═══════════════════════════════════════════════════════════════
+  ABLETON LIVE — Input Config (Plan B: Shure on ch1)
+═══════════════════════════════════════════════════════════════
+
+WHY: Live log showed "Input Channels: 2" — ch3 never reached Live.
+     Shure is now aggregate INPUT 1 (mono). Karol is ch2-3.
+
+CRITICAL: Monitor MUST be **In** — NOT Off. Off = silent even when armed.
+
+PREREQ: Quit Live completely (Cmd+Q) BEFORE running karol-show-night.sh.
+         Re-open Live AFTER the script finishes.
+
+───────────────────────────────────────────────────────────────
+STEP 1 — Preferences → Audio
+───────────────────────────────────────────────────────────────
+  Live menu → Preferences (or Cmd+,)
+  Click the "Audio" tab.
+
+───────────────────────────────────────────────────────────────
+STEP 2 — Device + Input Config
+───────────────────────────────────────────────────────────────
+  Sample Rate:         44100 Hz
+  Audio Input Device:  Karol Live Mic   ← NOT Shure direct, NOT BlackHole alone
+  Audio Output Device: Living room TV
+
+  Click "Input Config" button:
+    ✓ Enable channel 1   ← Shure mic (mono)
+    ✓ Enable channel 2
+    ✓ Enable channel 3   ← Karol stereo (L/R)
+
+  Click "Output Config":
+    ✓ Enable channels 1 and 2 (TV stereo)
+
+───────────────────────────────────────────────────────────────
+STEP 3 — Track wiring (EXACT numbers)
+───────────────────────────────────────────────────────────────
+  Track 1 (Shure mic):
+    Audio From: Ext. In → Karol Live Mic / 1
+    Monitor: In          ← MUST be In, not Off
+    Arm: ON (red)
+
+  Track 2 (Karol backing):
+    Audio From: Ext. In → Karol Live Mic / 2-3
+    Monitor: In          ← MUST be In, not Off
+    Arm: OFF
+
+  Master:
+    Output: Living room TV / 1-2
+
+───────────────────────────────────────────────────────────────
+VERIFY
+───────────────────────────────────────────────────────────────
+  Sing into mic — Track 1 meter should move.
+  Play a Karol song — Track 2 meter should move.
+  Both audible on TV.
+
+  Re-run: scripts/karol-audio-verify.sh
+  Log check: grep "Input Channels" ~/Library/Preferences/Ableton/Live*/Log.txt | tail -1
+  Must show: Input Channels: 3
+
+───────────────────────────────────────────────────────────────
+DO NOT
+───────────────────────────────────────────────────────────────
+  • Set Monitor to Off on mic or Karol tracks (no meters, no sound)
+  • Select Shure MVX2U as Live input (48 kHz — breaks TV path)
+  • Select BlackHole 2ch alone as input (no mic)
+  • Set Live to 48000 Hz
+  • Use ch3 for mic — mic is ch1 now

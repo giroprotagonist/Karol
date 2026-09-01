@@ -146,6 +146,12 @@ export type YouTubeDjStatus = {
 	queueLength?: number;
 	currentTitle?: string;
 	interstitialMessage?: string | null;
+	/** Between-songs gap is showing on HDMI (laptop Gap/HOLD controls apply) */
+	interstitialActive?: boolean;
+	interstitialHeld?: boolean;
+	/** Unified show mode: kj = karaoke, dj = Music jukebox / Gap filler */
+	showMode?: 'kj' | 'dj' | 'idle';
+	pendingKaraoke?: number;
 	lastPlaybackError?: string | null;
 	lastAdvanceReason?: string | null;
 	volumeLevel?: number;
