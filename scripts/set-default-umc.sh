@@ -1,6 +1,7 @@
 #!/bin/bash
-# Set macOS default output to UMC404HD (DJ/PA path — Karol still uses BlackHole via Live).
-# Note: for Karol→Live chain, macOS output should stay BlackHole; this is for direct monitoring only.
+# Set macOS default output to UMC404HD.
+# umc-direct (recommended): Karol + Live both on UMC — near-instant mic, OS mixes.
+# umc-pa Live-mix: use set-default-blackhole.sh instead so Karol feeds the aggregate.
 set -euo pipefail
 SAS="${SWITCH_AUDIO_SOURCE:-/opt/homebrew/bin/SwitchAudioSource}"
 NAME="${KAROL_UMC_NAME:-UMC404HD 192k}"

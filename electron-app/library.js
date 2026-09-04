@@ -1769,6 +1769,147 @@ function _buildCacheRowFromDisk(videoId) {
 }
 
 /**
+ * Permanently delete a library video (and optional karaoke/music twin) from disk
+ * + tags.json. Used by the controller ⋮ → Delete action.
+ *
+ * @param {string} videoId
+ * @param {{ siblings?: boolean }} [opts]  siblings=true also deletes base / -karaoke twin
+ */
+function deleteVideo(videoId, opts = {}) {
+  const id = String(videoId || '').trim();
+  if (!id) return { ok: false, error: 'videoId required' };
+  const siblings = opts.siblings !== false; // default: delete dual-presence twin too
+  const base = normalizeVideoIdBase(id);
+  const ids = new Set([id, base]);
+  if (siblings) ids.add(base + '-karaoke');
+
+  const deletedFiles = [];
+  const deletedKeys = [];
+  const errors = [];
+
+  // Remove matching media + sidecars from every library search dir
+  for (const vid of ids) {
+    const stem = String(vid);
+    for (const dir of LIBRARY_SEARCH_DIRS) {
+      let names = [];
+      try {
+        if (!fs.existsSync(dir)) continue;
+        names = fs.readdirSync(dir);
+      } catch (e) {
+        errors.push(dir + ': ' + (e && e.message));
+        continue;
+      }
+      for (const name of names) {
+        if (!name || name.startsWith('._')) continue;
+        const isExact = name === stem || name.startsWith(stem + '.') || name.startsWith(stem + '-');
+        // When deleting the base id with siblings, also pick up `-karaoke` variants.
+        const isSiblingKaraoke = siblings && stem === base
+          && (name === base + '-karaoke' || name.startsWith(base + '-karaoke.') || name.startsWith(base + '-karaoke-'));
+        if (!isExact && !isSiblingKaraoke) continue;
+        // When deleting only the karaoke id (siblings=false), never touch bare base files.
+        if (!siblings && /-karaoke$/.test(stem) && !isExact) continue;
+        if (!siblings && stem === base && (name === base + '-karaoke' || name.startsWith(base + '-karaoke.') || name.startsWith(base + '-karaoke-'))) {
+          continue;
+        }
+        const full = path.join(dir, name);
+        try {
+          fs.unlinkSync(full);
+          deletedFiles.push(full);
+        } catch (e) {
+          errors.push(name + ': ' + (e && e.message));
+        }
+      }
+    }
+  }
+
+  // tags.json — drop every related key
+  const tags = loadTags();
+  let tagsDirty = false;
+  for (const key of Object.keys(tags)) {
+    const kBase = normalizeVideoIdBase(key);
+    if (ids.has(key) || (siblings && kBase === base) || (!siblings && key === id)) {
+      delete tags[key];
+      deletedKeys.push(key);
+      tagsDirty = true;
+    }
+  }
+  // Also clear mangled offset keys
+  for (const mk of _mangledOffsetKeys(tags, base)) {
+    if (siblings || mk === id) {
+      delete tags[mk];
+      deletedKeys.push(mk);
+      tagsDirty = true;
+    }
+  }
+  if (tagsDirty) saveTags(tags);
+
+  // Drop from yt-dlp download archive so the id can be re-added later
+  try {
+    if (fs.existsSync(ARCHIVE_PATH)) {
+      const lines = fs.readFileSync(ARCHIVE_PATH, 'utf8').split(/\r?\n/);
+      const keep = [];
+      let archiveChanged = false;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        let drop = false;
+        for (const vid of ids) {
+          if (trimmed === 'youtube ' + vid || trimmed.endsWith(' ' + vid)) {
+            drop = true;
+            break;
+          }
+        }
+        if (drop) archiveChanged = true;
+        else keep.push(line);
+      }
+      if (archiveChanged) {
+        // Preserve trailing newline style
+        const body = keep.join('\n').replace(/\n+$/, '');
+        fs.writeFileSync(ARCHIVE_PATH, body ? body + '\n' : '', 'utf8');
+      }
+    }
+  } catch (e) {
+    errors.push('archive: ' + (e && e.message));
+  }
+
+  // Drop from in-memory /tmp library list cache
+  try {
+    if (!__libraryListCache.data) tryLoadCacheFromDisk();
+    if (__libraryListCache.data && Array.isArray(__libraryListCache.data.videos)) {
+      const before = __libraryListCache.data.videos.length;
+      __libraryListCache.data.videos = __libraryListCache.data.videos.filter((v) => {
+        if (!v || !v.videoId) return true;
+        const vb = normalizeVideoIdBase(v.videoId);
+        if (ids.has(v.videoId)) return false;
+        if (siblings && vb === base) return false;
+        return true;
+      });
+      __libraryListCache.data.count = __libraryListCache.data.videos.length;
+      __libraryListCache.ts = Date.now();
+      if (__libraryListCache.data.videos.length !== before) {
+        try {
+          const rawJson = JSON.stringify(__libraryListCache.data);
+          __libraryListCache.rawJson = rawJson;
+          fs.writeFileSync(CACHE_FILE, rawJson, 'utf8');
+        } catch (_) {}
+      }
+    }
+  } catch (e) {
+    errors.push('cache: ' + (e && e.message));
+  }
+  __libraryListCache.ts = 0;
+
+  console.log('[library] Deleted', base, 'files=', deletedFiles.length, 'tags=', deletedKeys.length);
+  return {
+    ok: true,
+    videoId: id,
+    baseVideoId: base,
+    deletedFiles,
+    deletedKeys,
+    errors,
+  };
+}
+
+/**
  * Upsert one (or more) video ids into the in-memory + /tmp library cache
  * without a full USB walk. Used after karaoke-maker / download completes so
  * Custom / Music tabs show the new track immediately.
@@ -1841,6 +1982,7 @@ module.exports = {
   mergeTagMetaBatch,
   setTag,
   reclassify,
+  deleteVideo,
   setRating,
   getRating,
   resolveTagKey,

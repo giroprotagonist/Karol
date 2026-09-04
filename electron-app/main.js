@@ -150,6 +150,7 @@ const JOB_LEASE_SECONDS = 1800;
 // Durable local fallback for karaoke jobs (survives restarts even when the
 // MySQL proxy is unreachable).
 const JOBS_FILE = path.join('/Users/macdonk/Documents/GitHub/Karol', '.karol', 'karaoke-jobs.json');
+const BIRTHDAY_PLAYLIST_FILE = path.join('/Users/macdonk/Documents/GitHub/Karol', '.karol', 'birthday-playlist.json');
 
 // ── Processing job tracker ──
 // { videoId: { status: 'downloading'|'processing'|'done'|'error', progress: 0-100, label: string, errorMessage: string } }
@@ -375,6 +376,9 @@ function processNextKaraokeJob() {
           notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
           notifyPlayerQueue();
           console.log('[karol] Queue updated after karaoke ready:', playId, resolvedTitle, requester);
+          try { onMediaBecameReady(playId); } catch (e) {
+            console.warn('[karol] onMediaBecameReady after karaoke failed:', e && e.message);
+          }
         }
         // One new karaoke file must NOT force a full ExFAT library walk —
         // that looked like "why is it rescanning?" mid-show and dual-scanned
@@ -769,15 +773,21 @@ function startDirectDownload(videoId, url, tag = 'music') {
         processingJobs[videoId] = { status: 'done', progress: 100, label: videoId, karaokify: false, url: url };
         console.log('[karol] Direct download complete:', videoId);
         try { invalidateMusicBrollPool(); } catch (_) {}
-        // If this track is currently selected, re-fire play so the player
-        // picks up the new local file (avoids stuck "not downloaded" state).
+        // Promote any deferred play / idle queue row now that the file exists.
+        try {
+          onMediaBecameReady(videoId);
+        } catch (e) {
+          console.warn('[karol] onMediaBecameReady after download failed:', e && e.message);
+        }
         try {
           const cur = queueIndex >= 0 && queue[queueIndex] ? queue[queueIndex] : null;
           const curId = cur ? String(cur.videoId || '') : '';
           const baseCur = curId.replace(/-karaoke$/, '');
           if (cur && (curId === videoId || baseCur === videoId || curId === videoId + '-karaoke')) {
-            console.log('[karol] Re-playing after download:', videoId);
-            sendPlay(cur.videoId, cur.title, cur.singer || cur.requester || '');
+            if (!mediaWait) {
+              console.log('[karol] Re-playing after download:', videoId);
+              sendPlay(cur.videoId, cur.title, cur.singer || cur.requester || '');
+            }
           }
         } catch (e) {}
         // Refresh queue title from metadata if we only had a placeholder
@@ -810,6 +820,9 @@ function startDirectDownload(videoId, url, tag = 'music') {
         } catch (e) {
           console.warn('[karol] Cache upsert after download failed:', e && e.message);
         }
+        try {
+          if (isBirthdayJukebox()) refreshBirthdayDeckLocals();
+        } catch (_) {}
         notifyCtrl('library-scan-progress', { videoId, status: 'done' });
         try {
           if (library && typeof library.list === 'function') {
@@ -840,16 +853,43 @@ let queueShuffle = false;
 let shufflePlayedIds = new Set(); // no-repeat within a shuffle cycle
 /** Lightweight music-video radio — ids/titles only. Keeps the interactive karaoke
  *  queue small so 600+ MVs don't blow up IPC/DOM/lyric scans. */
-let jukebox = null; // { items: [{videoId,title}], index, shuffle }
+let jukebox = null; // { items: [{videoId,title}], index, shuffle, kind?: 'birthday'|'music', name?: string }
+let jukeboxPlayHistory = []; // deck indices for jukebox Prev (shuffle-safe)
+const JUKEBOX_HISTORY_MAX = 120;
 let playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
 const DEFAULT_VOLUME = 0.55;
 let volumeLevel = DEFAULT_VOLUME;
-const DEFAULT_DJ_NAME = 'Naynay';
+let vocalMixLevel = 0;
+const DEFAULT_EQ = Object.freeze({ low: 0, mid: 0, high: 0 });
+let musicEq = { low: 0, mid: 0, high: 0 };
+let vocalEq = { low: 0, mid: 0, high: 0 };
 
-/** Show Naynay whenever the singer slot is empty or the legacy "DJ" placeholder. */
+function clampEqBand(n) {
+  const v = Number(n);
+  if (!isFinite(v)) return 0;
+  return Math.max(-12, Math.min(12, v));
+}
+
+function normalizeEq(eq) {
+  const src = eq && typeof eq === 'object' ? eq : {};
+  return {
+    low: clampEqBand(src.low),
+    mid: clampEqBand(src.mid),
+    high: clampEqBand(src.high),
+  };
+}
+const DEFAULT_DJ_NAME = 'Naynay/Karolpdx';
+
+/** Active filler DJ credit for empty / legacy DJ slots. */
+function activeDjName() {
+  return DEFAULT_DJ_NAME;
+}
+
+/** Show Naynay/Karolpdx whenever the singer slot is empty or the legacy "DJ" placeholder. */
 function displaySingerName(raw) {
   const s = String(raw || '').trim();
-  if (!s || /^dj$/i.test(s)) return DEFAULT_DJ_NAME;
+  // Do not remap a real person named Naynay — only blanks / legacy DJ / retired Xtina.
+  if (!s || /^dj$/i.test(s) || /^xtina$/i.test(s)) return DEFAULT_DJ_NAME;
   return s;
 }
 
@@ -857,14 +897,16 @@ function healQueueSingerNames() {
   let changed = false;
   for (const item of queue) {
     if (!item) continue;
+    const dj = DEFAULT_DJ_NAME;
     const singer = String(item.singer || '').trim();
     const requester = String(item.requester || '').trim();
-    if (!singer || /^dj$/i.test(singer)) {
-      item.singer = DEFAULT_DJ_NAME;
+    // Only fill blanks / legacy placeholders — never overwrite a real singer name.
+    if (!singer || /^dj$/i.test(singer) || /^xtina$/i.test(singer)) {
+      item.singer = dj;
       changed = true;
     }
-    if (!requester || /^dj$/i.test(requester)) {
-      item.requester = DEFAULT_DJ_NAME;
+    if (!requester || /^dj$/i.test(requester) || /^xtina$/i.test(requester)) {
+      item.requester = dj;
       changed = true;
     }
   }
@@ -1631,6 +1673,38 @@ function setPlayerHdmiPresentation(reason, force) {
   if (reason) console.log('[karol] Player presentation', PLAYER_HDMI_AOT_LEVEL, reason);
 }
 
+function getControllerWindowBounds() {
+  const primary = screen.getPrimaryDisplay();
+  const wa = primary.workArea || primary.bounds;
+  const width = Math.max(640, Math.min(1200, Math.round(wa.width * 0.52)));
+  const height = Math.max(700, Math.round(wa.height * 0.94));
+  return {
+    width,
+    height,
+    x: wa.x,
+    y: wa.y,
+  };
+}
+
+function createControllerWindow() {
+  const bounds = getControllerWindowBounds();
+  const win = new BrowserWindow({
+    ...windowIconOpts(),
+    ...bounds,
+    minWidth: 560,
+    minHeight: 640,
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
+    title: 'Karol DJ Controller', backgroundColor: '#0a0a14',
+  });
+  win.webContents.on('console-message', (e, l, m) => console.log('[ctrl]', m));
+  win.webContents.on('crashed', () => { console.error('[karol] Controller CRASHED'); ctrlWin = null; });
+  win.on('close', onWindowClose);
+  win.on('closed', () => { ctrlWin = null; });
+  wireControllerFocusHandlers(win);
+  win.loadFile(CTRL_HTML);
+  return win;
+}
+
 function wireControllerFocusHandlers(win) {
   if (!win || win.__karolFocusWired) return;
   win.__karolFocusWired = true;
@@ -1897,6 +1971,22 @@ function createPlayer() {
         karaoke: !!p.karaoke,
         fromJukebox: !p.karaoke,
       });
+    } else if (betweenSongsPendingItem && isKaraokeQueueItem(betweenSongsPendingItem)) {
+      // Player reloaded mid timed Gap — restore Up next + B-roll
+      const pending = betweenSongsPendingItem;
+      const wasHeld = betweenSongsHeld;
+      playAfterBetweenSongs(pending);
+      if (wasHeld) holdBetweenSongs();
+    } else if (
+      isHomeInterstitial()
+      || pauseInterstitialLive
+      || (
+        (!queue.length || queueIndex < 0)
+        && !jukeboxActive()
+        && (playback.state === 'idle' || playback.state === 'interstitial' || !playback.state)
+      )
+    ) {
+      enterHomeInterstitial({ force: true });
     }
   });
 
@@ -2094,12 +2184,10 @@ function handleDjApi(action, payload) {
       queue = [];
       queueIndex = -1;
       shufflePlayedIds.clear();
-      playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
-      clearBetweenSongsTimer();
+      clearMediaWait();
       saveSettings();
       saveState();
-      notifyPlayer({ type: 'stop' });
-      notifyShowUpdate();
+      enterHomeInterstitial({ force: true });
       return { ok: true, state: buildPhoneQueueState() };
     case 'queue-reorder': {
       const from = payload.fromIndex ?? payload.from;
@@ -2193,6 +2281,166 @@ function updateMysqlRequestStatus(item, status, error) {
 let lastSendPlayAtMs = 0;
 let lastSendPlayId = '';
 
+/** Pending play deferred until the MP4 exists on disk (no audience download spinner). */
+let mediaWait = null; // { videoId, title, requester, opts }
+let mediaWaitTimer = null;
+
+const MIN_PLAYABLE_BYTES = 50_000;
+
+/** True when a playable local file exists for this id (karaoke or base). */
+function isMediaReadyOnDisk(videoId) {
+  const raw = String(videoId || '');
+  if (!raw || !library) return false;
+  const resolved = resolveVid(raw);
+  const baseId = String(resolved || '').replace(/-karaoke$/, '');
+  const candidates = [];
+  if (resolved) candidates.push(resolved);
+  if (baseId && baseId !== resolved) candidates.push(baseId);
+  if (raw && raw !== resolved && raw !== baseId) candidates.push(raw);
+  for (const id of candidates) {
+    try {
+      if (typeof library.getFilePath === 'function') {
+        const p = library.getFilePath(id);
+        if (p && fs.existsSync(p) && fs.statSync(p).size >= MIN_PLAYABLE_BYTES) return true;
+      }
+    } catch (_) { /* ignore */ }
+    try {
+      if (typeof library.getVideoPath === 'function') {
+        const p = library.getVideoPath(id);
+        if (p && fs.existsSync(p) && fs.statSync(p).size >= MIN_PLAYABLE_BYTES) return true;
+      }
+    } catch (_) { /* ignore */ }
+  }
+  return false;
+}
+
+function isQueueItemMediaReady(item) {
+  return !!(item && item.videoId && isMediaReadyOnDisk(item.videoId));
+}
+
+/** Ensure a download/pipeline is running so a queued item can become playable. */
+function ensureDownloadForPlay(videoId, opts) {
+  const raw = String(videoId || '');
+  const baseId = raw.replace(/-karaoke$/, '');
+  if (!/^[A-Za-z0-9_-]{11}$/.test(baseId)) return;
+  const job = processingJobs[baseId] || processingJobs[raw] || processingJobs[baseId + '-karaoke'];
+  if (job && job.status !== 'error' && job.status !== 'done') return;
+  // Karaoke pipeline jobs are already enqueued via requests.add — only start a
+  // plain download when nothing is in flight for this id.
+  const wantKaraoke = !!(opts && opts.karaoke) || /-karaoke$/.test(raw);
+  if (wantKaraoke && karaokeQueue.some((e) => e.videoId === baseId)) return;
+  if (wantKaraoke && karaokeRunning) {
+    // Another karaoke job may be this one — avoid duplicate plain download.
+    const running = processingJobs[baseId];
+    if (running && running.karaokify) return;
+  }
+  const tag = wantKaraoke ? 'karaoke' : 'music';
+  console.log('[karol] ensureDownloadForPlay:', baseId, 'tag=', tag);
+  startDirectDownload(baseId, 'https://www.youtube.com/watch?v=' + baseId, tag);
+}
+
+function clearMediaWait() {
+  mediaWait = null;
+  if (mediaWaitTimer) {
+    clearInterval(mediaWaitTimer);
+    mediaWaitTimer = null;
+  }
+}
+
+/**
+ * Hold the show until media lands: keep Gap / previous surface, never entrance
+ * or player download spinner. Flushes via poll + download-complete hooks.
+ */
+function armMediaWait(spec) {
+  if (!spec || !spec.videoId) return;
+  mediaWait = {
+    videoId: String(spec.videoId),
+    title: spec.title || '',
+    requester: spec.requester || '',
+    opts: spec.opts || {},
+  };
+  ensureDownloadForPlay(mediaWait.videoId, mediaWait.opts);
+  // Keep audience on Gap B-roll ("Up next") rather than singer entrance.
+  try {
+    const curItem = (queueIndex >= 0 && queueIndex < queue.length) ? queue[queueIndex] : null;
+    const asKaraoke = mediaWait.opts.karaoke != null
+      ? !!mediaWait.opts.karaoke
+      : !!(curItem && isKaraokeQueueItem(curItem));
+    if (asKaraoke) {
+      const item = curItem && (String(curItem.videoId) === mediaWait.videoId
+        || String(curItem.videoId).replace(/-karaoke$/, '') === mediaWait.videoId.replace(/-karaoke$/, ''))
+        ? curItem
+        : {
+          videoId: mediaWait.videoId,
+          title: mediaWait.title,
+          singer: mediaWait.requester,
+          requester: mediaWait.requester,
+        };
+      // Home Gap or cold idle → promote to timed Gap with this Up next
+      if (isHomeInterstitial() || !isGapInterstitialActive()) {
+        playAfterBetweenSongs(item);
+      }
+      holdBetweenSongs();
+    }
+  } catch (e) {
+    console.warn('[karol] armMediaWait gap hold failed:', e && e.message);
+  }
+  if (!mediaWaitTimer) {
+    mediaWaitTimer = setInterval(() => {
+      try { flushMediaWaitIfReady('poll'); } catch (e) {
+        console.warn('[karol] mediaWait poll failed:', e && e.message);
+      }
+    }, 1000);
+  }
+  console.log('[karol] Waiting for media before play/entrance:', mediaWait.videoId);
+}
+
+/** If armed wait's file is ready, clear hold and present on the player. */
+function flushMediaWaitIfReady(reason) {
+  if (!mediaWait) return false;
+  const w = mediaWait;
+  if (!isMediaReadyOnDisk(w.videoId)) {
+    ensureDownloadForPlay(w.videoId, w.opts);
+    return false;
+  }
+  console.log('[karol] Media ready — starting deferred play:', w.videoId, '(' + (reason || 'ok') + ')');
+  clearMediaWait();
+  // Drop Gap hold so sendPlay can tear down cleanly
+  betweenSongsHeld = false;
+  betweenSongsPendingItem = null;
+  clearBetweenSongsTimer();
+  sendPlay(w.videoId, w.title, w.requester, Object.assign({}, w.opts || {}, { force: true }));
+  notifyPlayerQueue();
+  return true;
+}
+
+/** After a download/pipeline finishes, promote that queue row if it was waiting. */
+function onMediaBecameReady(videoId) {
+  const base = String(videoId || '').replace(/-karaoke$/, '');
+  if (mediaWait) {
+    const waitBase = String(mediaWait.videoId || '').replace(/-karaoke$/, '');
+    if (waitBase === base || mediaWait.videoId === videoId || mediaWait.videoId === base + '-karaoke') {
+      flushMediaWaitIfReady('download-done');
+      return;
+    }
+  }
+  // Idle show with this row next / only: start when file lands (queued while downloading).
+  try {
+    if (queueIndex < 0 && queue.length > 0) {
+      const first = queue[0];
+      const fb = String(first.videoId || '').replace(/-karaoke$/, '');
+      if ((fb === base || first.videoId === videoId) && isQueueItemMediaReady(first)) {
+        queueIndex = 0;
+        saveState();
+        playShowItem(first);
+        notifyShowUpdate();
+      }
+    }
+  } catch (e) {
+    console.warn('[karol] onMediaBecameReady idle promote failed:', e && e.message);
+  }
+}
+
 function sendPlay(videoId, title, requester, opts) {
   const force = !!(opts && opts.force);
   const resolvedEarly = resolveVid(videoId);
@@ -2211,6 +2459,22 @@ function sendPlay(videoId, title, requester, opts) {
     console.warn('[karol] Ignoring debounced sendPlay for', resolvedEarly);
     return;
   }
+
+  // Upstream gate: never send play/entrance to the audience until the file is local.
+  // Queue can still list the singer; Gap "Up next" / previous track stays up.
+  const resolvedGate = resolvedEarly || String(videoId || '');
+  if (!isMediaReadyOnDisk(resolvedGate)) {
+    console.log('[karol] sendPlay deferred — media not ready:', resolvedGate);
+    armMediaWait({
+      videoId: resolvedGate,
+      title,
+      requester,
+      opts: opts || {},
+    });
+    return;
+  }
+  clearMediaWait();
+
   lastSendPlayAtMs = now;
   lastSendPlayId = resolvedEarly || String(videoId || '');
   clearBetweenSongsTimer();
@@ -2246,33 +2510,26 @@ function sendPlay(videoId, title, requester, opts) {
       saveState();
     }
   }
-  // Kick off a local download if the file is missing — never rely on YouTube
-  // embeds in Electron (Error 153). Player will wait/poll for the file.
-  try {
-    const baseId = String(resolved || '').replace(/-karaoke$/, '');
-    const hasFile = library && typeof library.getFilePath === 'function'
-      && (library.getFilePath(resolved) || library.getFilePath(baseId));
-    if (!hasFile && /^[A-Za-z0-9_-]{11}$/.test(baseId)) {
-      console.log('[karol] sendPlay: no local file for', resolved, '— starting download');
-      startDirectDownload(baseId, 'https://www.youtube.com/watch?v=' + baseId, 'music');
-    }
-  } catch (e) {
-    console.warn('[karol] sendPlay download check failed:', e && e.message);
-  }
   // Karaoke flag drives singer entrance only — jukebox/DJ never gets "give it up for"
   const curItem = (queueIndex >= 0 && queueIndex < queue.length) ? queue[queueIndex] : null;
   const karaoke = !!(opts && opts.karaoke != null)
     ? !!opts.karaoke
     : !!(curItem && isKaraokeQueueItem(curItem));
   // Send play + full queue snapshot so player + monitor can render immediately
+  const birthdayPlay = !karaoke && isBirthdayJukebox();
+  const playRequester = birthdayPlay ? DEFAULT_DJ_NAME : (requester || '');
   sendToPlayers('player-event', {
     type: 'play', videoId: resolved, isYouTube: false,
     title: displayTitle({ title, videoId: resolved }),
-    requester: requester || '',
+    requester: playRequester,
     volumeLevel: volumeLevel,
+    musicEq: normalizeEq(musicEq),
+    vocalEq: normalizeEq(vocalEq),
+    vocalMixLevel: Math.max(0, Math.min(1, Number(vocalMixLevel) || 0)),
     queue: queue, currentIndex: queueIndex,
     karaoke,
     fromJukebox: !karaoke,
+    isBirthday: birthdayPlay,
   });
 }
 
@@ -2284,6 +2541,13 @@ let betweenSongsDeadline = 0;
 let betweenSongsPendingItem = null;
 let betweenSongsHandoffPending = false;
 let betweenSongsHandoffTimer = null;
+/** Now Spinning B-roll id/title during Gap / pause interstitial (shared with controller). */
+let currentGapBrollId = null;
+let currentGapBrollTitle = '';
+/** True while the player is showing the Pause interstitial (not the timed Gap). */
+let pauseInterstitialLive = false;
+/** True while showing the idle/home Gap (empty queue — no pending singer, no countdown). */
+let homeInterstitialLive = false;
 let gapEpoch = 0;
 /** Gap interstitial content: random Music Videos B-roll vs S24 USB mirror vs both. */
 let gapContent = 'music-broll'; // 'music-broll' | 'phone-mirror' | 'both'
@@ -2370,6 +2634,11 @@ function loadSettings() {
       if (typeof s.volumeLevel === 'number' && isFinite(s.volumeLevel)) {
         volumeLevel = Math.max(0, Math.min(1, s.volumeLevel));
       }
+      if (typeof s.vocalMixLevel === 'number' && isFinite(s.vocalMixLevel)) {
+        vocalMixLevel = Math.max(0, Math.min(1, s.vocalMixLevel));
+      }
+      if (s.musicEq) musicEq = normalizeEq(s.musicEq);
+      if (s.vocalEq) vocalEq = normalizeEq(s.vocalEq);
       if (typeof s.queueShuffle === 'boolean') {
         queueShuffle = s.queueShuffle;
       }
@@ -2383,8 +2652,14 @@ function loadSettings() {
           .filter((it) => it.videoId);
         if (items.length) {
           const idx = Math.max(0, Math.min(items.length - 1, Number(s.jukebox.index) || 0));
-          jukebox = { items, index: idx, shuffle: !!s.jukebox.shuffle };
-          console.log('[karol] Restored DJ deck:', items.length, 'tracks, index', idx);
+          jukebox = {
+            items,
+            index: idx,
+            shuffle: !!s.jukebox.shuffle,
+            kind: s.jukebox.kind === 'birthday' ? 'birthday' : 'music',
+            name: String(s.jukebox.name || '') || (s.jukebox.kind === 'birthday' ? 'Birthday Playlist' : 'Music Jukebox'),
+          };
+          console.log('[karol] Restored DJ deck:', jukebox.name || 'Music Jukebox', items.length, 'tracks, index', idx);
         }
       }
     }
@@ -2405,6 +2680,9 @@ function saveSettings() {
       gapBrollLevel: getGapMix().gapBrollLevel,
       gapPhoneLevel: getGapMix().gapPhoneLevel,
       volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
+      vocalMixLevel: Math.max(0, Math.min(1, Number(vocalMixLevel) || 0)),
+      musicEq: normalizeEq(musicEq),
+      vocalEq: normalizeEq(vocalEq),
       queueShuffle: !!queueShuffle,
       jukebox: jukeboxActive() ? {
         items: jukebox.items.map((it) => ({
@@ -2413,6 +2691,8 @@ function saveSettings() {
         })),
         index: jukebox.index,
         shuffle: !!jukebox.shuffle,
+        kind: jukebox.kind || 'music',
+        name: jukebox.name || '',
       } : null,
     }, null, 2));
   } catch (e) {
@@ -2727,7 +3007,21 @@ function beginGapHandoff(pending, gapToken) {
     try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
     notifyCtrl('phone-mirror-status', phoneMirrorStatusQuiet());
     if (!pending || !isKaraokeQueueItem(pending)) {
-      idleStopShow();
+      enterHomeInterstitial({ force: true });
+      return;
+    }
+    // Hold Gap B-roll until the file is on disk — never entrance + download spinner.
+    if (!isQueueItemMediaReady(pending)) {
+      console.log('[karol] Gap handoff deferred — media not ready:', pending.videoId);
+      armMediaWait({
+        videoId: pending.videoId,
+        title: pending.title,
+        requester: pending.singer || pending.requester,
+        opts: { force: true, karaoke: true },
+      });
+      // Handoff may have started fading the interstitial — put B-roll / Up next back up.
+      playAfterBetweenSongs(pending);
+      holdBetweenSongs();
       return;
     }
     sendPlay(pending.videoId, pending.title, pending.singer || pending.requester, {
@@ -2749,6 +3043,11 @@ function clearBetweenSongsTimer({ keepPending = false } = {}) {
   betweenSongsRemainingMs = 0;
   betweenSongsDeadline = 0;
   if (!keepPending) betweenSongsPendingItem = null;
+  // Timed Gap ended — drop Now Spinning unless a new Gap immediately re-sets it.
+  if (!keepPending) {
+    homeInterstitialLive = false;
+    setCurrentGapBroll(null, '');
+  }
   try { if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror(); } catch (_) {}
   notifyInterstitialState();
 }
@@ -2763,15 +3062,345 @@ function isGapInterstitialActive() {
   );
 }
 
+/** Now Spinning history for Gap Prev (most recent previous at end). */
+let gapBrollHistory = [];
+const GAP_BROLL_HISTORY_MAX = 40;
+
+function pushGapBrollHistory(videoId) {
+  const id = videoId ? String(videoId) : '';
+  if (!id) return;
+  if (gapBrollHistory[gapBrollHistory.length - 1] === id) return;
+  gapBrollHistory.push(id);
+  if (gapBrollHistory.length > GAP_BROLL_HISTORY_MAX) {
+    gapBrollHistory.splice(0, gapBrollHistory.length - GAP_BROLL_HISTORY_MAX);
+  }
+}
+
+function setCurrentGapBroll(videoId, title, { recordHistory = true } = {}) {
+  const id = videoId ? String(videoId) : null;
+  const t = title != null ? String(title) : '';
+  const prevId = currentGapBrollId || null;
+  const same = prevId === (id || null)
+    && (currentGapBrollTitle || '') === (t || (id ? currentGapBrollTitle : ''));
+  if (recordHistory && prevId && id && prevId !== id) {
+    pushGapBrollHistory(prevId);
+  }
+  if (!id) gapBrollHistory = [];
+  currentGapBrollId = id;
+  if (id) {
+    if (t) currentGapBrollTitle = t;
+    else if (!currentGapBrollTitle) currentGapBrollTitle = resolveTitleLocal(id) || '';
+  } else {
+    currentGapBrollTitle = '';
+  }
+  return !same;
+}
+
+function resolveGapUpNext() {
+  let item = null;
+  let index = -1;
+  if (betweenSongsPendingItem && isKaraokeQueueItem(betweenSongsPendingItem)) {
+    item = betweenSongsPendingItem;
+    index = queue.indexOf(item);
+    if (index < 0) {
+      const vid = item.videoId;
+      index = queue.findIndex((row) => row && row.videoId === vid && isKaraokeQueueItem(row));
+    }
+  }
+  if (!item) {
+    for (let i = 0; i < queue.length; i++) {
+      if (isKaraokeQueueItem(queue[i])) {
+        item = queue[i];
+        index = i;
+        break;
+      }
+    }
+  }
+  if (!item) return { index: -1, singer: '', title: '', videoId: null };
+  return {
+    index,
+    singer: displaySingerName(item.singer || item.requester),
+    title: displayTitle(item),
+    videoId: item.videoId || null,
+  };
+}
+
 function getInterstitialState() {
   const active = isGapInterstitialActive();
+  const home = isHomeInterstitial();
   let remainingMs = 0;
-  if (betweenSongsHeld) remainingMs = Math.max(0, betweenSongsRemainingMs || 0);
+  if (home) remainingMs = 0;
+  else if (betweenSongsHeld) remainingMs = Math.max(0, betweenSongsRemainingMs || 0);
   else if (betweenSongsDeadline) remainingMs = Math.max(0, betweenSongsDeadline - Date.now());
+  const up = resolveGapUpNext();
+  const hasUpNext = !!(up.index >= 0 && up.videoId);
+  const controls = !!(active || pauseInterstitialLive || home);
   return {
     interstitialActive: active,
     interstitialHeld: !!betweenSongsHeld,
     interstitialRemainingMs: remainingMs,
+    pauseInterstitial: !!pauseInterstitialLive,
+    homeInterstitial: home,
+    hasUpNext,
+    gapControls: controls,
+    brollVideoId: currentGapBrollId,
+    brollTitle: currentGapBrollTitle || (currentGapBrollId ? (resolveTitleLocal(currentGapBrollId) || '') : ''),
+    upNextIndex: up.index,
+    upNextSinger: up.singer,
+    upNextTitle: up.title,
+    upNextVideoId: up.videoId,
+  };
+}
+
+function isHomeInterstitial() {
+  return !!(
+    homeInterstitialLive
+    && playback.state === 'interstitial'
+    && !betweenSongsPendingItem
+    && !betweenSongsTimer
+    && !betweenSongsHandoffPending
+  );
+}
+
+/** Pick a different Music Video B-roll and push it to the player. */
+function cycleGapBroll() {
+  if (!isGapInterstitialActive() && !pauseInterstitialLive) {
+    return { ok: false, error: 'Not in interstitial' };
+  }
+  const nextId = pickRandomMusicBrollId();
+  if (!nextId) return { ok: false, error: 'No Music Videos available' };
+  const next = sendGapSetBroll(nextId, { fromStart: true });
+  return { ok: true, brollVideoId: next.videoId, brollTitle: next.title };
+}
+
+/** Go back to the previous Now Spinning Music Video (Gap Prev). */
+function prevGapBroll() {
+  if (!isGapInterstitialActive() && !pauseInterstitialLive) {
+    return { ok: false, error: 'Not in interstitial' };
+  }
+  while (gapBrollHistory.length) {
+    const prevId = gapBrollHistory.pop();
+    if (!prevId || prevId === currentGapBrollId) continue;
+    // Skip ids no longer local (deleted / refiled away from Music Videos)
+    try {
+      if (typeof isLocalMusicVideo === 'function' && !isLocalMusicVideo(prevId)) continue;
+    } catch (_) {}
+    const next = sendGapSetBroll(prevId, { fromStart: true, recordHistory: false });
+    if (next && next.videoId) {
+      return { ok: true, brollVideoId: next.videoId, brollTitle: next.title };
+    }
+  }
+  return { ok: false, error: 'No previous spin' };
+}
+
+/**
+ * Home-base Gap: QR + Now Spinning + tips with no pending singer and no countdown.
+ * Used when the queue is empty, the show ends, or the player boots idle.
+ */
+function enterHomeInterstitial({ force = false } = {}) {
+  healDjMirrorFlags();
+  const karaoke = pendingKaraokeItems();
+  if (karaoke.length) {
+    queue = karaoke;
+    queueIndex = 0;
+    homeInterstitialLive = false;
+    playAfterBetweenSongs(queue[0]);
+    return { ok: true, home: false, pending: true };
+  }
+  if (jukeboxActive()) {
+    const deckItem = jukebox.items[jukebox.index] || selectNextJukeboxItem(1);
+    if (deckItem) {
+      const row = makeJukeboxQueueRow(deckItem);
+      queue = [row];
+      queueIndex = 0;
+      homeInterstitialLive = false;
+      playShowItem(row);
+      notifyShowUpdate();
+      return { ok: true, home: false, jukebox: true };
+    }
+  }
+
+  if (!force && isHomeInterstitial() && currentGapBrollId) {
+    notifyInterstitialState();
+    notifyShowUpdate();
+    return { ok: true, home: true, kept: true };
+  }
+
+  // Tear down any prior timed Gap / pause chrome without clearing the home flag mid-setup
+  gapEpoch++;
+  if (betweenSongsTimer) {
+    clearTimeout(betweenSongsTimer);
+    betweenSongsTimer = null;
+  }
+  clearBetweenSongsHandoff();
+  pauseInterstitialLive = false;
+  betweenSongsPendingItem = null;
+  betweenSongsHeld = true;
+  betweenSongsRemainingMs = 0;
+  betweenSongsDeadline = 0;
+  homeInterstitialLive = true;
+
+  queue = [];
+  queueIndex = -1;
+  clearMediaWait();
+
+  if (!playWin || playWin.isDestroyed()) createPlayer();
+
+  let content = getGapContent();
+  let brollVideoId = null;
+  let mirrorRouting = { mode: 'off' };
+  if (gapNeedsPhone(content)) {
+    const mir = ensurePhoneMirrorForGap(true);
+    if (!mir.ok) {
+      content = 'music-broll';
+      try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
+      brollVideoId = pickRandomMusicBrollId();
+    } else {
+      mirrorRouting = mir.routing || { mode: 'direct' };
+      if (gapNeedsBroll(content)) brollVideoId = pickRandomMusicBrollId();
+    }
+  } else {
+    try { if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror(); } catch (_) {}
+    brollVideoId = pickRandomMusicBrollId();
+  }
+
+  const mix = getGapMix();
+  playback = {
+    videoId: null,
+    currentTime: 0,
+    duration: 0,
+    state: 'interstitial',
+  };
+  featureTrackEverProgressed = false;
+  setCurrentGapBroll(brollVideoId || null, '');
+  console.log('[karol] Home interstitial (idle Gap)', content, brollVideoId || '(no broll)');
+  sendToPlayers('player-event', {
+    type: 'between-songs',
+    idleHome: true,
+    singer: '',
+    title: '',
+    label: 'Request a song',
+    durationMs: 0,
+    gapContent: content,
+    brollVideoId,
+    mirrorAudioMode: mirrorRouting.mode || 'off',
+    mirrorHouseDevice: mirrorRouting.house || null,
+    mirrorTapDevice: mirrorRouting.tap || null,
+    gapBrollLevel: mix.gapBrollLevel,
+    gapPhoneLevel: mix.gapPhoneLevel,
+    queue: [],
+    currentIndex: -1,
+  });
+  saveState();
+  notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+  notifyPlayerQueue();
+  notifyInterstitialState();
+  notifyShowUpdate();
+  return { ok: true, home: true, brollVideoId };
+}
+
+const GAP_RECLASS_BUCKETS = {
+  karaoke: { tag: 'karaoke', source: 'manual', label: 'Karaoke' },
+  custom: { tag: 'karaoke', source: 'karaoke-maker', label: 'Custom' },
+  music: { tag: 'music', source: 'manual', label: 'Music Video' },
+};
+
+function sendGapSetBroll(videoId, opts = {}) {
+  const id = videoId || null;
+  const title = id ? (resolveTitleLocal(id) || '') : '';
+  setCurrentGapBroll(id, title, { recordHistory: opts.recordHistory !== false });
+  sendToPlayers('player-event', {
+    type: 'gap-set-broll',
+    brollVideoId: id,
+    title,
+    fromStart: !!opts.fromStart,
+  });
+  notifyInterstitialState();
+  return { videoId: id, title };
+}
+
+function gapRestartBroll() {
+  if (!isGapInterstitialActive() && !pauseInterstitialLive) {
+    return { ok: false, error: 'Not in interstitial' };
+  }
+  if (!currentGapBrollId) return { ok: false, error: 'Nothing spinning' };
+  sendToPlayers('player-event', {
+    type: 'gap-restart-broll',
+    brollVideoId: currentGapBrollId,
+  });
+  return { ok: true, brollVideoId: currentGapBrollId };
+}
+
+function gapDeleteSpin() {
+  if (!isGapInterstitialActive() && !pauseInterstitialLive) {
+    return { ok: false, error: 'Not in interstitial' };
+  }
+  const videoId = currentGapBrollId;
+  if (!videoId) return { ok: false, error: 'No video loaded' };
+  if (!library || typeof library.deleteVideo !== 'function') {
+    return { ok: false, error: 'library unavailable' };
+  }
+  const result = library.deleteVideo(videoId, { siblings: true }) || { ok: true };
+  if (result.ok === false) return result;
+  try { invalidateMusicBrollPool(); } catch (_) {}
+  gapBrollHistory = gapBrollHistory.filter((id) => id && id !== videoId);
+  const nextId = pickRandomMusicBrollId();
+  const next = sendGapSetBroll(nextId, { fromStart: true });
+  return { ok: true, deleted: videoId, nextBrollId: next.videoId, nextBrollTitle: next.title, ...result };
+}
+
+function gapRemoveUpNext() {
+  if (!isGapInterstitialActive() && !pauseInterstitialLive) {
+    return { ok: false, error: 'Not in interstitial' };
+  }
+  const up = resolveGapUpNext();
+  if (up.index < 0) return { ok: false, error: 'No up next singer' };
+  return removeFromShowQueue(up.index);
+}
+
+function gapReclassifySpin(bucket) {
+  if (!isGapInterstitialActive() && !pauseInterstitialLive) {
+    return { ok: false, error: 'Not in interstitial' };
+  }
+  const target = GAP_RECLASS_BUCKETS[bucket];
+  const videoId = currentGapBrollId;
+  if (!target || !videoId) return { ok: false, error: 'No video loaded' };
+  if (!library) return { ok: false, error: 'library unavailable' };
+  let result;
+  if (typeof library.reclassify === 'function') {
+    result = library.reclassify(videoId, { tag: target.tag, source: target.source });
+  } else {
+    library.setTag(videoId, target.tag);
+    result = { ok: true };
+  }
+  if (result && result.ok === false) return result;
+  // Keep base / -karaoke siblings in sync (same as player / controller library UI)
+  const base = String(videoId).replace(/-karaoke$/, '');
+  const sibling = videoId === base ? base + '-karaoke' : base;
+  if (sibling !== videoId) {
+    try {
+      if (typeof library.reclassify === 'function') {
+        library.reclassify(sibling, { tag: target.tag, source: target.source });
+      } else {
+        library.setTag(sibling, target.tag);
+      }
+    } catch (_) {}
+  }
+  try { invalidateMusicBrollPool(); } catch (_) {}
+  let next = null;
+  if (target.tag !== 'music' && target.tag !== 'song') {
+    const nextId = pickRandomMusicBrollId();
+    next = sendGapSetBroll(nextId, { fromStart: true });
+  } else {
+    notifyInterstitialState();
+  }
+  return {
+    ok: true,
+    bucket: bucket,
+    label: target.label,
+    moved: !!(result && result.moved),
+    nextBrollId: next && next.videoId,
+    ...result,
   };
 }
 
@@ -2855,8 +3484,8 @@ function removeFromShowQueue(index) {
       }
     } else {
       queueIndex = -1;
-      clearBetweenSongsTimer();
-      notifyPlayer({ type: 'stop' });
+      idleStopShow();
+      return { ok: true, state: buildPhoneQueueState(), ...showModePayload() };
     }
   } else if (inGap) {
     syncGapPendingAfterQueueEdit(removedItem);
@@ -3225,6 +3854,7 @@ function pickRandomMusicBrollId() {
 
 /** Hold between-songs countdown; B-roll keeps playing on the player. */
 function holdBetweenSongs() {
+  if (isHomeInterstitial()) return true; // already parked on home Gap
   if (!betweenSongsPendingItem && !betweenSongsTimer) return false;
   if (betweenSongsTimer) {
     clearTimeout(betweenSongsTimer);
@@ -3240,6 +3870,7 @@ function holdBetweenSongs() {
 
 /** Resume held between-songs countdown. */
 function resumeBetweenSongs() {
+  if (isHomeInterstitial()) return false; // no countdown on home Gap
   if (!betweenSongsHeld || !betweenSongsPendingItem) return false;
   betweenSongsHeld = false;
   const ms = Math.max(1500, betweenSongsRemainingMs || getBetweenSongsMs());
@@ -3259,6 +3890,7 @@ function resumeBetweenSongs() {
 
 /** Dedicated Hold/Resume for the Gap interstitial (controller HOLD button). */
 function toggleBetweenSongsHold() {
+  if (isHomeInterstitial()) return getInterstitialState();
   if (betweenSongsHeld) {
     resumeBetweenSongs();
   } else if (betweenSongsTimer || betweenSongsPendingItem) {
@@ -3300,13 +3932,18 @@ function doTransportPause() {
     }
     const payload = buildPauseInterstitialPayload(mirrorRouting);
     console.log('[karol] Pause interstitial:', payload.gapContent, payload.label, payload.singer);
+    pauseInterstitialLive = true;
+    setCurrentGapBroll(payload.brollVideoId || null, '');
     sendToPlayers('player-event', payload);
   } catch (e) {
     console.error('[karol] Pause interstitial failed — safe pause only:', e && e.message);
+    pauseInterstitialLive = false;
+    setCurrentGapBroll(null, '');
     try { if (phoneMirror) phoneMirror.stopPhoneMirror(); } catch (_) {}
     notifyPlayer({ type: 'pause' });
   }
   notifyCtrl('queue-update', { queue, currentIndex: queueIndex });
+  notifyInterstitialState();
   return { ok: true, nowPlaying: buildPhoneNowPlaying() };
 }
 
@@ -3339,11 +3976,14 @@ function doTransportPlay() {
   }
   // Resume same paused track — tear down pause interstitial / phone mirror first
   if (playback.state === 'paused') {
+    pauseInterstitialLive = false;
+    setCurrentGapBroll(null, '');
     try { if (phoneMirror && phoneMirror.isRunning()) phoneMirror.stopPhoneMirror(); } catch (_) {}
     sendToPlayers('player-event', { type: 'phone-mirror-capture-stop' });
     notifyCtrl('phone-mirror-status', phoneMirrorStatusQuiet());
     sendToPlayers('player-event', { type: 'resume' });
     playback.state = 'playing';
+    notifyInterstitialState();
     return { ok: true, nowPlaying: buildPhoneNowPlaying() };
   }
   notifyPlayer({ type: 'play' });
@@ -3362,6 +4002,7 @@ function playShowItem(item) {
     playAfterBetweenSongs(item);
     return;
   }
+  homeInterstitialLive = false;
   clearBetweenSongsTimer();
   betweenSongsPendingItem = null;
   betweenSongsRemainingMs = 0;
@@ -3385,10 +4026,12 @@ function playAfterBetweenSongs(item) {
   }
   // Arm pending before teardown so duplicate ended cannot re-advance the last singer.
   betweenSongsPendingItem = item;
+  homeInterstitialLive = false;
   clearBetweenSongsTimer({ keepPending: true });
   const ms = getBetweenSongsMs();
   betweenSongsRemainingMs = ms;
   betweenSongsDeadline = Date.now() + ms;
+  betweenSongsHeld = false;
   const singer = displaySingerName(item.singer || item.requester);
   const title = displayTitle(item);
   if (!playWin || playWin.isDestroyed()) createPlayer();
@@ -3432,6 +4075,8 @@ function playAfterBetweenSongs(item) {
     state: 'interstitial',
   };
   featureTrackEverProgressed = false;
+  pauseInterstitialLive = false;
+  setCurrentGapBroll(brollVideoId || null, '');
   sendToPlayers('player-event', {
     type: 'between-songs',
     singer: singer,
@@ -3459,13 +4104,9 @@ function playAfterBetweenSongs(item) {
   notifyInterstitialState();
 }
 
-/** DJ mirror row — stamped fromJukebox, or healed when it matches the armed deck. */
+/** DJ mirror row — only explicit fromJukebox stamps (never by videoId match). */
 function isDjQueueItem(item) {
-  if (!item) return false;
-  if (item.fromJukebox) return true;
-  if (!jukeboxActive()) return false;
-  const cur = jukebox.items[jukebox.index];
-  return !!(cur && String(cur.videoId || '') === String(item.videoId || ''));
+  return !!(item && item.fromJukebox);
 }
 
 /** Karaoke = singer-queue rows (not the DJ feature track). */
@@ -3481,18 +4122,15 @@ function pendingKaraokeCount() {
   return pendingKaraokeItems().length;
 }
 
-/** Ensure the interactive DJ mirror keeps fromJukebox so it is never consumed as karaoke. */
+/** Ensure DJ mirrors keep house credit — do NOT reclassify karaoke requests that
+ *  happen to share a videoId with the current Music Video. */
 function healDjMirrorFlags() {
   if (!jukeboxActive()) return;
-  const curId = String((jukebox.items[jukebox.index] && jukebox.items[jukebox.index].videoId) || '');
+  const dj = DEFAULT_DJ_NAME;
   for (const item of queue) {
-    if (!item) continue;
-    if (item.fromJukebox) continue;
-    if (curId && String(item.videoId || '') === curId) {
-      item.fromJukebox = true;
-      if (!item.singer) item.singer = DEFAULT_DJ_NAME;
-      if (!item.requester) item.requester = DEFAULT_DJ_NAME;
-    }
+    if (!item || !item.fromJukebox) continue;
+    if (!item.singer || /^dj$/i.test(String(item.singer))) item.singer = dj;
+    if (!item.requester || /^dj$/i.test(String(item.requester))) item.requester = dj;
   }
 }
 
@@ -3528,16 +4166,66 @@ function notifyShowUpdate() {
 
 function idleStopShow() {
   queue = pendingKaraokeItems(); // drop DJ mirrors
-  queueIndex = -1;
-  playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
-  clearBetweenSongsTimer();
+  queueIndex = queue.length ? 0 : -1;
+  clearMediaWait();
   saveState();
-  notifyPlayer({ type: 'stop' });
-  notifyShowUpdate();
+  enterHomeInterstitial({ force: true });
 }
 
 function jukeboxActive() {
   return !!(jukebox && Array.isArray(jukebox.items) && jukebox.items.length);
+}
+
+function isBirthdayJukebox() {
+  return jukeboxActive() && jukebox.kind === 'birthday';
+}
+
+/** Birthday deck + music jukebox: non-karaoke MV file on disk (songs/ or legacy paths). */
+function isLocalMusicVideo(videoId) {
+  const vid = String(videoId || '').replace(/-karaoke$/, '');
+  if (!/^[A-Za-z0-9_-]{11}$/.test(vid)) return false;
+  try {
+    const p = library && typeof library.getVideoPath === 'function' ? library.getVideoPath(vid) : null;
+    return !!(p && fs.existsSync(p) && fs.statSync(p).size >= 50_000 && !/-karaoke\.mp4$/i.test(p));
+  } catch (_) {
+    return false;
+  }
+}
+
+/** Merge newly-downloaded birthday manifest tracks into the armed deck. */
+function refreshBirthdayDeckLocals() {
+  if (!isBirthdayJukebox()) return 0;
+  const saved = loadBirthdayPlaylistFile();
+  if (!saved || !Array.isArray(saved.tracks)) return 0;
+  const seen = new Set(jukebox.items.map((it) => it.videoId));
+  let added = 0;
+  for (const t of saved.tracks) {
+    const vid = String(t.videoId || '').replace(/-karaoke$/, '');
+    if (!vid || seen.has(vid) || !isLocalMusicVideo(vid)) continue;
+    seen.add(vid);
+    jukebox.items.push({
+      videoId: vid,
+      title: bestTitleFor(vid, t.title || ''),
+    });
+    added++;
+  }
+  if (added) console.log('[karol] Birthday deck: +' + added + ' newly local track(s)');
+  return added;
+}
+
+/** Background downloads for manifest rows not yet on disk — deck stays local-only. */
+function seedBirthdayRemoteDownloads() {
+  const saved = loadBirthdayPlaylistFile();
+  if (!saved || !Array.isArray(saved.tracks)) return 0;
+  let n = 0;
+  for (const t of saved.tracks) {
+    const vid = String(t.videoId || '').replace(/-karaoke$/, '');
+    if (!/^[A-Za-z0-9_-]{11}$/.test(vid) || isLocalMusicVideo(vid)) continue;
+    startDirectDownload(vid, 'https://www.youtube.com/watch?v=' + vid, 'music');
+    n++;
+  }
+  if (n) console.log('[karol] Birthday playlist: seeding', n, 'background download(s)');
+  return n;
 }
 
 function jukeboxSummary() {
@@ -3547,12 +4235,46 @@ function jukeboxSummary() {
     count: jukebox.items.length,
     index: jukebox.index,
     shuffle: !!jukebox.shuffle,
+    kind: jukebox.kind || 'music',
+    name: jukebox.name || (jukebox.kind === 'birthday' ? 'Birthday Playlist' : 'Music Jukebox'),
     current: jukebox.items[jukebox.index] || null,
   };
 }
 
+function loadBirthdayPlaylistFile() {
+  try {
+    if (!fs.existsSync(BIRTHDAY_PLAYLIST_FILE)) return null;
+    const data = JSON.parse(fs.readFileSync(BIRTHDAY_PLAYLIST_FILE, 'utf8'));
+    if (!data || !Array.isArray(data.tracks)) return null;
+    const tracks = data.tracks
+      .map((t) => ({
+        videoId: String(t.videoId || '').replace(/-karaoke$/, ''),
+        title: String(t.title || t.displayTitle || '').trim()
+          || [t.artist, t.spotifyTitle || t.title].filter(Boolean).join(' — '),
+        artist: String(t.artist || ''),
+        spotifyTitle: String(t.spotifyTitle || t.title || ''),
+        source: t.source || '',
+        local: !!t.local,
+      }))
+      .filter((t) => /^[A-Za-z0-9_-]{11}$/.test(t.videoId));
+    if (!tracks.length) return null;
+    const localReady = tracks.filter((t) => isLocalMusicVideo(t.videoId)).length;
+    return {
+      name: String(data.name || 'Birthday Playlist'),
+      spotifyPlaylistId: data.spotifyPlaylistId || '',
+      updatedAt: data.updatedAt || '',
+      trackCount: tracks.length,
+      matchedLocal: localReady,
+      tracks,
+    };
+  } catch (e) {
+    console.warn('[karol] birthday playlist load failed:', e.message);
+    return null;
+  }
+}
+
 function makeJukeboxQueueRow(deckItem) {
-  const who = DEFAULT_DJ_NAME;
+  const who = activeDjName();
   return {
     videoId: deckItem.videoId,
     title: deckItem.title || bestTitleFor(deckItem.videoId, ''),
@@ -3563,26 +4285,67 @@ function makeJukeboxQueueRow(deckItem) {
 }
 
 /** Move DJ deck index; returns the selected item or null. */
+function clearJukeboxPlayHistory() {
+  jukeboxPlayHistory = [];
+}
+
+function jukeboxGoBack() {
+  if (!jukeboxActive()) return null;
+  if (!jukeboxPlayHistory.length) {
+    // No prior track this session — restart the current MV from the top.
+    return jukebox.items[jukebox.index] || null;
+  }
+  jukebox.index = jukeboxPlayHistory.pop();
+  return jukebox.items[jukebox.index] || null;
+}
+
 function selectNextJukeboxItem(direction) {
   if (!jukeboxActive()) return null;
+  if (isBirthdayJukebox()) refreshBirthdayDeckLocals();
   const n = jukebox.items.length;
   if (n === 0) return null;
   const dir = direction < 0 ? -1 : 1;
-  if (jukebox.shuffle && dir === 1 && n > 1) {
+  if (dir < 0) return jukeboxGoBack();
+  const birthdayLocalOnly = isBirthdayJukebox();
+
+  // Forward — remember the row we're leaving so Prev rewinds shuffle order.
+  const curIdx = jukebox.index;
+  if (n > 1 && Number.isFinite(curIdx)) {
+    if (jukeboxPlayHistory.length >= JUKEBOX_HISTORY_MAX) jukeboxPlayHistory.shift();
+    jukeboxPlayHistory.push(curIdx);
+  }
+
+  if (jukebox.shuffle && n > 1) {
     const curId = String((jukebox.items[jukebox.index] && jukebox.items[jukebox.index].videoId) || '');
     if (curId) shufflePlayedIds.add(curId);
     let candidates = [];
     for (let i = 0; i < n; i++) {
       if (i === jukebox.index) continue;
       const id = String(jukebox.items[i].videoId || '');
+      if (birthdayLocalOnly && !isLocalMusicVideo(id)) continue;
       if (!shufflePlayedIds.has(id)) candidates.push(i);
     }
     if (!candidates.length) {
       shufflePlayedIds.clear();
       if (curId) shufflePlayedIds.add(curId);
-      for (let i = 0; i < n; i++) if (i !== jukebox.index) candidates.push(i);
+      for (let i = 0; i < n; i++) {
+        if (i === jukebox.index) continue;
+        const id = String(jukebox.items[i].videoId || '');
+        if (birthdayLocalOnly && !isLocalMusicVideo(id)) continue;
+        candidates.push(i);
+      }
     }
+    if (!candidates.length) return jukebox.items[jukebox.index] || null;
     jukebox.index = candidates[Math.floor(Math.random() * candidates.length)];
+  } else if (birthdayLocalOnly) {
+    for (let step = 1; step <= n; step++) {
+      const idx = (jukebox.index + dir * step + n) % n;
+      const id = String((jukebox.items[idx] && jukebox.items[idx].videoId) || '');
+      if (isLocalMusicVideo(id)) {
+        jukebox.index = idx;
+        break;
+      }
+    }
   } else {
     jukebox.index = (jukebox.index + dir + n) % n;
   }
@@ -3640,6 +4403,11 @@ function advanceShow({ direction = 1, fromEnded = false } = {}) {
       saveState();
       playShowItem(queue[queueIndex]);
       notifyShowUpdate();
+      return;
+    }
+    // Empty show / home Gap — Prev walks Now Spinning history (not a random pick)
+    if (isHomeInterstitial() || isGapInterstitialActive()) {
+      prevGapBroll();
     }
     return;
   }
@@ -3690,6 +4458,11 @@ function advanceShow({ direction = 1, fromEnded = false } = {}) {
     return;
   }
 
+  // Empty show — Gap interstitial is home base. Skip cycles B-roll; Prev uses history.
+  if (isHomeInterstitial()) {
+    cycleGapBroll();
+    return;
+  }
   idleStopShow();
 }
 
@@ -3697,24 +4470,24 @@ function advanceQueue(direction) {
   advanceShow({ direction: direction < 0 ? -1 : 1, fromEnded: false });
 }
 
-/** Build / arm DJ deck from music-video rows — skips missing/tiny files. */
-function startJukebox(rawItems, { shuffle = true, play = true, requester } = {}) {
-  const who = normalizeQueueSinger(requester);
+/** Build / arm DJ deck from music-video rows — skips missing/tiny files unless allowRemote. */
+function startJukebox(rawItems, { shuffle = true, play = true, requester, kind = 'music', name, allowRemote = false } = {}) {
+  const who = kind === 'birthday' ? DEFAULT_DJ_NAME : normalizeQueueSinger(requester);
   const cleaned = [];
   const seen = new Set();
+  const remoteOk = allowRemote;
   for (const raw of rawItems || []) {
     if (!raw) continue;
     // Music jukebox / DJ deck must stay on Music Video ids — never remap to
     // `{id}-karaoke` even when a custom karaoke twin exists on disk.
     const vid = String(raw.videoId || raw.id || '').replace(/-karaoke$/, '');
-    if (!vid || seen.has(vid)) continue;
+    if (!vid || seen.has(vid) || !/^[A-Za-z0-9_-]{11}$/.test(vid)) continue;
     let playable = false;
-    try {
-      const p = library && typeof library.getVideoPath === 'function' ? library.getVideoPath(vid) : null;
-      if (p && fs.existsSync(p) && fs.statSync(p).size >= 50_000 && !/-karaoke\.mp4$/i.test(p)) {
-        playable = true;
-      }
-    } catch (_) { /* ignore */ }
+    if (remoteOk) {
+      playable = true;
+    } else if (isLocalMusicVideo(vid)) {
+      playable = true;
+    }
     if (!playable) continue;
     seen.add(vid);
     cleaned.push({
@@ -3723,10 +4496,18 @@ function startJukebox(rawItems, { shuffle = true, play = true, requester } = {})
     });
   }
   if (!cleaned.length) {
-    return { ok: false, error: 'No playable local music videos found', added: 0 };
+    const err = kind === 'birthday'
+      ? 'No local birthday MVs ready yet — background downloads are running; try Start again as files land'
+      : (remoteOk
+        ? 'No jukebox videos with valid YouTube IDs'
+        : 'No playable local music videos found');
+    return { ok: false, error: err, added: 0 };
   }
   if (shuffle) shuffleInPlace(cleaned);
-  jukebox = { items: cleaned, index: 0, shuffle: !!shuffle };
+  const deckName = String(name || '').trim()
+    || (kind === 'birthday' ? 'Birthday Playlist' : 'Music Jukebox');
+  jukebox = { items: cleaned, index: 0, shuffle: !!shuffle, kind, name: deckName };
+  clearJukeboxPlayHistory();
   queueShuffle = !!shuffle;
   shufflePlayedIds.clear();
   // Keep pending karaoke; DJ mirror is only the current feature track
@@ -3748,7 +4529,7 @@ function startJukebox(rawItems, { shuffle = true, play = true, requester } = {})
     sendPlay(first.videoId, first.title, who);
   }
   notifyShowUpdate();
-  console.log('[karol] DJ deck armed:', cleaned.length, 'tracks, shuffle=', !!shuffle, 'singers waiting=', karaoke.length);
+  console.log('[karol] DJ deck armed:', deckName, cleaned.length, 'tracks, shuffle=', !!shuffle, 'singers waiting=', karaoke.length);
   return {
     ok: true,
     added: cleaned.length,
@@ -3761,8 +4542,24 @@ function startJukebox(rawItems, { shuffle = true, play = true, requester } = {})
   };
 }
 
+function startBirthdayPlaylist({ shuffle = true, play = true, requester } = {}) {
+  const saved = loadBirthdayPlaylistFile();
+  if (!saved) {
+    return { ok: false, error: 'Birthday playlist not found — run tools/import-spotify-playlist.py first', added: 0 };
+  }
+  seedBirthdayRemoteDownloads();
+  return startJukebox(saved.tracks, {
+    shuffle,
+    play,
+    requester,
+    kind: 'birthday',
+    name: saved.name || 'Birthday Playlist',
+  });
+}
+
 function stopJukebox() {
   jukebox = null;
+  clearJukeboxPlayHistory();
   // Strip DJ mirrors from the interactive queue; keep karaoke
   const karaoke = pendingKaraokeItems();
   const cur = queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null;
@@ -3797,10 +4594,21 @@ function enqueueKaraokeItem({ videoId, title, requester, mysqlRequestId } = {}) 
   };
   if (mysqlRequestId) item.mysqlRequestId = mysqlRequestId;
   queue.push(item);
-  // Idle → start karaoke immediately. Otherwise wait for next Gap / natural end.
-  if (queueIndex < 0 && !isGapInterstitialActive()) {
+  // Idle / home Gap → start timed Gap (or defer until media is on disk).
+  if (queueIndex < 0 || isHomeInterstitial()) {
     queueIndex = queue.length - 1;
-    sendPlay(vid, cleanTitle, who);
+    if (isQueueItemMediaReady(item)) {
+      playAfterBetweenSongs(item);
+    } else {
+      console.log('[karol] Queued while downloading — deferring play/entrance:', vid);
+      ensureDownloadForPlay(vid, { karaoke: true });
+      armMediaWait({
+        videoId: vid,
+        title: cleanTitle,
+        requester: who,
+        opts: { force: true, karaoke: true },
+      });
+    }
   }
   saveState();
   notifyShowUpdate();
@@ -3912,6 +4720,19 @@ app.whenReady().then(async () => {
   console.log('[karol] Karol Electron');
   if (process.platform === 'darwin' && app.dock && APP_ICON && !APP_ICON.isEmpty()) {
     app.dock.setIcon(APP_ICON);
+  }
+  // Allow Web MIDI in the controller (MIDI Mix fader 8 → Out volume).
+  try {
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      if (permission === 'midi' || permission === 'midiSysex') {
+        callback(true);
+        return;
+      }
+      // Unhandled permissions: deny (Karol does not use cam/mic in the controller).
+      callback(false);
+    });
+  } catch (e) {
+    console.warn('[karol] MIDI permission hooks failed:', e && e.message);
   }
   console.log('[karol] Displays:', screen.getAllDisplays().map(d => ({
     id: d.id, label: d.label, primary: d.id === screen.getPrimaryDisplay().id, bounds: d.bounds,
@@ -4545,6 +5366,42 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     invalidateMusicBrollPool();
     return result;
   });
+
+  ipcMain.handle('library-delete', (_e, { videoId, siblings } = {}) => {
+    if (!library || typeof library.deleteVideo !== 'function') {
+      return { ok: false, error: 'library unavailable' };
+    }
+    const result = library.deleteVideo(videoId, { siblings: siblings !== false });
+    // Pull deleted ids out of the live show queue
+    try {
+      const base = String(videoId || '').replace(/(-karaoke)+$/g, '');
+      const drop = new Set([String(videoId || ''), base, base + '-karaoke']);
+      let removed = 0;
+      let removedPending = null;
+      for (let i = queue.length - 1; i >= 0; i--) {
+        const qid = String((queue[i] && queue[i].videoId) || '');
+        const qBase = qid.replace(/(-karaoke)+$/g, '');
+        if (drop.has(qid) || drop.has(qBase) || qBase === base) {
+          if (!removedPending) removedPending = queue[i];
+          queue.splice(i, 1);
+          removed++;
+          if (queueIndex >= i) queueIndex = Math.max(-1, queueIndex - 1);
+        }
+      }
+      if (removed) {
+        if (queueIndex >= queue.length) queueIndex = queue.length - 1;
+        saveState();
+        if (isGapInterstitialActive()) syncGapPendingAfterQueueEdit(removedPending);
+        notifyShowUpdate();
+      }
+      result.removedFromQueue = removed;
+    } catch (e) {
+      result.queueError = e && e.message;
+    }
+    try { invalidateMusicBrollPool(); } catch (_) {}
+    return result;
+  });
+
   ipcMain.handle('library-set-rating', (_e, { videoId, rating }) => {
     if (!library || typeof library.setRating !== 'function') {
       return { ok: false, error: 'library unavailable' };
@@ -4585,7 +5442,17 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
       var vid = item.videoId;
       var lookupId = String(vid || '').replace(/-karaoke$/, '');
       var karaoke = tags[lookupId]?.tag === 'karaoke' || tags[lookupId + '-karaoke']?.tag === 'karaoke';
-      var isCustom = tags[lookupId]?.source === 'karaoke-maker' || tags[lookupId + '-karaoke']?.source === 'karaoke-maker';
+      // Custom chrome is for karaoke-maker rows only — never for DJ mirrors or
+      // Music Video twins that merely have a karaoke-maker sibling.
+      var isCustom = false;
+      if (!item.fromJukebox) {
+        if (/-karaoke$/.test(String(vid || ''))) {
+          isCustom = (tags[vid] && tags[vid].source === 'karaoke-maker')
+            || (tags[lookupId + '-karaoke'] && tags[lookupId + '-karaoke'].source === 'karaoke-maker');
+        } else if (tags[lookupId] && tags[lookupId].source === 'karaoke-maker' && tags[lookupId].tag === 'karaoke') {
+          isCustom = true;
+        }
+      }
       var ratingRaw = (tags[lookupId + '-karaoke'] && tags[lookupId + '-karaoke'].rating)
         || (tags[lookupId] && tags[lookupId].rating)
         || (tags[vid] && tags[vid].rating);
@@ -4722,6 +5589,33 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     return { ok: true, jukebox: null, ...showModePayload() };
   });
 
+  ipcMain.handle('birthday-playlist-get', () => {
+    const saved = loadBirthdayPlaylistFile();
+    return {
+      ok: true,
+      playlist: saved,
+      armed: isBirthdayJukebox(),
+      jukebox: jukeboxSummary(),
+    };
+  });
+
+  ipcMain.handle('birthday-playlist-start', (_e, { shuffle, requester } = {}) => {
+    return startBirthdayPlaylist({
+      shuffle: shuffle !== false,
+      play: true,
+      requester,
+    });
+  });
+
+  ipcMain.handle('birthday-playlist-stop', () => {
+    if (!isBirthdayJukebox()) {
+      return { ok: true, jukebox: jukeboxSummary(), ...showModePayload() };
+    }
+    stopJukebox();
+    notifyShowUpdate();
+    return { ok: true, jukebox: null, ...showModePayload() };
+  });
+
   ipcMain.handle('queue-shuffle-set', (_e, { enabled, reshuffleUpcoming } = {}) => {
     return setQueueShuffle(!!enabled, { reshuffleUpcoming: reshuffleUpcoming !== false });
   });
@@ -4770,12 +5664,10 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     stopJukebox();
     queue = []; queueIndex = -1;
     shufflePlayedIds.clear();
-    playback = { videoId: null, currentTime: 0, duration: 0, state: 'idle' };
-    clearBetweenSongsTimer();
+    clearMediaWait();
     saveSettings();
     saveState();
-    notifyPlayer({ type: 'stop' });
-    notifyShowUpdate();
+    enterHomeInterstitial({ force: true });
     return { ok: true, ...showModePayload() };
   });
 
@@ -4817,17 +5709,48 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   ipcMain.on('transport-seek', (_e, t) => notifyPlayer({ type: 'seek', time: t }));
   ipcMain.handle('transport-toggle-gap-hold', () => toggleBetweenSongsHold());
   ipcMain.handle('transport-gap-state', () => getInterstitialState());
+  ipcMain.handle('gap-restart-broll', () => gapRestartBroll());
+  ipcMain.handle('gap-delete-spin', () => gapDeleteSpin());
+  ipcMain.handle('gap-remove-upnext', () => gapRemoveUpNext());
+  ipcMain.handle('gap-reclassify-spin', (_e, { bucket } = {}) => gapReclassifySpin(bucket));
+  ipcMain.handle('gap-cycle-broll', () => cycleGapBroll());
+  ipcMain.handle('gap-prev-broll', () => prevGapBroll());
+  ipcMain.on('gap-broll-report', (_e, payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    // Only crowd player should drive Now Spinning — ignore monitor mirrors
+    if (payload.role === 'monitor') return;
+    if (!isGapInterstitialActive() && !pauseInterstitialLive) return;
+    const id = payload.videoId ? String(payload.videoId) : null;
+    const title = payload.title != null ? String(payload.title) : '';
+    if (setCurrentGapBroll(id, title)) notifyInterstitialState();
+  });
   ipcMain.on('transport-volume', (_e, l) => {
     const level = Math.max(0, Math.min(1, Number(l)));
     volumeLevel = Number.isFinite(level) ? level : DEFAULT_VOLUME;
     saveSettings();
     notifyPlayer({ type: 'volume', level: volumeLevel });
   });
-  let vocalMixLevel = 0;
   ipcMain.on('transport-vocal-mix', (_e, l) => {
     const level = Math.max(0, Math.min(1, Number(l)));
     vocalMixLevel = Number.isFinite(level) ? level : 0;
+    saveSettings();
     notifyPlayer({ type: 'vocal-mix', level: vocalMixLevel });
+  });
+  ipcMain.on('transport-music-eq', (_e, eq) => {
+    musicEq = normalizeEq(eq);
+    saveSettings();
+    console.log('[karol] music EQ →', musicEq);
+    notifyPlayer({ type: 'music-eq', low: musicEq.low, mid: musicEq.mid, high: musicEq.high });
+  });
+  ipcMain.on('transport-vocal-eq', (_e, eq) => {
+    vocalEq = normalizeEq(eq);
+    saveSettings();
+    console.log('[karol] vocal EQ →', vocalEq);
+    notifyPlayer({ type: 'vocal-eq', low: vocalEq.low, mid: vocalEq.mid, high: vocalEq.high });
+  });
+  ipcMain.on('meter-levels', (_e, levels) => {
+    if (!levels || typeof levels !== 'object') return;
+    notifyCtrl('meter-levels', levels);
   });
   ipcMain.on('fx-trigger', (_e, name) => notifyPlayer({ type: 'fx', name: String(name || '').slice(0, 24) }));
   ipcMain.on('toggle-lyric-slider', (_e, active) => {
@@ -4977,6 +5900,9 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     phoneMirrorGapEnabled: PHONE_MIRROR_GAP_ENABLED,
     ...getGapMix(),
     volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
+    vocalMixLevel: Math.max(0, Math.min(1, Number(vocalMixLevel) || 0)),
+    musicEq: normalizeEq(musicEq),
+    vocalEq: normalizeEq(vocalEq),
     ...getInterstitialState(),
     ...showModePayload(),
     jukebox: jukeboxSummary(),
@@ -5075,7 +6001,24 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     if (patch && typeof patch.volumeLevel === 'number' && isFinite(patch.volumeLevel)) {
       volumeLevel = Math.max(0, Math.min(1, patch.volumeLevel));
       notifyPlayer({ type: 'volume', level: volumeLevel });
-      console.log('[karol] Player volume set to', volumeLevel, '(~' + (20 * Math.log10(Math.max(0.0001, volumeLevel))).toFixed(1) + ' dBFS)');
+      console.log(
+        '[karol] Player volume set to',
+        volumeLevel,
+        '(UI ~' + (20 * Math.log10(Math.max(0.0001, volumeLevel))).toFixed(1) + ' dB linear;',
+        'PA ~' + (20 * Math.log10(Math.max(0.0001, volumeLevel * volumeLevel * 0.28))).toFixed(1) + ' dBFS after taper/trim)'
+      );
+    }
+    if (patch && typeof patch.vocalMixLevel === 'number' && isFinite(patch.vocalMixLevel)) {
+      vocalMixLevel = Math.max(0, Math.min(1, patch.vocalMixLevel));
+      notifyPlayer({ type: 'vocal-mix', level: vocalMixLevel });
+    }
+    if (patch && patch.musicEq) {
+      musicEq = normalizeEq(patch.musicEq);
+      notifyPlayer({ type: 'music-eq', ...musicEq });
+    }
+    if (patch && patch.vocalEq) {
+      vocalEq = normalizeEq(patch.vocalEq);
+      notifyPlayer({ type: 'vocal-eq', ...vocalEq });
     }
     saveSettings();
     return {
@@ -5085,6 +6028,9 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
       phoneMirrorGapEnabled: PHONE_MIRROR_GAP_ENABLED,
       ...getGapMix(),
       volumeLevel: Math.max(0, Math.min(1, Number(volumeLevel) || DEFAULT_VOLUME)),
+      vocalMixLevel: Math.max(0, Math.min(1, Number(vocalMixLevel) || 0)),
+      musicEq: normalizeEq(musicEq),
+      vocalEq: normalizeEq(vocalEq),
       phoneMirror: phoneMirrorStatusQuiet(),
     };
   });
@@ -5465,6 +6411,103 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
     }
   });
 
+  // ── YouTube library search (controller YouTube tab) ──
+  function pickYoutubeThumbnail(info, id) {
+    const thumbs = Array.isArray(info && info.thumbnails) ? info.thumbnails : [];
+    let best = '';
+    let bestArea = -1;
+    for (const t of thumbs) {
+      if (!t || !t.url) continue;
+      const w = Number(t.width) || 0;
+      const h = Number(t.height) || 0;
+      const area = w * h;
+      if (area >= bestArea) {
+        bestArea = area;
+        best = String(t.url);
+      }
+    }
+    if (best) return best;
+    if (info && info.thumbnail) return String(info.thumbnail);
+    if (id) return 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg';
+    return '';
+  }
+
+  ipcMain.handle('youtube-search', async (_e, { query, limit } = {}) => {
+    const q = String(query || '').trim();
+    if (!q) return { ok: false, error: 'Empty query', results: [] };
+    const n = Math.max(1, Math.min(50, Number(limit) || 50));
+    try {
+      const childCp = require('child_process');
+      // Escape quotes inside the ytsearch query string
+      const safe = q.replace(/"/g, '');
+      const searchQuery = 'ytsearch' + n + ':"' + safe + '"';
+      console.log('[karol] youtube-search:', searchQuery);
+
+      const cookiesPath = path.join('/Users/macdonk/Documents/GitHub/Karol', '.karol', 'yt-cookies.txt');
+      const authArgs = (fs.existsSync(cookiesPath) && fs.statSync(cookiesPath).size > 100)
+        ? ['--cookies', cookiesPath]
+        : ['--cookies-from-browser', 'chrome'];
+      const proc = childCp.spawn('/opt/homebrew/bin/yt-dlp', [
+        '--ffmpeg-location', '/opt/homebrew/bin',
+        '--flat-playlist', '--dump-json', '--no-playlist',
+        ...authArgs,
+        searchQuery,
+      ], {
+        env: { ...process.env, PATH: '/opt/homebrew/bin:' + (process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin') },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+      return await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          try { proc.kill('SIGTERM'); } catch (_) {}
+          resolve({ ok: false, error: 'YouTube search timed out', results: [] });
+        }, 90000);
+        proc.on('close', (code) => {
+          clearTimeout(timer);
+          const results = [];
+          const seen = new Set();
+          for (const raw of stdout.split('\n')) {
+            const line = raw.trim();
+            if (!line) continue;
+            try {
+              const info = JSON.parse(line);
+              const id = String(info.id || '').trim();
+              if (!/^[A-Za-z0-9_-]{11}$/.test(id) || seen.has(id)) continue;
+              seen.add(id);
+              results.push({
+                id,
+                title: info.title || id,
+                channel: info.channel || info.uploader || '',
+                duration: (info.duration != null && Number.isFinite(Number(info.duration)))
+                  ? Number(info.duration) : null,
+                url: 'https://www.youtube.com/watch?v=' + id,
+                thumbnail: pickYoutubeThumbnail(info, id),
+              });
+            } catch (_) {}
+          }
+          if (!results.length && code !== 0) {
+            const errTail = (stderr || '').trim().split('\n').slice(-3).join(' ').slice(0, 240);
+            resolve({ ok: false, error: errTail || ('yt-dlp exited ' + code), results: [] });
+            return;
+          }
+          console.log('[karol] youtube-search found:', results.length);
+          resolve({ ok: true, results });
+        });
+        proc.on('error', (e) => {
+          clearTimeout(timer);
+          resolve({ ok: false, error: e.message, results: [] });
+        });
+      });
+    } catch (e) {
+      return { ok: false, error: e.message, results: [] };
+    }
+  });
+
   // ── Karaoke version search ──
   ipcMain.handle('find-karaoke', async (_e, { videoId }) => {
     try {
@@ -5599,19 +6642,7 @@ try { startApiServer(); } catch (e) { console.error('[karol] Failed to start API
   });
 
   // ── Create controller window ──
-  const primary = screen.getPrimaryDisplay();
-  ctrlWin = new BrowserWindow({
-    ...windowIconOpts(),
-    width: 1200, height: 900, x: primary.workArea.x, y: primary.workArea.y,
-    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
-    title: 'Karol DJ Controller', backgroundColor: '#0a0a14',
-  });
-  ctrlWin.webContents.on('console-message', (e, l, m) => console.log('[ctrl]', m));
-  ctrlWin.webContents.on('crashed', () => { console.error('[karol] Controller CRASHED'); ctrlWin = null; });
-  ctrlWin.on('close', onWindowClose);
-  ctrlWin.on('closed', () => { ctrlWin = null; });
-  wireControllerFocusHandlers(ctrlWin);
-  ctrlWin.loadFile(CTRL_HTML);
+  ctrlWin = createControllerWindow();
 
   // Dedicated HDMI karaoke display — open player after ready settles
   // (sync create here can stall whenReady / IPC on macOS multi-display).
@@ -5653,17 +6684,7 @@ app.on('before-quit', () => {
 app.on('activate', () => {
   // Recreate controller (and player if needed) when Dock icon is clicked
   if (!ctrlWin || ctrlWin.isDestroyed()) {
-    const primary = screen.getPrimaryDisplay();
-    ctrlWin = new BrowserWindow({
-      ...windowIconOpts(),
-      width: 1200, height: 900, x: primary.workArea.x, y: primary.workArea.y,
-      webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
-      title: 'Karol DJ Controller', backgroundColor: '#0a0a14',
-    });
-    ctrlWin.on('close', onWindowClose);
-    ctrlWin.on('closed', () => { ctrlWin = null; });
-    wireControllerFocusHandlers(ctrlWin);
-    ctrlWin.loadFile(CTRL_HTML);
+    ctrlWin = createControllerWindow();
   }
   if (!playWin || playWin.isDestroyed()) {
     createPlayer();

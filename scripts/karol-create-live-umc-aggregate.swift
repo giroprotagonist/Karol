@@ -1,6 +1,8 @@
 #!/usr/bin/swift
-// Create Karol Live Mic: BlackHole ch1-2 (Karol) + UMC404HD ch3-6 (mic) @ 44100.
-// Option B tonight — UMC mic, no Shure. Clock = BlackHole; UMC drift ON, outs unmapped.
+// Create Karol Live Mic: BlackHole ch1-2 (Karol) + UMC404HD ch3-6 (mic) @ 48000.
+// umc-pa Live-mix path. Clock = UMC (lowest mic latency); BlackHole drift ON.
+// channels-out:0 on UMC is requested here but CoreAudio often ignores it —
+// always finish with: sudo python3 scripts/karol-fix-plist-aggregate.py
 import Foundation
 import CoreAudio
 
@@ -124,19 +126,19 @@ for staleName in [aggName, "Karol Mic Ch1", "Aggregate Device"] {
 }
 Thread.sleep(forTimeInterval: 0.5)
 
-// BlackHole FIRST (clock) → ch1-2 Karol. UMC SECOND → ch3-6 mic inputs, no outputs.
+// BlackHole FIRST → ch1-2 Karol (drift ON). UMC SECOND → ch3-6 mic, no outs (clock).
 let subDevices: [[String: Any]] = [
     [
         kAudioSubDeviceUIDKey as String: bhUID,
         "channels-in": 2,
         "channels-out": 2,
-        kAudioSubDeviceDriftCompensationKey as String: false,
+        kAudioSubDeviceDriftCompensationKey as String: true,
     ],
     [
         kAudioSubDeviceUIDKey as String: umcUID,
         "channels-in": 4,
         "channels-out": 0,
-        kAudioSubDeviceDriftCompensationKey as String: true,
+        kAudioSubDeviceDriftCompensationKey as String: false,
     ],
 ]
 
@@ -144,8 +146,8 @@ let desc: [String: Any] = [
     kAudioAggregateDeviceNameKey as String: aggName,
     kAudioAggregateDeviceUIDKey as String: aggUID,
     kAudioAggregateDeviceSubDeviceListKey as String: subDevices,
-    kAudioAggregateDeviceMasterSubDeviceKey as String: bhUID,
-    kAudioAggregateDeviceClockDeviceKey as String: bhUID,
+    kAudioAggregateDeviceMasterSubDeviceKey as String: umcUID,
+    kAudioAggregateDeviceClockDeviceKey as String: umcUID,
 ]
 
 var newID: AudioDeviceID = 0
@@ -160,9 +162,9 @@ Thread.sleep(forTimeInterval: 0.3)
 let ins = inputChannels(newID)
 let outs = outputChannels(newID)
 print("Created \(aggName) (id=\(newID)): \(ins) in, \(outs) out")
-print("  Clock: \(bhName)")
-print("  ch1-2: \(bhName) (Karol stereo)")
-print("  ch3-6: \(umcLabel) (mic inputs, drift ON, no outs)")
+print("  Clock: \(umcLabel)")
+print("  ch1-2: \(bhName) (Karol stereo, drift ON)")
+print("  ch3-6: \(umcLabel) (mic inputs, no outs — run plist fix if outs != 2)")
 
 if ins != 6 || outs != 2 {
     fputs("WARN: expected 6 in / 2 out — got \(ins) in / \(outs) out\n", stderr)

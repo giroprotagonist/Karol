@@ -1,0 +1,435 @@
+{
+  "name": "Birthday Tunes - 2017",
+  "spotifyPlaylistId": "4RrWWP7HZISPhESToBeoG4",
+  "updatedAt": "2026-09-02T01:46:26Z",
+  "djName": "Naynay/Karolpdx",
+  "trackCount": 47,
+  "matchedLocal": 6,
+  "matchedYoutube": 41,
+  "failed": 0,
+  "tracks": [
+    {
+      "videoId": "PX08YBU4wjg",
+      "title": "Beyoncé — 7/11",
+      "artist": "Beyoncé",
+      "spotifyTitle": "7/11",
+      "displayTitle": "Beyoncé — 7/11",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "d0XEvGF7sb0",
+      "title": "Drake — Hotline Bling",
+      "artist": "Drake",
+      "spotifyTitle": "Hotline Bling",
+      "displayTitle": "Drake — Hotline Bling",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "UMNhcBltW3s",
+      "title": "Sia — Chandelier",
+      "artist": "Sia",
+      "spotifyTitle": "Chandelier",
+      "displayTitle": "Sia — Chandelier",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "Dy4HA3vUv2c",
+      "title": "Blue Öyster Cult — (Don't Fear) The Reaper",
+      "artist": "Blue Öyster Cult",
+      "spotifyTitle": "(Don't Fear) The Reaper",
+      "displayTitle": "Blue Öyster Cult — (Don't Fear) The Reaper",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "bJT_DpIyf30",
+      "title": "The Velvet Underground — Stephanie Says - Original Mix",
+      "artist": "The Velvet Underground",
+      "spotifyTitle": "Stephanie Says - Original Mix",
+      "displayTitle": "The Velvet Underground — Stephanie Says - Original Mix",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "2cm7MEONP48",
+      "title": "Kaleida — Think",
+      "artist": "Kaleida",
+      "spotifyTitle": "Think",
+      "displayTitle": "Kaleida — Think",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "FgrNifq5Yas",
+      "title": "Kendrick Lamar — HUMBLE.",
+      "artist": "Kendrick Lamar",
+      "spotifyTitle": "HUMBLE.",
+      "displayTitle": "Kendrick Lamar — HUMBLE.",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "eF551z9KlA8",
+      "title": "David Bowie — Rebel Rebel - Remastered",
+      "artist": "David Bowie",
+      "spotifyTitle": "Rebel Rebel - Remastered",
+      "displayTitle": "David Bowie — Rebel Rebel - Remastered",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "Egn_CwVTtw4",
+      "title": "Violent Femmes — Kiss Off",
+      "artist": "Violent Femmes",
+      "spotifyTitle": "Kiss Off",
+      "displayTitle": "Violent Femmes — Kiss Off",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "JZwPcPy04AQ",
+      "title": "Violent Femmes — Add It Up",
+      "artist": "Violent Femmes",
+      "spotifyTitle": "Add It Up",
+      "displayTitle": "Violent Femmes — Add It Up",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "AjtHjcF40zk",
+      "title": "Jamie xx - F.U. ft. Erykah Badu",
+      "artist": "Jamie xx",
+      "spotifyTitle": "Q.U.E.E.N. (feat. Erykah Badu)",
+      "displayTitle": "Jamie xx - F.U. ft. Erykah Badu",
+      "source": "library",
+      "local": true
+    },
+    {
+      "videoId": "7n_UpnYNZGs",
+      "title": "Rihanna — Needed Me",
+      "artist": "Rihanna",
+      "spotifyTitle": "Needed Me",
+      "displayTitle": "Rihanna — Needed Me",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "zpnsVCXo_SA",
+      "title": "Johnny Cash, June Carter Cash — Long-Legged Guitar Pickin' Man (with June Carter Cash)",
+      "artist": "Johnny Cash, June Carter Cash",
+      "spotifyTitle": "Long-Legged Guitar Pickin' Man (with June Carter Cash)",
+      "displayTitle": "Johnny Cash, June Carter Cash — Long-Legged Guitar Pickin' Man (with June Carter Cash)",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "YcUOuNfw2ZY",
+      "title": "David Bowie — Rock 'n' Roll Suicide - 2012 Remaster",
+      "artist": "David Bowie",
+      "spotifyTitle": "Rock 'n' Roll Suicide - 2012 Remaster",
+      "displayTitle": "David Bowie — Rock 'n' Roll Suicide - 2012 Remaster",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "NTKrYRAwgPQ",
+      "title": "The Dubliners, Paddy Reilly — Dirty Old Town",
+      "artist": "The Dubliners, Paddy Reilly",
+      "spotifyTitle": "Dirty Old Town",
+      "displayTitle": "The Dubliners, Paddy Reilly — Dirty Old Town",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "Ay8lHtmNdEQ",
+      "title": "Lana Del Rey — Born To Die",
+      "artist": "Lana Del Rey",
+      "spotifyTitle": "Born To Die",
+      "displayTitle": "Lana Del Rey — Born To Die",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "cXTgrHruvoo",
+      "title": "Mason, Princess Superstar — Perfect (Exceeder)",
+      "artist": "Mason, Princess Superstar",
+      "spotifyTitle": "Perfect (Exceeder)",
+      "displayTitle": "Mason, Princess Superstar — Perfect (Exceeder)",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "yrY0XR0_peg",
+      "title": "STRFKR — Rawnald Gregory Erickson the Second",
+      "artist": "STRFKR",
+      "spotifyTitle": "Rawnald Gregory Erickson the Second",
+      "displayTitle": "STRFKR — Rawnald Gregory Erickson the Second",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "-dUMCtz1pm8",
+      "title": "Frankie Cosmos — On the Lips",
+      "artist": "Frankie Cosmos",
+      "spotifyTitle": "On the Lips",
+      "displayTitle": "Frankie Cosmos — On the Lips",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "4mlL5PALrfI",
+      "title": "Chromatics — Cherry",
+      "artist": "Chromatics",
+      "spotifyTitle": "Cherry",
+      "displayTitle": "Chromatics — Cherry",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "TkxVOa6u59M",
+      "title": "The Weeknd, Lana Del Rey — Stargirl Interlude",
+      "artist": "The Weeknd, Lana Del Rey",
+      "spotifyTitle": "Stargirl Interlude",
+      "displayTitle": "The Weeknd, Lana Del Rey — Stargirl Interlude",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "e0VhpguxyFE",
+      "title": "Cullen Omori — Cinnamon",
+      "artist": "Cullen Omori",
+      "spotifyTitle": "Cinnamon",
+      "displayTitle": "Cullen Omori — Cinnamon",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "RQvYVd3_6no",
+      "title": "Mitski — Your Best American Girl",
+      "artist": "Mitski",
+      "spotifyTitle": "Your Best American Girl",
+      "displayTitle": "Mitski — Your Best American Girl",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "jsQ9nlw7Dy4",
+      "title": "Widowspeak — All Yours",
+      "artist": "Widowspeak",
+      "spotifyTitle": "All Yours",
+      "displayTitle": "Widowspeak — All Yours",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "p_9zR0uWNtk",
+      "title": "Oddnesse — Somewhere Somehow",
+      "artist": "Oddnesse",
+      "spotifyTitle": "Somewhere Somehow",
+      "displayTitle": "Oddnesse — Somewhere Somehow",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "pLBmqwA4AGc",
+      "title": "BØRNS — American Money",
+      "artist": "BØRNS",
+      "spotifyTitle": "American Money",
+      "displayTitle": "BØRNS — American Money",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "vP9VIPzlYi0",
+      "title": "Lola Marsh — You're Mine",
+      "artist": "Lola Marsh",
+      "spotifyTitle": "You're Mine",
+      "displayTitle": "Lola Marsh — You're Mine",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "37yrktde6m0",
+      "title": "THAO, Thao & The Get Down Stay Down — Astonished Man",
+      "artist": "THAO, Thao & The Get Down Stay Down",
+      "spotifyTitle": "Astonished Man",
+      "displayTitle": "THAO, Thao & The Get Down Stay Down — Astonished Man",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "3lgwvr3AmK4",
+      "title": "Elohim — Sensations",
+      "artist": "Elohim",
+      "spotifyTitle": "Sensations",
+      "displayTitle": "Elohim — Sensations",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "RFzGu5c8xrs",
+      "title": "Blouse — Into Black",
+      "artist": "Blouse",
+      "spotifyTitle": "Into Black",
+      "displayTitle": "Blouse — Into Black",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "pIG2_N1drc4",
+      "title": "Big Grams — Goldmine Junkie",
+      "artist": "Big Grams",
+      "spotifyTitle": "Goldmine Junkie",
+      "displayTitle": "Big Grams — Goldmine Junkie",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "DsFde2IK9Rk",
+      "title": "You Don't Know How It Feels - Tom Petty | Karaoke Version | KaraFun",
+      "artist": "KaraFun Karaoke",
+      "spotifyTitle": "You Don't Own Me",
+      "displayTitle": "You Don't Know How It Feels - Tom Petty | Karaoke Version | KaraFun",
+      "source": "library",
+      "local": true
+    },
+    {
+      "videoId": "SExadRYvVyM",
+      "title": "The Sleepy Jackson — Good Dancers",
+      "artist": "The Sleepy Jackson",
+      "spotifyTitle": "Good Dancers",
+      "displayTitle": "The Sleepy Jackson — Good Dancers",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "omi87S6TT0o",
+      "title": "Ambulance LTD — Heavy Lifting",
+      "artist": "Ambulance LTD",
+      "spotifyTitle": "Heavy Lifting",
+      "displayTitle": "Ambulance LTD — Heavy Lifting",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "hi4pzKvuEQM",
+      "title": "Chet Faker — Gold",
+      "artist": "Chet Faker",
+      "spotifyTitle": "Gold",
+      "displayTitle": "Chet Faker — Gold",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "deY8jH9zw6M",
+      "title": "The Dubliners — The Rocky Road to Dublin - Live",
+      "artist": "The Dubliners",
+      "spotifyTitle": "The Rocky Road to Dublin - Live",
+      "displayTitle": "The Dubliners — The Rocky Road to Dublin - Live",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "NTKrYRAwgPQ",
+      "title": "The Dubliners — Dirty Old Town",
+      "artist": "The Dubliners",
+      "spotifyTitle": "Dirty Old Town",
+      "displayTitle": "The Dubliners — Dirty Old Town",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "1315Zndy-CE",
+      "title": "The Vampire Lestat — Brutal Love",
+      "artist": "The Vampire Lestat",
+      "spotifyTitle": "Brutal Love",
+      "displayTitle": "The Vampire Lestat — Brutal Love",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "hhvW8qB-W3M",
+      "title": "Slayyyter - BEAT UP CHANEL$ (Official Video)",
+      "artist": "slayyyter",
+      "spotifyTitle": "BEAT UP CHANEL$",
+      "displayTitle": "Slayyyter - BEAT UP CHANEL$ (Official Video)",
+      "source": "library",
+      "local": true
+    },
+    {
+      "videoId": "hOEMsqWx4nE",
+      "title": "SOFI TUKKER — Purple Hat",
+      "artist": "SOFI TUKKER",
+      "spotifyTitle": "Purple Hat",
+      "displayTitle": "SOFI TUKKER — Purple Hat",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "R8egmh5dWzo",
+      "title": "Calvin Harris — Feel So Close - Radio Edit",
+      "artist": "Calvin Harris",
+      "spotifyTitle": "Feel So Close - Radio Edit",
+      "displayTitle": "Calvin Harris — Feel So Close - Radio Edit",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "YXXbck3y5C8",
+      "title": "The Dare — Girls",
+      "artist": "The Dare",
+      "spotifyTitle": "Girls",
+      "displayTitle": "The Dare — Girls",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "orD1QZBBXM8",
+      "title": "Wet Leg - CPR | Glastonbury 2025",
+      "artist": "Wet Leg",
+      "spotifyTitle": "CPR",
+      "displayTitle": "Wet Leg - CPR | Glastonbury 2025",
+      "source": "library",
+      "local": true
+    },
+    {
+      "videoId": "B_gKTJTIcYw",
+      "title": "Balming Tiger - Buriburi / Pigeon and Plastic",
+      "artist": "Balming Tiger",
+      "spotifyTitle": "Buriburi",
+      "displayTitle": "Balming Tiger - Buriburi / Pigeon and Plastic",
+      "source": "library",
+      "local": true
+    },
+    {
+      "videoId": "Twix375Me4Q",
+      "title": "BANKS — Beggin For Thread",
+      "artist": "BANKS",
+      "spotifyTitle": "Beggin For Thread",
+      "displayTitle": "BANKS — Beggin For Thread",
+      "source": "youtube-search",
+      "local": false
+    },
+    {
+      "videoId": "TvVtYaqCni8",
+      "title": "LE SSERAFIM (르세라핌) 'SPAGHETTI (feat. j-hope of BTS)' OFFICIAL MV",
+      "artist": "LE SSERAFIM (르세라핌) 'SPAGHETTI",
+      "spotifyTitle": "SPAGHETTI",
+      "displayTitle": "LE SSERAFIM (르세라핌) 'SPAGHETTI (feat. j-hope of BTS)' OFFICIAL MV",
+      "source": "library",
+      "local": true
+    },
+    {
+      "videoId": "qElV9cjAl_A",
+      "title": "Madonna — Like a Prayer",
+      "artist": "Madonna",
+      "spotifyTitle": "Like a Prayer",
+      "displayTitle": "Madonna — Like a Prayer",
+      "source": "youtube-search",
+      "local": false
+    }
+  ]
+}

@@ -13,8 +13,22 @@ contextBridge.exposeInMainWorld('karolAPI', {
     seek: (time) => ipcRenderer.send('transport-seek', time),
     volume: (level) => ipcRenderer.send('transport-volume', level),
     vocalMix: (level) => ipcRenderer.send('transport-vocal-mix', level),
+    musicEq: (eq) => ipcRenderer.send('transport-music-eq', eq || {}),
+    vocalEq: (eq) => ipcRenderer.send('transport-vocal-eq', eq || {}),
     toggleGapHold: () => ipcRenderer.invoke('transport-toggle-gap-hold'),
     gapState: () => ipcRenderer.invoke('transport-gap-state'),
+  },
+
+  // ── Gap / interstitial DJ controls (controller + player share main state) ──
+  gap: {
+    state: () => ipcRenderer.invoke('transport-gap-state'),
+    restartBroll: () => ipcRenderer.invoke('gap-restart-broll'),
+    deleteSpin: () => ipcRenderer.invoke('gap-delete-spin'),
+    removeUpNext: () => ipcRenderer.invoke('gap-remove-upnext'),
+    reclassifySpin: (bucket) => ipcRenderer.invoke('gap-reclassify-spin', { bucket }),
+    cycleBroll: () => ipcRenderer.invoke('gap-cycle-broll'),
+    prevBroll: () => ipcRenderer.invoke('gap-prev-broll'),
+    reportBroll: (payload) => ipcRenderer.send('gap-broll-report', payload || {}),
   },
 
   // ── Player commands (forwarded to player window) ──
@@ -53,6 +67,13 @@ contextBridge.exposeInMainWorld('karolAPI', {
         requester: opts && opts.requester,
       }),
     stopJukebox: () => ipcRenderer.invoke('jukebox-stop'),
+    getBirthdayPlaylist: () => ipcRenderer.invoke('birthday-playlist-get'),
+    startBirthdayPlaylist: (opts) =>
+      ipcRenderer.invoke('birthday-playlist-start', {
+        shuffle: !opts || opts.shuffle !== false,
+        requester: opts && opts.requester,
+      }),
+    stopBirthdayPlaylist: () => ipcRenderer.invoke('birthday-playlist-stop'),
     remove: (index) => ipcRenderer.invoke('queue-remove', index),
     reorder: (from, to) => ipcRenderer.invoke('queue-reorder', { from, to }),
     clear: () => ipcRenderer.invoke('queue-clear'),
@@ -84,6 +105,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
     tags: () => ipcRenderer.invoke('library-tags'),
     setTag: (videoId, tag) => ipcRenderer.invoke('library-set-tag', { videoId, tag }),
     reclassify: (videoId, tag, source) => ipcRenderer.invoke('library-set-tag', { videoId, tag, source }),
+    delete: (videoId, opts) => ipcRenderer.invoke('library-delete', { videoId, ...(opts || {}) }),
     setRating: (videoId, rating) => ipcRenderer.invoke('library-set-rating', { videoId, rating }),
     getRating: (videoId) => ipcRenderer.invoke('library-get-rating', videoId),
     status: (videoId) => ipcRenderer.invoke('library-status', videoId),
@@ -113,6 +135,15 @@ contextBridge.exposeInMainWorld('karolAPI', {
     list: () => ipcRenderer.invoke('request-list'),
   },
 
+  // ── YouTube search (Library → YouTube tab) ──
+  youtube: {
+    search: (query, opts) =>
+      ipcRenderer.invoke('youtube-search', {
+        query,
+        limit: opts && opts.limit,
+      }),
+  },
+
   // ── Window management ──
   window: {
     launchPlayer: () => ipcRenderer.send('launch-player'),
@@ -123,6 +154,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
 
   // ── Player state reporting (player window → main) ──
   reportState: (state) => ipcRenderer.send('player-state-report', state),
+  reportMeters: (levels) => ipcRenderer.send('meter-levels', levels || {}),
 
   // ── Events (main → renderer) ──
   on: (channel, callback) => {
@@ -131,6 +163,7 @@ contextBridge.exposeInMainWorld('karolAPI', {
       'download-progress', 'library-scan-progress', 'health-report',
       'monitor-mode', 'lyrics-updated', 'drive-status',
       'interstitial-state', 'phone-mirror-status',
+      'meter-levels',
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (_event, ...args) => callback(...args));

@@ -1,20 +1,131 @@
 # Show-ready methodology (state of the art)
 
-**Canonical path:** Karol → BlackHole → **Karol Live Mic** (BH ch1–2 + UMC ch3–6) → Ableton Live → **UMC404HD** → PA
+## Recommended: low-latency Autotuna (near-instant mic)
 
-**Sample rate:** **48000 Hz** everywhere (UMC + BlackHole + Live + MacBook native)
+**Canonical path:** Karol → **UMC404HD** · Mic → **UMC404HD** → Ableton (Autotuna) → **UMC404HD** → PA
+
+macOS mixes Karol and Live onto the same interface. No BlackHole / aggregate in the monitor path — this is the setup that felt **near instant** when Input+Output were both UMC at buffer 64.
+
+```bash
+/Users/macdonk/Documents/GitHub/Karol/scripts/karol-low-latency-show.sh
+```
+
+| Preference | Value |
+|------------|--------|
+| Sample Rate | **48000 Hz** |
+| Audio Input | **UMC404HD 192k** |
+| Audio Output | **UMC404HD 192k** |
+| Buffer Size | **64 or 128** |
+| Reduced Latency When Monitoring | **ON** |
+| Input Config | Enable **1–4** |
+| Output Config | Enable **1–2** |
+
+| Track | Audio From | Monitor | Arm |
+|-------|------------|---------|-----|
+| **1 — MIC Karaoke** | UMC / **1** | **In** | ON |
+| **Karol** | *(not in Live)* | — | — |
+| **Master** | UMC / **1–2** | | |
+
+**MIC chain (general karaoke — not song-specific):**
+`Karol Karaoke Autotuna` → `Karol Karaoke Vocal FX`  
+(Autotuna chromatic ~78%, latency off · Comp → Sat → Presence EQ → De-ess → Double → Slap → Short Verb)
+
+```bash
+/opt/homebrew/bin/python3 /Users/macdonk/Documents/GitHub/Karol/scripts/karol-karaoke-vocal-load.py
+# Re-apply Autotuna only:
+/opt/homebrew/bin/python3 /Users/macdonk/Documents/GitHub/Karol/scripts/karol-karaoke-autotuna.py
+```
+
+**Karol Mixer tab:** Music/Out ~50–70% (square taper + ~−11 dB master trim — 100% is no longer unity into the UMC) · Vocals (ch7) 0% unless guide stem · meters + EQ3 · macOS output = UMC (script sets this).
+
+**Karaoke entrance:** After Gap B-roll, opaque singer intro (~5s) runs with the song parked silent underneath, then fades into audible play. DJ/jukebox skips entrance.  
+
+**Karol mono mixer (umc-direct):** Music bus + vocal-stem bus → EQ3 each → mono sum → soft limiter → **L=R on UMC** (PA on **Out 1** always has full signal). No BlackHole/Live on this path.
+
+**MIDI Mix (factory CCs):**
+| Control | CC | Karol |
+|---------|-----|--------|
+| Ch8 fader | 61 | Music / Out |
+| Ch8 knobs top→bottom | 58, 59, 60 | Music EQ High / Mid / Low (±12 dB) |
+| Ch7 fader | 57 | Vocal stem gain |
+| Ch7 knobs top→bottom | 54, 55, 56 | Vocal EQ High / Mid / Low |
+
+Soft-takeover on both faders (works while Live is open).
 
 ---
 
-## Before every show (one command)
+## Alternate: full Live mix (Karol through Ableton)
+
+Use when you need Live FX / levels on the Karol backing track inside the set. **Adds monitor latency** vs UMC-direct. Needs admin once to strip UMC outs from the aggregate.
 
 ```bash
 /Users/macdonk/Documents/GitHub/Karol/scripts/karol-show-ready.sh
+# If verify warns about 6 aggregate outputs:
+sudo python3 /Users/macdonk/Documents/GitHub/Karol/scripts/karol-fix-plist-aggregate.py
 ```
 
-This runs audio setup, USB/drive health, verification, and prints the Live checklist.
+**Chain:** Karol → BlackHole → **Karol Live Mic** (BH ch1–2 + UMC ch3–6) → Live → **UMC404HD** → PA
 
-**Prerequisites:** Quit Ableton Live (Cmd+Q) first. Plug in UMC404HD + `maxone` drive.
+| Preference | Value |
+|------------|--------|
+| Sample Rate | **48000 Hz** |
+| Audio Input | **Karol Live Mic** |
+| Audio Output | **UMC404HD 192k** |
+| Buffer Size | **256–512** (not 64 on aggregate) |
+| Input Config | Enable **1–6** |
+
+| Track | Audio From | Monitor | Arm |
+|-------|------------|---------|-----|
+| **1 — Mic** | Karol Live Mic / **3–4** | **In** | ON |
+| **2 — Karol** | Karol Live Mic / **1–2** | **In** | OFF |
+| **Master** | UMC / **1–2** | | |
+
+**Quit Live (Cmd+Q) before `karol-show-ready.sh`.** Live caches channel counts.
+
+### Aggregate plist rule (umc-pa only)
+
+1. `karol-create-live-umc-aggregate`
+2. `sudo python3 karol-fix-plist-aggregate.py` (UMC outs OFF; keep UMC as clock / BlackHole drift ON for lowest mic latency)
+
+**Never run create after plist fix** — create resets UMC outputs.
+
+---
+
+## Autotuna
+
+**Default (general karaoke):**
+
+```bash
+/opt/homebrew/bin/python3 scripts/karol-karaoke-autotuna.py
+```
+
+Song-specific presets (optional): `karol-charli-autotuna.py` (Von Dutch), `karol-believe-autotuna.py`, `karol-one-more-time-autotuna.py`.
+
+Save the Live set so routing + Karol Karaoke chain persist.
+
+---
+
+## Verify
+
+```bash
+# Low-latency (default)
+KAROL_AUDIO_MODE=umc-direct scripts/karol-audio-verify.sh
+
+# Full Live mix
+KAROL_AUDIO_MODE=umc-pa scripts/karol-audio-verify.sh
+```
+
+---
+
+## Audio device prune (latency)
+
+Keep only what the show needs: **UMC404HD**, **BlackHole 2ch**, **Karol Live Mic**.
+
+```bash
+/Users/macdonk/Documents/GitHub/Karol/scripts/karol-prune-audio-drivers.sh
+```
+
+Removes **BlackHole 16ch** + **Iriun Webcam Audio** (HAL + app). If an Iriun *camera* extension still shows under Login Items → Extensions, turn it off there.
 
 ---
 
@@ -24,109 +135,14 @@ This runs audio setup, USB/drive health, verification, and prints the Live check
 /Users/macdonk/Documents/GitHub/Karol/scripts/karol-install-app.sh
 ```
 
-Then reopen Karol from Applications. The show-ready script can do this with `--build`.
-
 ---
 
-## Ableton Live (save as default template)
-
-| Preference | Value |
-|------------|--------|
-| Sample Rate | **48000 Hz** |
-| Audio Input | **Karol Live Mic** |
-| Audio Output | **UMC404HD 192k** |
-| Buffer Size | **512** (256 if stable; never 64) |
-| Input Config | Enable channels **1–6** |
-| Output Config | Enable **1–2** |
-
-| Track | Audio From | Monitor | Arm |
-|-------|------------|---------|-----|
-| **1 — Mic** | Karol Live Mic / **3–4** | **In** | ON |
-| **2 — Karol** | Karol Live Mic / **1–2** | **In** | OFF |
-| **Master** | UMC404HD / **1–2** | | |
-
-**Track 1:** Autotuna (von dutch / Charli preset). Apply via:
-
-```bash
-python3 scripts/karol-charli-autotuna.py
-```
-
-Save the Live set as your show template so device routing persists.
-
----
-
-## Karol DJ controller (Show tab)
-
-| Control | Show value |
-|---------|------------|
-| **Out** | **55–70%** (not 100% — avoids Live redline) |
-| **Vocals** | **0%** (instrumental only; guide vocals only for rehearsal) |
-| **Gap** | 15s, MVs mode |
-| macOS output | **BlackHole 2ch** (set by show-ready script) |
-
----
-
-## Audio chain (no duplication)
-
-```
-Karol Player
-  video  → instrumental (-karaoke.mp4)
-  + optional vocal stem WAV (Vocals fader only)
-       ↓
-  BlackHole 2ch  ← macOS default output
-       ↓
-  Karol Live Mic aggregate
-    ch 1–2: BlackHole (Karol)
-    ch 3–6: UMC404HD (mic)
-       ↓
-  Ableton Live
-    Track 1: mic + Autotuna
-    Track 2: Karol backing
-       ↓
-  UMC404HD → PA
-```
-
-UMC appears in the **input aggregate** (mic only) and as **Live's output device** — that is correct. Plist fix keeps UMC **outputs unmapped** inside the aggregate to avoid a feedback loop.
-
----
-
-## Aggregate plist rule (critical)
-
-**Order matters:**
-
-1. `karol-create-live-umc-aggregate` (creates device)
-2. `sudo python3 karol-fix-plist-aggregate.py` (UMC outs OFF, drift ON)
-
-**Never run create after plist fix** — it resets UMC outputs.
-
-If glitchy audio returns: plist fix only (no recreate):
-
-```bash
-sudo python3 scripts/karol-fix-plist-aggregate.py
-```
-
----
-
-## Verify
-
-```bash
-KAROL_AUDIO_MODE=umc-pa scripts/karol-audio-verify.sh
-scripts/karol-usb-health.sh
-```
-
-Green = ready. Sing into mic + play a Karol song + press Space in Live.
-
----
-
-## Other modes (not tonight's path)
+## Other modes
 
 | Mode | Script | Sample rate |
 |------|--------|-------------|
 | TV + Shure mic | `karol-show-audio-live-tv-with-mic.sh` | 44100 |
 | Direct TV (no Live) | `karol-show-audio-direct-tv.sh` | 44100 |
-| DJ aggregate (48k) | `set-default-karol.sh` | 48000 |
-
-Set `KAROL_AUDIO_MODE=live-tv` for TV paths only.
 
 ---
 
@@ -134,9 +150,11 @@ Set `KAROL_AUDIO_MODE=live-tv` for TV paths only.
 
 | Symptom | Fix |
 |---------|-----|
-| Glitchy / dropouts | Buffer 512+, quit Live before audio scripts |
-| No mic in Live | Input Config enable ch 3–6; Monitor **In** |
-| No Karol in Live | macOS output must be BlackHole; Track 2 on ch 1–2 |
-| Double vocals | Vocals fader 0%; rebuild stems on custom tracks |
-| Drive not in library | System Settings → Removable Volumes → enable Karol → Rescan |
-| Aggregate 6 outputs | `sudo python3 karol-fix-plist-aggregate.py` (do not recreate after) |
+| Mic feels delayed | Use **umc-direct** (low-latency script). Aggregate path will always feel slower. |
+| Glitchy / dropouts on aggregate | Buffer 256–512; quit Live before audio scripts; plist-fix UMC outs |
+| No Karol in PA (umc-direct) | macOS output must be **UMC404HD** |
+| No Karol in Live (umc-pa) | macOS output must be **BlackHole**; Track 2 on ch 1–2 |
+| Music only on one PA side | Mono mixer duplicates L=R — check UMC Out 1 cable / amp |
+| Double Karol audio | Video must stay muted into Web Audio; rebuild/reinstall if old app |
+| Double vocals | Vocals fader 0% |
+| Aggregate 6 outputs | `sudo python3 karol-fix-plist-aggregate.py` |

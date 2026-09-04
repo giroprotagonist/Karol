@@ -1,45 +1,49 @@
 ═══════════════════════════════════════════════════════════════
-  ABLETON LIVE — UMC PA (state of the art @ 48 kHz)
+  ABLETON LIVE — LOW-LATENCY UMC DIRECT (recommended)
 ═══════════════════════════════════════════════════════════════
 
-Chain: Karol → BlackHole → Karol Live Mic → Live → UMC404HD → PA
+Chain: Karol → UMC404HD · Mic → UMC → Live (Autotuna) → UMC → PA
+Overall latency target: ~6.3 ms (buffer 64 @ 48 kHz)
 
-CRITICAL: Monitor MUST be **In** — NOT Off.
-
-PREREQ: Quit Live (Cmd+Q), then run: scripts/karol-show-ready.sh
+PREREQ: scripts/karol-low-latency-show.sh
+        (or: karol-show-ready.sh — defaults to this mode)
 
 ───────────────────────────────────────────────────────────────
 Preferences → Audio
 ───────────────────────────────────────────────────────────────
   Sample Rate:         48000 Hz
-  Audio Input Device:  Karol Live Mic
+  Audio Input Device:  UMC404HD 192k
   Audio Output Device: UMC404HD 192k
-  Buffer Size:         512 samples (256 if stable — NOT 64)
+  Buffer Size:         64 or 128 samples
+  Options → Reduced Latency When Monitoring: ON
 
-  Input Config:  enable channels 1, 2, 3, 4, 5, 6
-  Output Config: enable channels 1, 2
+  Input Config:  enable 1–4 (mono) + 1/2 (stereo)
+  Output Config: enable 1–2
 
 ───────────────────────────────────────────────────────────────
-Track wiring
+Track wiring (saved as Karol-LowLatency-Show)
 ───────────────────────────────────────────────────────────────
-  Track 1 (UMC mic):
-    Audio From: Ext. In → Karol Live Mic / 3-4
-    Monitor: In · Arm: ON · Autotuna on chain
+  Track 1 MIC + Autotuna:
+    Audio From: Ext. In → 1
+    Monitor: In · Arm: ON
 
-  Track 2 (Karol backing):
-    Audio From: Ext. In → Karol Live Mic / 1-2
-    Monitor: In · Arm: OFF
+  Do NOT route Karol into Live — macOS mixes Karol onto UMC.
 
-  Master: UMC404HD 192k / 1-2
+  Master: UMC404HD / 1-2
+
+  Project: ~/Karol-LowLatency-Show Project/Karol-LowLatency-Show.als
+           (copy: ~/Documents/Ableton/Karol/)
 
 ───────────────────────────────────────────────────────────────
 Karol Show tab
 ───────────────────────────────────────────────────────────────
-  Out: 55–70%  ·  Vocals: 0%  ·  Play Karol → Space in Live
+  Out: 55–70%  ·  Vocals: 0%  ·  macOS output = UMC404HD
 
 ───────────────────────────────────────────────────────────────
-Verify
+Alternate: full Live mix (higher latency)
 ───────────────────────────────────────────────────────────────
-  KAROL_AUDIO_MODE=umc-pa scripts/karol-audio-verify.sh
+  scripts/karol-show-ready.sh --live-mix
+  Then: Input = Karol Live Mic, Output = UMC, Buffer 256–512
+  sudo python3 scripts/karol-fix-plist-aggregate.py   # strip UMC outs
 
-See docs/SHOW-READY.md for full methodology.
+See docs/SHOW-READY.md

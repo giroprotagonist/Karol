@@ -87,6 +87,22 @@ class AutotunaPreset:
 
 
 PRESETS: dict[str, AutotunaPreset] = {
+    "karaoke": AutotunaPreset(
+        id="karaoke",
+        title="Karol Karaoke",
+        artist="General",
+        tempo=0.0,  # 0 = preserve Live's current tempo
+        tonic="C",
+        pattern=PATTERN_UI_1,
+        scale_on=frozenset(NOTES_TOP_TO_BOTTOM),  # chromatic — any key
+        amount=78.0,
+        quality=0.0,  # basic = lowest live tracking latency
+        gain_db=3.0,
+        sibilance=100.0,
+        input_threshold=-6.0,
+        dry_wet=100.0,
+        manual_scale_hint="All notes ON (chromatic — any karaoke key)",
+    ),
     "charli": AutotunaPreset(
         id="charli",
         title="Von Dutch",
@@ -182,7 +198,7 @@ def find_autotuna_device(osc: OscClient, track: int | None = None) -> tuple[int,
                 continue
             name = str(name_r[0][1][2])
             lower = name.lower()
-            if any(k in lower for k in ("autotuna", "von dutch", "believe", "one more")):
+            if any(k in lower for k in ("autotuna", "von dutch", "believe", "one more", "karol karaoke")):
                 return t, di, name
             np_r = osc.query("/live/device/get/num_parameters", t, di)
             if np_r and int(np_r[0][1][2]) >= 23:
@@ -269,9 +285,13 @@ def apply_preset(
         else:
             report["set_ok"].append(label)
 
-    if not dry_run:
+    if not dry_run and preset.tempo and preset.tempo > 0:
         osc.send("/live/song/set/tempo", preset.tempo, wait=0.2)
-    report["set_ok"].append(f"Tempo {preset.tempo} BPM")
+        report["set_ok"].append(f"Tempo {preset.tempo} BPM")
+    else:
+        tempo_r = osc.query("/live/song/get/tempo")
+        cur = float(tempo_r[0][1][0]) if tempo_r else None
+        report["set_ok"].append(f"Tempo preserved ({cur} BPM)" if cur else "Tempo preserved")
 
     if not dry_run:
         osc.send("/live/track/set/current_monitoring_state", track, 1, wait=0.12)
@@ -285,12 +305,14 @@ def apply_preset(
     time.sleep(0.2 if not dry_run else 0)
     do_set(f"Amount {preset.amount:.0f}%", P_AMOUNT, preset.amount)
     do_set(f"Dry/Wet {preset.dry_wet:.0f}%", P_DRY_WET, preset.dry_wet)
-    do_set("Quality best", P_QUALITY, preset.quality)
+    qlabel = {0.0: "basic", 1.0: "good", 2.0: "better", 3.0: "best"}.get(preset.quality, str(preset.quality))
+    do_set(f"Quality {qlabel}", P_QUALITY, preset.quality)
     do_set(f"Gain +{preset.gain_db:.0f} dB", P_GAIN, preset.gain_db)
     do_set(f"Sibilance {preset.sibilance:.0f}", P_SIBILANCE, preset.sibilance)
     do_set(f"Input threshold {preset.input_threshold:.0f} dB", P_INPUT_THRESHOLD, preset.input_threshold)
     do_set("Correction 0 ct", P_CORRECTION, 0.0)
-    do_set("Latency on", P_LATENCY, 1.0)
+    # Off = lower monitor delay (karaoke); On = better pitch look-ahead
+    do_set("Latency off (low monitor delay)", P_LATENCY, 0.0)
 
     note_results: dict[str, float] = {}
     for i, note in enumerate(NOTES_TOP_TO_BOTTOM):

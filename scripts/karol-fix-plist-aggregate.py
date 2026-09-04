@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Fix Karol Live Mic aggregate in SystemSettings.plist (UMC/Shure drift ON, mic outs removed)."""
+"""Fix Karol Live Mic aggregate in SystemSettings.plist.
+
+umc-pa (default): UMC is clock master (lowest mic latency), BlackHole drift ON,
+UMC/Shure outputs stripped (channels-out → 0) so Live can output to UMC directly.
+
+Env:
+  KAROL_AGG_CLOCK=blackhole  — old TV path: BlackHole clock, mic device drift ON
+"""
 import datetime
 import os
 import plistlib
@@ -14,6 +21,8 @@ AGG_KEYS = [
     "MetaDevice.~:AMS2_Aggregate:0",
 ]
 AGG_NAMES = {"Karol Live Mic", "Karol Mic Ch1", "Aggregate Device"}
+# UMC clock = lowest mic latency for umc-pa; blackhole clock for live-tv @ 44100
+CLOCK = os.environ.get("KAROL_AGG_CLOCK", "umc").strip().lower()
 
 
 def fix_meta(meta: dict) -> bool:
@@ -26,17 +35,30 @@ def fix_meta(meta: dict) -> bool:
                 sub["channels-out"] = 0
                 changed = True
                 print(f"  {name}: channels-out → 0")
-            if sub.get("drift", 0) != 1:
-                sub["drift"] = 1
-                changed = True
-                print(f"  {name}: drift correction → ON")
+            if CLOCK == "blackhole":
+                if sub.get("drift", 0) != 1:
+                    sub["drift"] = 1
+                    changed = True
+                    print(f"  {name}: drift correction → ON")
+            else:
+                # UMC/Shure is clock master
+                if sub.get("drift", 0) != 0:
+                    sub["drift"] = 0
+                    changed = True
+                    print(f"  {name}: drift correction → OFF (clock master)")
         if "Offline" in name:
             print(f"  {name}: remove stale Offline Device in Audio MIDI Setup")
         if "BlackHole" in name:
-            if sub.get("drift", 0) != 0:
-                sub["drift"] = 0
-                changed = True
-                print(f"  {name}: drift correction → OFF (clock master)")
+            if CLOCK == "blackhole":
+                if sub.get("drift", 0) != 0:
+                    sub["drift"] = 0
+                    changed = True
+                    print(f"  {name}: drift correction → OFF (clock master)")
+            else:
+                if sub.get("drift", 0) != 1:
+                    sub["drift"] = 1
+                    changed = True
+                    print(f"  {name}: drift correction → ON (follow UMC clock)")
     return changed
 
 
@@ -53,7 +75,7 @@ def main() -> int:
         meta = data.get(key)
         if not meta or meta.get("name") not in AGG_NAMES:
             continue
-        print(f"Fixing {meta.get('name')} ({key}):")
+        print(f"Fixing {meta.get('name')} ({key}) [clock={CLOCK}]:")
         if fix_meta(meta):
             any_changed = True
         else:

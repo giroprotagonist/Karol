@@ -121,9 +121,9 @@ input,select{font-family:inherit}
 .nm-row .nm-go:disabled{opacity:0.5;cursor:default}
 
 /* Now playing bar */
-#now-playing-bar{background:linear-gradient(135deg,var(--surface),#1a1a30);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;gap:16px}
-#now-playing-bar .np-info{flex:1}
-#now-playing-bar .np-title{font-size:16px;font-weight:700}
+#now-playing-bar{background:linear-gradient(135deg,var(--surface),#1a1a30);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+#now-playing-bar .np-info{flex:1;min-width:0}
+#now-playing-bar .np-title{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #now-playing-bar .np-singer{font-size:12px;color:var(--textDim);margin-top:2px}
 #now-playing-bar .np-time{font-size:11px;color:var(--textDim);margin-top:4px;display:flex;gap:8px}
 #now-playing-bar .np-progress{width:100%;height:6px;background:var(--border);border-radius:3px;margin-top:6px;position:relative;cursor:pointer}
@@ -151,14 +151,45 @@ input,select{font-family:inherit}
 #interstitial-settings label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap}
 #interstitial-settings label span{color:var(--gold)}
 #bs-ms-slider{width:140px;accent-color:var(--accent);cursor:pointer}
-#volume-settings{display:flex;flex-direction:column;gap:4px;min-width:130px;padding:0 4px}
-#volume-settings label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap}
-#volume-settings label span{color:var(--accent)}
-#vocal-mix-settings{display:flex;flex-direction:column;gap:4px;min-width:110px;padding:0 4px}
-#vocal-mix-settings label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap}
-#vocal-mix-settings label span{color:var(--accent)}
+/* Mixer tab — full-page Music / Vocals deck */
+#mixer-panel{padding:20px 24px 16px;gap:16px;background:var(--bg);overflow:auto}
+.mixer-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;flex-shrink:0}
+.mixer-title{margin:0;font-size:22px;font-weight:800;letter-spacing:0.02em;color:var(--text)}
+.mixer-sub{margin:6px 0 0;font-size:12px;line-height:1.45;color:var(--textDim);max-width:560px}
+.mixer-midi-hint{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,0.35);font-size:11px;color:var(--textDim)}
+.mixer-midi-hint span{font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent)}
+.mixer-midi-hint strong{color:var(--text);font-weight:700}
+.mixer-footer{flex-shrink:0;font-size:11px;color:var(--textDim);padding-top:4px}
+#karol-mixer-strip.mixer-deck,#karol-mixer-strip{display:flex;gap:20px;align-items:stretch;justify-content:center;flex:1;min-height:0;padding:20px;background:rgba(0,0,0,0.4);border:1px solid var(--border);border-radius:12px}
+.km-chan{display:flex;flex-direction:column;gap:12px;flex:1 1 280px;max-width:420px;min-width:240px;padding:14px 16px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px}
+.km-chan-head{display:flex;align-items:center;gap:10px}
+.km-chan-name{font-size:14px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:var(--text)}
+.km-chan-cc{font-size:10px;font-weight:700;letter-spacing:0.04em;color:var(--textDim);margin-right:auto}
+.km-chan-body{display:flex;align-items:stretch;gap:16px;flex:1;min-height:220px}
+.km-meters{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px}
+.km-meter{position:relative;width:28px;height:100%;min-height:180px;background:rgba(255,255,255,0.12);border-radius:4px;overflow:hidden;border:1px solid rgba(255,255,255,0.15)}
+.km-fill{position:absolute;left:0;right:0;bottom:0;height:0%;background:linear-gradient(to top,#22c55e 0%,#eab308 55%,#ef4444 88%);transition:height 50ms linear;min-height:0}
+.km-hold{position:absolute;left:0;right:0;height:2px;background:#fff;opacity:0.9;bottom:0;pointer-events:none}
+.km-clip{width:12px;height:12px;border-radius:50%;background:#333;border:1px solid #555;flex-shrink:0}
+.km-clip.on{background:#ef4444;box-shadow:0 0 8px #ef4444;border-color:#fca5a5}
+.km-eq{display:flex;flex-direction:column;gap:6px;flex:1;min-width:90px;justify-content:center}
+.km-eq label{font-size:11px;color:var(--text);display:flex;justify-content:space-between;font-weight:600}
+.km-eq label span{color:var(--accent);font-variant-numeric:tabular-nums}
+.km-eq input[type=range]{width:100%;height:16px;accent-color:var(--accent);cursor:pointer}
+#volume-settings,#vocal-mix-settings,.km-fader-wrap{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:8px;min-width:56px;padding:0 4px}
+#volume-settings label,#vocal-mix-settings label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);font-weight:700;white-space:nowrap;text-align:center}
+#volume-settings label span,#vocal-mix-settings label span{color:var(--accent)}
 #vocal-mix-settings input:disabled{opacity:0.35;cursor:not-allowed}
-#vol-slider{width:130px;accent-color:var(--accent);cursor:pointer}
+#vol-slider,#vocal-mix-slider,.km-fader{
+  writing-mode:vertical-lr;direction:rtl;-webkit-appearance:slider-vertical;appearance:slider-vertical;
+  width:28px;height:180px;max-width:none;accent-color:var(--accent);cursor:pointer;padding:0;
+}
+@media (max-width:820px){
+  .km-chan-body{flex-wrap:wrap;min-height:0}
+  .km-meter{min-height:140px;height:140px}
+  #vol-slider,#vocal-mix-slider,.km-fader{height:140px}
+}
+.np-transport{display:flex;align-items:center;gap:8px;flex-shrink:0}
 
 /* Transport buttons */
 .transport-btn{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;transition:all 0.15s}
@@ -180,6 +211,54 @@ input,select{font-family:inherit}
 .np-status.gap{background:rgba(139,92,246,0.22);color:#c4b5fd}
 .np-status.holding{background:rgba(249,115,22,0.28);color:#fdba74;border:1px solid rgba(249,115,22,0.45)}
 .transport-hint{font-size:9px;color:var(--textDim);letter-spacing:0.3px;line-height:1.25;max-width:110px;text-align:center}
+
+/* Gap / interstitial DJ controls — Show tab chrome (audience player stays clean) */
+#gap-dj-row{
+  display:none;align-items:center;flex-wrap:wrap;gap:8px 10px;
+  padding:8px 20px;border-bottom:1px solid var(--border);
+  background:linear-gradient(90deg,rgba(139,92,246,0.12),rgba(18,18,36,0.95) 40%);
+}
+#gap-dj-row.visible{display:flex}
+#gap-dj-row .gap-dj-label{
+  font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;
+  color:var(--accent);flex-shrink:0;
+}
+#gap-dj-row .gap-dj-spin{
+  font-size:11px;color:var(--textDim);min-width:0;flex:1 1 140px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#gap-dj-row .gap-dj-spin strong{color:var(--gold);font-weight:700}
+#gap-dj-row .gap-dj-transport,
+#gap-dj-row .gap-dj-actions,
+#gap-dj-row .gap-dj-file{
+  display:flex;align-items:center;gap:4px;flex-shrink:0;flex-wrap:wrap;
+}
+#gap-dj-row .gap-dj-btn{
+  appearance:none;cursor:pointer;border:1px solid var(--border);
+  background:var(--bg2,#16162a);color:var(--text);
+  font-size:11px;font-weight:700;padding:6px 10px;border-radius:6px;line-height:1.1;
+  transition:background 0.15s,border-color 0.15s,color 0.15s;
+  white-space:nowrap;
+}
+#gap-dj-row .gap-dj-btn:hover{background:#2a2a44;border-color:rgba(139,92,246,0.55)}
+#gap-dj-row .gap-dj-btn:disabled{opacity:0.45;cursor:wait}
+#gap-dj-row .gap-dj-btn.danger{border-color:rgba(248,113,113,0.4);color:#fecaca}
+#gap-dj-row .gap-dj-btn.danger:hover{background:rgba(248,113,113,0.18);border-color:rgba(248,113,113,0.7)}
+#gap-dj-row .gap-dj-btn.warn{border-color:rgba(240,192,64,0.4);color:#fde68a}
+#gap-dj-row .gap-dj-btn.warn:hover{background:rgba(240,192,64,0.15);border-color:rgba(240,192,64,0.7)}
+#gap-dj-row .gap-dj-file-label{
+  font-size:9px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--textDim);
+}
+#gap-dj-row .gap-dj-file-btn.active{
+  background:rgba(139,92,246,0.35);border-color:rgba(139,92,246,0.75);color:#fff;
+}
+#gap-dj-row .gap-dj-status{
+  font-size:10px;color:var(--gold);min-height:1em;flex:1 1 100%;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#gap-dj-row .gap-dj-divider{
+  width:1px;height:22px;background:var(--border);flex-shrink:0;
+}
 #show-mode-pill{font-size:10px;font-weight:800;letter-spacing:1px;padding:4px 8px;border-radius:4px;text-transform:uppercase;flex-shrink:0}
 #show-mode-pill.kj{background:rgba(139,92,246,0.25);color:#c4b5fd}
 #show-mode-pill.dj{background:rgba(240,192,64,0.22);color:var(--gold)}
@@ -203,7 +282,9 @@ input,select{font-family:inherit}
 
 /* Main area (Show tab) */
 #main{background:var(--bg)}
-#queue-header{padding:14px 20px;border-bottom:1px solid var(--border);font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:space-between}
+#queue-header{padding:14px 20px;border-bottom:1px solid var(--border);font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+#queue-header .queue-header-title{display:inline-flex;align-items:baseline;flex-wrap:wrap;gap:0 4px;min-width:0;flex:1 1 auto}
+#queue-header .queue-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;margin-left:auto}
 #queue-header button{font-size:11px;padding:4px 10px;border-radius:4px;background:rgba(239,68,68,0.15);color:var(--danger);font-weight:600}
 #queue-header .shuffle-btn{background:rgba(139,92,246,0.15);color:var(--accent)}
 #queue-header .shuffle-btn:hover{background:rgba(139,92,246,0.28)}
@@ -213,8 +294,9 @@ input,select{font-family:inherit}
 .queue-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;margin-bottom:4px;background:var(--surface);border:1px solid transparent;transition:all 0.15s;cursor:pointer}
 .queue-item.active{border-color:var(--accent);background:rgba(139,92,246,0.08)}
 .queue-item .q-num{font-size:11px;color:var(--textDim);font-weight:700;min-width:24px}
-.queue-item .q-info{flex:1}
-.queue-item .q-title{font-size:13px;font-weight:600}
+.queue-item .q-info{flex:1;min-width:0}
+.queue-item .q-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.queue-item .q-actions{display:flex;align-items:center;gap:4px;flex-shrink:0;flex-wrap:wrap}
 .queue-item .q-singer{font-size:11px;color:var(--textDim);margin-top:1px}
 .queue-item .q-meta{display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap}
 .q-lyric-badge{font-size:9px;font-weight:700;letter-spacing:0.4px;padding:2px 6px;border-radius:4px;text-transform:uppercase;white-space:nowrap}
@@ -263,6 +345,75 @@ input,select{font-family:inherit}
 #filter-bar .filter-tab[data-filter="custom"].active .tab-count{background:rgba(236,72,153,0.35);color:#f9a8d4}
 #filter-bar .filter-tab[data-filter="musicvideo"] .tab-count{background:rgba(240,192,64,0.18);color:var(--gold)}
 #filter-bar .filter-tab[data-filter="musicvideo"].active .tab-count{background:rgba(240,192,64,0.35);color:var(--gold)}
+#filter-bar .filter-tab[data-filter="ytsearch"]{flex:0.85}
+#filter-bar .filter-tab[data-filter="ytsearch"].active{background:rgba(255,0,0,0.14);border-color:#ff5c5c;color:#ff8a8a}
+#filter-bar .filter-tab[data-filter="ytsearch"] .tab-count{background:rgba(255,0,0,0.18);color:#ff8a8a}
+#filter-bar .filter-tab[data-filter="ytsearch"].active .tab-count{background:rgba(255,0,0,0.28);color:#ffb4b4}
+.lib-btn.add-mv{background:rgba(240,192,64,0.22);color:var(--gold)}
+.lib-btn.add-mv:hover{background:rgba(240,192,64,0.4);color:#fff}
+.lib-btn.karaokify{background:rgba(236,72,153,0.18);color:#f9a8d4}
+.lib-btn.karaokify:hover{background:rgba(236,72,153,0.35);color:#fff}
+.lib-badge.in-lib{background:rgba(16,185,129,0.18);color:#34d399;font-size:10px;font-weight:600;padding:3px 7px;border-radius:4px}
+.yt-search-hint{color:var(--textDim);text-align:center;padding:40px 24px;font-size:13px;line-height:1.5}
+.yt-search-hint strong{color:var(--text);font-weight:600}
+.yt-dur{color:var(--textDim);font-size:11px;min-width:42px;text-align:right}
+.yt-view-toggle{display:none;gap:4px;padding:0 16px 6px;align-items:center}
+.yt-view-toggle.visible{display:flex}
+.yt-view-toggle .yt-view-label{font-size:10px;color:var(--textDim);margin-right:4px}
+.yt-view-toggle button{padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:rgba(30,30,56,0.45);color:var(--textDim);font-size:10px;font-weight:600;cursor:pointer}
+.yt-view-toggle button.active{background:rgba(255,0,0,0.16);border-color:#ff5c5c;color:#ff8a8a}
+#library-list.yt-grid-mode .lib-cols{display:none}
+.yt-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(168px,1fr));
+  gap:12px;
+  padding:10px 14px 18px;
+}
+.yt-card{
+  background:rgba(30,30,56,0.55);
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+  transition:border-color .15s, transform .15s;
+}
+.yt-card:hover{border-color:rgba(255,92,92,0.45);transform:translateY(-1px)}
+.yt-card.processing{opacity:0.72}
+.yt-thumb-wrap{
+  position:relative;
+  aspect-ratio:16/9;
+  background:rgba(0,0,0,0.35);
+  overflow:hidden;
+}
+.yt-thumb-wrap img{
+  width:100%;height:100%;object-fit:cover;display:block;
+  background:#1a1a2e;
+}
+.yt-thumb-ph{
+  width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  color:var(--textDim);font-size:11px;font-weight:700;letter-spacing:.04em;
+}
+.yt-card-dur{
+  position:absolute;right:6px;bottom:6px;
+  background:rgba(0,0,0,0.78);color:#fff;font-size:10px;font-weight:700;
+  padding:2px 5px;border-radius:3px;
+}
+.yt-card-body{padding:8px 9px 10px;display:flex;flex-direction:column;gap:4px;flex:1}
+.yt-card-title{
+  font-size:12px;font-weight:600;color:var(--text);line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  min-height:2.6em;
+}
+.yt-card-channel{font-size:10px;color:var(--textDim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.yt-card-actions{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.yt-card-actions .lib-btn{flex:1;min-width:0;text-align:center;padding:5px 6px}
+.yt-list-thumb{
+  width:72px;height:40px;border-radius:4px;object-fit:cover;flex:0 0 auto;
+  background:#1a1a2e;margin-right:8px;
+}
+.lib-item.yt-list-row{display:flex;align-items:center}
 .queue-mv-btn{
   flex:0 0 auto;padding:6px 10px;border-radius:6px;
   background:rgba(240,192,64,0.14);border:1px solid rgba(240,192,64,0.4);
@@ -271,13 +422,24 @@ input,select{font-family:inherit}
 .queue-mv-btn:hover{background:rgba(240,192,64,0.28);color:#fff;border-color:var(--gold)}
 .queue-mv-btn.active{background:rgba(240,192,64,0.35);color:#111;border-color:var(--gold)}
 .queue-mv-btn:disabled{opacity:0.45;cursor:wait}
+.birthday-playlist-btn{
+  background:rgba(236,72,153,0.18);color:#fbcfe8;border:1px solid rgba(236,72,153,0.45);
+  font-size:11px;font-weight:700;padding:6px 10px;border-radius:6px;cursor:pointer;
+}
+.birthday-playlist-btn:hover{background:rgba(236,72,153,0.32);color:#fff;border-color:#ec4899}
+.birthday-playlist-btn.active{background:rgba(236,72,153,0.42);color:#fff;border-color:#f9a8d4}
+.birthday-playlist-btn:disabled{opacity:0.45;cursor:wait}
+#show-mode-pill.birthday{background:rgba(236,72,153,0.28);color:#fbcfe8}
 #queue-header .queue-mv-btn{margin-right:8px}
 #reclass-menu .rc-hint{display:block;font-size:10px;color:var(--textDim);font-weight:500;margin-top:2px;line-height:1.3}
+#reclass-menu .rc-danger{color:#f87171;border-top:1px solid var(--border);margin-top:4px;padding-top:10px}
+#reclass-menu .rc-danger:hover{background:rgba(239,68,68,0.18);color:#fecaca}
+#reclass-menu .rc-danger .rc-hint{color:rgba(248,113,113,0.75)}
 .rescan-btn{flex:0 0 auto;padding:6px 10px;border-radius:6px;background:rgba(236,72,153,0.12);border:1px solid var(--border);color:var(--textDim);font-size:10px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .rescan-btn:hover{background:rgba(236,72,153,0.25);color:var(--text);border-color:#ec4899}
 
 /* Status bar */
-#status-bar{padding:8px 20px;border-top:1px solid var(--border);display:flex;align-items:center;gap:16px;font-size:11px;color:var(--textDim)}
+#status-bar{padding:8px 20px;border-top:1px solid var(--border);display:flex;align-items:center;gap:16px;font-size:11px;color:var(--textDim);flex-wrap:wrap}
 #status-bar .stat{display:flex;align-items:center;gap:6px}
 #status-bar .dot{width:8px;height:8px;border-radius:50%}
 #status-bar .dot.online{background:var(--success)}
@@ -397,6 +559,39 @@ input,select{font-family:inherit}
 #relyric-modal .btn-cancel{background:rgba(239,68,68,0.15);color:#f87171}
 #relyric-modal .btn-cancel:hover{background:rgba(239,68,68,0.3)}
 
+#yt-add-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:2500;align-items:center;justify-content:center}
+#yt-add-modal-overlay.show{display:flex}
+#yt-add-modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;width:min(460px,92vw);max-height:85vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,0,0,0.5)}
+#yt-add-modal h2{font-size:16px;font-weight:700;margin-bottom:6px;color:var(--accent)}
+#yt-add-modal .yt-add-title{font-size:13px;color:var(--text);font-weight:600;margin-bottom:4px;line-height:1.35}
+#yt-add-modal .yt-add-channel{font-size:11px;color:var(--textDim);margin-bottom:14px}
+#yt-add-modal label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);margin:12px 0 6px}
+#yt-add-modal input[type="text"]{width:100%;padding:9px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px}
+#yt-add-modal input[type="text"]:focus{outline:none;border-color:var(--accent)}
+#yt-add-modal .yt-dest-grid{display:flex;flex-direction:column;gap:8px}
+#yt-add-modal .yt-dest{
+  display:block;width:100%;text-align:left;padding:10px 12px;border-radius:8px;
+  border:1px solid var(--border);background:rgba(30,30,56,0.5);color:var(--text);cursor:pointer;
+}
+#yt-add-modal .yt-dest:hover{border-color:var(--accent);background:rgba(139,92,246,0.12)}
+#yt-add-modal .yt-dest.active{border-color:var(--accent);background:rgba(139,92,246,0.22);box-shadow:0 0 0 1px rgba(139,92,246,0.35) inset}
+#yt-add-modal .yt-dest.active.music{border-color:var(--gold);background:rgba(240,192,64,0.16);box-shadow:0 0 0 1px rgba(240,192,64,0.35) inset}
+#yt-add-modal .yt-dest.active.custom{border-color:#ec4899;background:rgba(236,72,153,0.16);box-shadow:0 0 0 1px rgba(236,72,153,0.35) inset}
+#yt-add-modal .yt-dest .yt-dest-name{font-size:13px;font-weight:700;display:block}
+#yt-add-modal .yt-dest .yt-dest-hint{font-size:10px;color:var(--textDim);margin-top:3px;line-height:1.35;display:block}
+#yt-add-modal .yt-add-check{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:var(--text);text-transform:none;letter-spacing:0;cursor:pointer}
+#yt-add-modal .yt-add-check input{accent-color:var(--accent)}
+#yt-add-modal .modal-hint{font-size:10px;color:var(--textDim);margin-top:8px;line-height:1.4}
+#yt-add-modal .modal-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+#yt-add-modal .modal-actions button{padding:8px 18px;border-radius:6px;font-size:13px;font-weight:600}
+#yt-add-modal .btn-go{background:var(--accent);color:#fff}
+#yt-add-modal .btn-go:hover{background:#7c3aed}
+#yt-add-modal .btn-go:disabled{opacity:0.55;cursor:wait}
+#yt-add-modal .btn-cancel{background:rgba(239,68,68,0.15);color:#f87171}
+#yt-add-modal .btn-cancel:hover{background:rgba(239,68,68,0.3)}
+.lib-btn.yt-add{background:rgba(255,0,0,0.16);color:#ff8a8a}
+.lib-btn.yt-add:hover{background:rgba(255,0,0,0.3);color:#fff}
+
 /* Lyrics line editor */
 #lyric-edit-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1100;align-items:center;justify-content:center}
 #lyric-edit-overlay.show{display:flex}
@@ -413,6 +608,64 @@ input,select{font-family:inherit}
 #lyric-edit-actions button{padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600}
 #lyric-edit-actions .btn-save{background:var(--accent);color:#fff}
 #lyric-edit-actions .btn-cancel{background:rgba(239,68,68,0.15);color:#f87171}
+
+/* Half-screen layout — Karol beside a browser on the laptop display */
+@media (max-width: 1280px) {
+  #now-playing-bar{padding:10px 12px;gap:8px 10px;align-items:flex-start}
+  #now-playing-bar .np-info{flex:1 1 100%;order:1}
+  #now-playing-bar .np-title{font-size:14px}
+  #np-status,#show-mode-pill{order:2;flex-shrink:0}
+  #interstitial-settings{
+    order:3;flex:1 1 100%;min-width:0;max-width:none;
+    display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;
+  }
+  #interstitial-settings > label:first-child{grid-column:1}
+  #bs-ms-slider{grid-column:2;width:120px}
+  #interstitial-settings .gap-content-row{grid-column:1/-1}
+  #interstitial-settings .gap-mix-row{
+    grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;
+  }
+  #interstitial-settings .gap-mirror-status{grid-column:1/-1}
+  #bs-ms-slider{max-width:120px}
+  .np-transport{order:5;margin-left:auto}
+  .transport-btn{width:36px;height:36px;font-size:16px}
+  .transport-btn.hold{min-width:52px;padding:0 10px;font-size:10px}
+  .transport-hint{display:none}
+  #gap-dj-row{padding:8px 12px}
+
+  #queue-header{padding:10px 12px;font-size:13px}
+  #queue-header .queue-header-actions{width:100%;justify-content:flex-start}
+  #queue-header .queue-mv-btn,#queue-header .shuffle-btn,#queue-header button{font-size:10px;padding:5px 8px}
+
+  .queue-item{flex-wrap:wrap;align-items:flex-start;gap:6px 8px;padding:8px 10px}
+  .queue-item .q-info{flex:1 1 calc(100% - 52px)}
+  .queue-item .q-actions{
+    flex:1 1 100%;padding-left:52px;gap:4px;
+  }
+  .queue-item .q-action-btn{opacity:1;font-size:8px;padding:2px 5px}
+  .queue-item .q-remove{margin-left:auto;opacity:0.65}
+
+  #fx-bar{padding:6px 10px;gap:6px}
+  .fx-btn{font-size:11px;padding:5px 10px}
+  .fx-btn.sendit{font-size:12px;padding:6px 12px}
+
+  #status-bar{padding:8px 12px;gap:8px 12px}
+  #player-window-btn,#monitor-mode-btn{margin-left:0;font-size:10px;padding:5px 8px}
+  #phone-connect{margin-left:0;flex:1 1 100%}
+  #phone-connect img{width:56px;height:56px}
+  #phone-connect .pc-url{max-width:min(100%,280px);font-size:10px}
+
+  .lib-cols .lib-col-artist,.lib-item .lib-artist{display:none}
+  .lib-cols .lib-col-year,.lib-item .lib-year{display:none}
+  .lib-cols .lib-col-actions{width:96px}
+}
+
+@media (max-width: 820px) {
+  #interstitial-settings{grid-template-columns:1fr}
+  #bs-ms-slider{grid-column:1;width:100%;max-width:none}
+  .np-transport{flex:1 1 100%;justify-content:center;margin-left:0}
+  #queue-mode-hint{display:none}
+}
 </style>
 </head>
 <body>
@@ -422,20 +675,27 @@ input,select{font-family:inherit}
     <span class="app-brand">Karol DJ</span>
     <button type="button" class="app-tab active" data-tab="library" onclick="setAppTab('library')">Library</button>
     <button type="button" class="app-tab" data-tab="show" onclick="setAppTab('show')">Show <span class="app-tab-badge" id="tab-queue-count">0</span></button>
+    <button type="button" class="app-tab" data-tab="mixer" onclick="setAppTab('mixer')">Mixer</button>
   </nav>
   <div id="app-panels">
 <!-- Library tab -->
 <div id="sidebar" class="app-panel active" data-panel="library">
   <input id="search-box" type="text" placeholder="Search library... (4094 videos)" autofocus>
   <div id="singer-bar">
-    <input id="singer-input" type="text" placeholder="Singer name (default: Naynay)" autocomplete="off" title="Leave blank to credit Naynay as the DJ">
+    <input id="singer-input" type="text" placeholder="Singer name (default: Naynay/Karolpdx)" autocomplete="off" title="Leave blank to credit Naynay/Karolpdx as the DJ">
   </div>
   <div id="filter-bar">
     <button class="filter-tab active" data-filter="all" onclick="setLibraryFilter('all')" title="All library videos">All <span class="tab-count" id="count-all">0</span></button>
     <button class="filter-tab" data-filter="karaoke" onclick="setLibraryFilter('karaoke')" title="Standard karaoke tracks">Karaoke <span class="tab-count" id="count-karaoke">0</span></button>
     <button class="filter-tab" data-filter="custom" onclick="setLibraryFilter('custom')" title="Custom karaoke-maker tracks (your pipeline)">Custom <span class="tab-count" id="count-custom">0</span></button>
     <button class="filter-tab" data-filter="musicvideo" onclick="setLibraryFilter('musicvideo')" title="Music videos for interstitial B-roll + Music jukebox">Music Videos <span class="tab-count" id="count-music">0</span></button>
+    <button class="filter-tab" data-filter="ytsearch" onclick="setLibraryFilter('ytsearch')" title="Search YouTube and add Music Videos or Karaokify">YouTube <span class="tab-count" id="count-yt">0</span></button>
     <button class="rescan-btn" onclick="rescanLibrary()" title="Rescan library">Rescan</button>
+  </div>
+  <div id="yt-view-toggle" class="yt-view-toggle" aria-label="YouTube result layout">
+    <span class="yt-view-label">View</span>
+    <button type="button" id="yt-view-grid" class="active" onclick="setYtSearchView('grid')" title="Grid with cover art">Grid</button>
+    <button type="button" id="yt-view-list" onclick="setYtSearchView('list')" title="List view">List</button>
   </div>
   <div id="filter-legend" title="Library category chips">
     <span class="leg"><span class="chip k">K</span> Karaoke</span>
@@ -515,19 +775,35 @@ input,select{font-family:inherit}
       </div>
       <div class="gap-mirror-status" id="gap-mirror-status"></div>
     </div>
-    <div id="volume-settings" title="Karol output into BlackHole → Ableton. Keep under ~70% so Live doesn't redline.">
-      <label>Out <span id="vol-label">55%</span></label>
-      <input type="range" id="vol-slider" min="10" max="100" step="1" value="55">
-    </div>
-    <div id="vocal-mix-settings" title="Guide vocals from Demucs stem. 0% = instrumental karaoke only. Rebuild stems via Re-Lyric if disabled.">
-      <label>Vocals <span id="vocal-mix-label">0%</span></label>
-      <input type="range" id="vocal-mix-slider" min="0" max="100" step="1" value="0" disabled>
-    </div>
+    <div class="np-transport">
     <button class="transport-btn neutral" id="btn-prev" onclick="api.transport.prev()">⏮</button>
     <button class="transport-btn play" id="btn-play" onclick="togglePlay()" title="Pause/play the current song only — does not hold the Gap">▶</button>
     <button class="transport-btn hold" id="btn-hold-gap" onclick="toggleGapHold()" disabled title="Hold the between-songs Gap — B-roll keeps playing. Pause does not do this.">HOLD</button>
     <button class="transport-btn neutral" id="btn-next" onclick="api.transport.skip()">⏭</button>
     <div class="transport-hint" title="Pause = song · HOLD = gap only">Pause = song<br>HOLD = gap</div>
+    </div>
+  </div>
+
+  <div id="gap-dj-row" aria-label="Gap interstitial controls" title="Controls for the between-songs Gap / Now Spinning B-roll">
+    <span class="gap-dj-label">Gap</span>
+    <div class="gap-dj-spin" id="gap-dj-spin">Now Spinning: —</div>
+    <div class="gap-dj-transport" role="group" aria-label="Gap transport">
+      <button type="button" class="gap-dj-btn" id="gap-btn-prev" onclick="gapCtrlPrev()" title="Previous Now Spinning (or previous singer when Up Next is set)">⏮ Prev</button>
+      <button type="button" class="gap-dj-btn" id="gap-btn-restart" onclick="gapCtrlRestart()" title="Restart Now Spinning B-roll from the beginning">↺ Restart</button>
+      <button type="button" class="gap-dj-btn" id="gap-btn-skip" onclick="gapCtrlSkip()" title="Skip to next song">⏭ Skip</button>
+    </div>
+    <div class="gap-dj-actions">
+      <button type="button" class="gap-dj-btn danger" id="gap-btn-delete-spin" onclick="gapCtrlDeleteSpin()" title="Delete Now Spinning Music Video from the library">Delete spin</button>
+      <button type="button" class="gap-dj-btn warn" id="gap-btn-remove-upnext" onclick="gapCtrlRemoveUpNext()" title="Remove Up Next singer from the queue (Gap stays up)">Remove up next</button>
+    </div>
+    <span class="gap-dj-divider" aria-hidden="true"></span>
+    <div class="gap-dj-file" id="gap-dj-file" aria-label="File Now Spinning as">
+      <span class="gap-dj-file-label">File as</span>
+      <button type="button" class="gap-dj-btn gap-dj-file-btn" data-bucket="karaoke" onclick="gapCtrlFileAs('karaoke')">Karaoke</button>
+      <button type="button" class="gap-dj-btn gap-dj-file-btn" data-bucket="custom" onclick="gapCtrlFileAs('custom')">Custom</button>
+      <button type="button" class="gap-dj-btn gap-dj-file-btn active" data-bucket="music" onclick="gapCtrlFileAs('music')">Music Video</button>
+    </div>
+    <div class="gap-dj-status" id="gap-dj-status"></div>
   </div>
 
   <div id="fx-bar">
@@ -545,15 +821,17 @@ input,select{font-family:inherit}
   </div>
 
   <div id="queue-header">
-    Singer queue (<span id="queue-count">0</span>)<span id="queue-mode-hint"></span><span id="shuffle-badge" style="display:none;margin-left:8px;font-size:11px;font-weight:700;color:var(--accent)">· shuffle</span>
-    <div style="display:flex;align-items:center;gap:8px">
+    <div class="queue-header-title">
+      Singer queue (<span id="queue-count">0</span>)<span id="queue-mode-hint"></span><span id="shuffle-badge" style="display:none;margin-left:8px;font-size:11px;font-weight:700;color:var(--accent)">· shuffle</span>
+    </div>
+    <div class="queue-header-actions">
       <button class="shuffle-btn" id="btn-shuffle" onclick="toggleQueueShuffle()" title="Shuffle mode — next track is random (no repeats until the full cycle)">Shuffle</button>
       <button class="queue-mv-btn" id="btn-music-jukebox" onclick="toggleMusicJukebox()" title="Arm DJ deck from Music Videos — default when no singers are pending. Singers take over at the next Gap.">Start Music Jukebox</button>
       <button onclick="api.queue.clear().then(refreshQueue)">Clear All</button>
     </div>
   </div>
   <div id="queue-list">
-    <div style="color:var(--textDim);text-align:center;padding:40px">Singer queue is empty.<br>Add karaoke requests from the library, or start the Music jukebox for background MVs.</div>
+    <div style="color:var(--textDim);text-align:center;padding:40px">Singer queue is empty.<br>Add karaoke requests, or arm <strong>Music Jukebox</strong> for background MVs.</div>
   </div>
 
   <div id="status-bar">
@@ -571,6 +849,73 @@ input,select{font-family:inherit}
         <span class="pc-hint">Scan in browser</span>
       </div>
     </div>
+  </div>
+</div>
+<!-- Mixer tab -->
+<div id="mixer-panel" class="app-panel" data-panel="mixer">
+  <div class="mixer-header">
+    <div>
+      <h1 class="mixer-title">Karol Mono Mixer</h1>
+      <p class="mixer-sub">Music + vocal stem → EQ3 → mono → soft limit → UMC L=R · MIDI Mix ch8 = Music · ch7 = Vocals</p>
+    </div>
+    <div class="mixer-midi-hint" title="Akai MIDI Mix factory map">
+      <span>MIDI Mix</span>
+      <strong>Ch8</strong> Music Out + Hi/Mid/Lo
+      <strong>Ch7</strong> Vocals + Hi/Mid/Lo
+    </div>
+  </div>
+  <div id="karol-mixer-strip" class="mixer-deck" title="Music = MIDI Mix ch8 · Vocals = ch7 · knobs = EQ3">
+    <div class="km-chan" data-chan="music">
+      <div class="km-chan-head">
+        <span class="km-chan-name">Music</span>
+        <span class="km-chan-cc">MIDI ch8</span>
+        <div class="km-clip" id="km-music-clip" title="Clip"></div>
+      </div>
+      <div class="km-chan-body">
+        <div class="km-meters">
+          <div class="km-meter"><div class="km-fill" id="km-music-fill"></div><div class="km-hold" id="km-music-hold"></div></div>
+        </div>
+        <div class="km-eq">
+          <label>Hi <span id="km-music-hi">0</span></label>
+          <input type="range" id="km-music-eq-hi" min="-12" max="12" step="0.5" value="0">
+          <label>Mid <span id="km-music-mid">0</span></label>
+          <input type="range" id="km-music-eq-mid" min="-12" max="12" step="0.5" value="0">
+          <label>Lo <span id="km-music-lo">0</span></label>
+          <input type="range" id="km-music-eq-lo" min="-12" max="12" step="0.5" value="0">
+        </div>
+        <div id="volume-settings" class="km-fader-wrap" title="Karol Music / Out (MIDI Mix ch8 fader). Square taper + master trim — start ~50–70%, push toward 100% only if the PA needs it.">
+          <label>Out <span id="vol-label">55%</span></label>
+          <input type="range" id="vol-slider" class="km-fader" min="0" max="100" step="1" value="55" orient="vertical">
+        </div>
+      </div>
+    </div>
+    <div class="km-chan" data-chan="vocal">
+      <div class="km-chan-head">
+        <span class="km-chan-name">Vocals</span>
+        <span class="km-chan-cc">MIDI ch7</span>
+        <div class="km-clip" id="km-vocal-clip" title="Clip"></div>
+      </div>
+      <div class="km-chan-body">
+        <div class="km-meters">
+          <div class="km-meter"><div class="km-fill" id="km-vocal-fill"></div><div class="km-hold" id="km-vocal-hold"></div></div>
+        </div>
+        <div class="km-eq">
+          <label>Hi <span id="km-vocal-hi">0</span></label>
+          <input type="range" id="km-vocal-eq-hi" min="-12" max="12" step="0.5" value="0">
+          <label>Mid <span id="km-vocal-mid">0</span></label>
+          <input type="range" id="km-vocal-eq-mid" min="-12" max="12" step="0.5" value="0">
+          <label>Lo <span id="km-vocal-lo">0</span></label>
+          <input type="range" id="km-vocal-eq-lo" min="-12" max="12" step="0.5" value="0">
+        </div>
+        <div id="vocal-mix-settings" class="km-fader-wrap" title="Guide vocals stem (MIDI Mix ch7 fader). 0% = instrumental only.">
+          <label>Vocals <span id="vocal-mix-label">0%</span></label>
+          <input type="range" id="vocal-mix-slider" class="km-fader" min="0" max="100" step="1" value="0" disabled>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mixer-footer">
+    Soft ramps on Out / Vocals · square taper + ~−11 dB master trim · EQ ±12 dB · soft-limited to UMC
   </div>
 </div>
   </div>
@@ -592,19 +937,27 @@ let musicVideoIds = new Set();   // Base ids of regular (non-karaoke) music vide
 let musicVideoMeta = {};         // id -> {title, artist, year} from tags.json for remote-only rows
 let tagMetaById = {};            // id -> {tag, source} live from tags.json (wins over stale scan rows)
 let ratingById = {};             // videoId (base + -karaoke) → 1–5 star rating
-let libraryFilter = 'all';       // 'all' | 'karaoke' | 'custom' | 'musicvideo'
+let libraryFilter = 'all';       // 'all' | 'karaoke' | 'custom' | 'musicvideo' | 'ytsearch'
 let librarySort = { key: 'title', dir: 1 }; // 1 = A→Z / old→new, -1 = reverse
 let queue = [];
 let currentIndex = -1;
 let nowPlaying = null;
 let progressInterval = null;
 let processingJobs = {}; // Track active karaoke pipeline jobs
+let ytSearchResults = [];
+let ytSearchStatus = 'idle'; // idle | loading | error | empty | ready
+let ytSearchError = '';
+let ytSearchQuery = '';
+let ytSearchTimer = null;
+let ytSearchGen = 0;
+let ytSearchView = 'grid'; // grid | list
+const YT_SEARCH_LIMIT = 50;
 
-// ── App tabs (Library | Show) ──
+// ── App tabs (Library | Show | Mixer) ──
 var activeAppTab = localStorage.getItem('karol-controller-tab') || 'library';
 
 function setAppTab(tab) {
-  if (tab !== 'library' && tab !== 'show') return;
+  if (tab !== 'library' && tab !== 'show' && tab !== 'mixer') return;
   activeAppTab = tab;
   localStorage.setItem('karol-controller-tab', tab);
   document.querySelectorAll('#app-tabs .app-tab').forEach(function(btn) {
@@ -617,11 +970,13 @@ function setAppTab(tab) {
 
 setAppTab(activeAppTab);
 
-const DEFAULT_DJ_NAME = 'Naynay';
+const DEFAULT_DJ_NAME = 'Naynay/Karolpdx';
 
 function displaySingerName(raw) {
   var s = String(raw || '').trim();
-  if (!s || /^dj$/i.test(s)) return DEFAULT_DJ_NAME;
+  // Only fill blanks / legacy "DJ" / retired Xtina — never overwrite a real singer name
+  // (including someone literally named Naynay).
+  if (!s || /^dj$/i.test(s) || /^xtina$/i.test(s)) return DEFAULT_DJ_NAME;
   return s;
 }
 
@@ -725,6 +1080,7 @@ function updateFilterTabCounts() {
   var elK = document.getElementById('count-karaoke');
   var elC = document.getElementById('count-custom');
   var elM = document.getElementById('count-music');
+  var elYt = document.getElementById('count-yt');
   if (elAll) elAll.textContent = String(allVideos.length || 0);
   if (elK) {
     var kCount = 0;
@@ -735,6 +1091,7 @@ function updateFilterTabCounts() {
   }
   if (elC) elC.textContent = String(customUniqueCount || 0);
   if (elM) elM.textContent = String(musicVideoIds.size || 0);
+  if (elYt) elYt.textContent = String(ytSearchResults.length || 0);
   var libCount = document.getElementById('lib-count');
   if (libCount) {
     libCount.textContent = allVideos.length
@@ -894,7 +1251,7 @@ function renderLibraryStatus(scan) {
   }
 
   var search = document.getElementById('search-box');
-  if (search && catalog) {
+  if (search && catalog && libraryFilter !== 'ytsearch') {
     search.placeholder = 'Search library... (' + fmtNum(catalog) + ' videos)';
   }
   var libCount = document.getElementById('lib-count');
@@ -988,13 +1345,40 @@ async function init() {
   }
 
   await refreshQueue();
+  // Disarm retired birthday/Xtina deck if still armed from a prior session
+  try {
+    if (jukeboxState && jukeboxState.active && jukeboxState.kind === 'birthday') {
+      if (api.queue && api.queue.stopBirthdayPlaylist) await api.queue.stopBirthdayPlaylist();
+      else if (api.queue && api.queue.stopJukebox) await api.queue.stopJukebox();
+      jukeboxState = null;
+      await refreshQueue();
+    }
+  } catch (e) { console.warn('auto-stop birthday playlist:', e); }
   startPolling();
 
   // Listen for download/karaoke progress
+  var _ytPrevJobSnap = '';
   api.on('download-progress', function(jobs) {
     processingJobs = jobs || {};
     applyFilterAndRender();
     renderProcessingPanel();
+    // When a job finishes, refresh tag membership so YouTube "In library" updates
+    try {
+      var doneIds = [];
+      for (var id in processingJobs) {
+        if (processingJobs[id] && processingJobs[id].status === 'done') doneIds.push(id);
+      }
+      var snap = doneIds.sort().join(',');
+      if (snap && snap !== _ytPrevJobSnap) {
+        _ytPrevJobSnap = snap;
+        refreshCustomVideoIds().then(function() {
+          if (libraryFilter === 'ytsearch') renderYtSearchResults();
+          else applyFilterAndRender();
+        }).catch(function() {});
+        // Light library list refresh so new MVs appear under Music Videos
+        refreshLibraryFromScan();
+      }
+    } catch (_) {}
   });
 
   // Render any existing processing jobs on startup
@@ -1234,7 +1618,7 @@ function renderLibrary(videos) {
       actionsHtml = '<div class="lib-actions">' +
         '<button class="lib-btn queue" title="Add to Singer queue" onclick="queueVideo(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">+ Queue</button>' +
         '<button class="lib-btn playnow" title="Play now" onclick="playNow(\'' + v.videoId + '\',\'' + escapeJs(v.title||'') + '\')">Play</button>' +
-        '<button class="lib-btn reclass" title="Recategorize: Karaoke / Custom / Music Video" onclick="event.stopPropagation();openReclassMenu(event,\'' + v.videoId + '\')">&#8942;</button>' +
+        '<button class="lib-btn reclass" title="Move or delete: Karaoke / Custom / Music Video / Delete" onclick="event.stopPropagation();openReclassMenu(event,\'' + v.videoId + '\')">&#8942;</button>' +
       '</div>';
     }
 
@@ -1266,6 +1650,11 @@ function renderLibrary(videos) {
 }
 
 function applyFilterAndRender() {
+  if (libraryFilter === 'ytsearch') {
+    renderYtSearchResults();
+    return;
+  }
+
   var q = (document.getElementById('search-box').value || '').toLowerCase();
   var videos = allVideos;
 
@@ -1312,6 +1701,423 @@ function applyFilterAndRender() {
   document.getElementById('search-box').placeholder = 'Search ' + label + '...';
   updateFilterTabCounts();
 }
+
+function formatYtDuration(sec) {
+  if (sec == null || !Number.isFinite(Number(sec))) return '';
+  var s = Math.max(0, Math.floor(Number(sec)));
+  var m = Math.floor(s / 60);
+  var r = s % 60;
+  return m + ':' + (r < 10 ? '0' : '') + r;
+}
+
+function isVideoInLibrary(videoId) {
+  if (!videoId) return false;
+  if (musicVideoIds.has(videoId) || karaokeVideoIds.has(videoId) || customVideoIds.has(videoId)) return true;
+  if (customVideoIds.has(videoId + '-karaoke') || karaokeVideoIds.has(videoId + '-karaoke')) return true;
+  for (var i = 0; i < allVideos.length; i++) {
+    var id = allVideos[i] && allVideos[i].videoId;
+    if (id === videoId || id === videoId + '-karaoke') return true;
+  }
+  return false;
+}
+
+function scheduleYouTubeSearch(raw) {
+  if (ytSearchTimer) clearTimeout(ytSearchTimer);
+  var q = String(raw || '').trim();
+  if (!q) {
+    ytSearchResults = [];
+    ytSearchStatus = 'idle';
+    ytSearchError = '';
+    ytSearchQuery = '';
+    if (libraryFilter === 'ytsearch') renderYtSearchResults();
+    return;
+  }
+  ytSearchTimer = setTimeout(function() {
+    ytSearchTimer = null;
+    runYouTubeSearch(q);
+  }, 400);
+}
+
+async function runYouTubeSearch(raw) {
+  var q = String(raw || '').trim();
+  if (!q) {
+    ytSearchResults = [];
+    ytSearchStatus = 'idle';
+    ytSearchError = '';
+    ytSearchQuery = '';
+    if (libraryFilter === 'ytsearch') renderYtSearchResults();
+    return;
+  }
+  if (!api.youtube || !api.youtube.search) {
+    ytSearchStatus = 'error';
+    ytSearchError = 'YouTube search API unavailable — restart Karol';
+    if (libraryFilter === 'ytsearch') renderYtSearchResults();
+    return;
+  }
+  var gen = ++ytSearchGen;
+  ytSearchQuery = q;
+  ytSearchStatus = 'loading';
+  ytSearchError = '';
+  if (libraryFilter === 'ytsearch') renderYtSearchResults();
+  try {
+    var res = await api.youtube.search(q, { limit: YT_SEARCH_LIMIT });
+    if (gen !== ytSearchGen) return;
+    if (!res || !res.ok) {
+      ytSearchResults = [];
+      ytSearchStatus = 'error';
+      ytSearchError = (res && res.error) || 'Search failed';
+    } else {
+      ytSearchResults = res.results || [];
+      ytSearchStatus = ytSearchResults.length ? 'ready' : 'empty';
+      ytSearchError = '';
+    }
+  } catch (e) {
+    if (gen !== ytSearchGen) return;
+    ytSearchResults = [];
+    ytSearchStatus = 'error';
+    ytSearchError = e && e.message ? e.message : String(e);
+  }
+  if (libraryFilter === 'ytsearch') renderYtSearchResults();
+}
+
+function setYtSearchView(mode) {
+  ytSearchView = mode === 'list' ? 'list' : 'grid';
+  var g = document.getElementById('yt-view-grid');
+  var l = document.getElementById('yt-view-list');
+  if (g) g.classList.toggle('active', ytSearchView === 'grid');
+  if (l) l.classList.toggle('active', ytSearchView === 'list');
+  if (libraryFilter === 'ytsearch') renderYtSearchResults();
+}
+
+function updateYtViewToggleVisibility() {
+  var el = document.getElementById('yt-view-toggle');
+  if (!el) return;
+  el.classList.toggle('visible', libraryFilter === 'ytsearch');
+}
+
+function ytAddButtonHtml(vid, title, channel, again) {
+  return '<button type="button" class="lib-btn yt-add"'
+    + ' data-vid="' + escapeAttr(vid) + '"'
+    + ' data-title="' + escapeAttr(title || '') + '"'
+    + ' data-channel="' + escapeAttr(channel || '') + '"'
+    + ' title="' + (again
+      ? 'Add again to Karaoke / Custom / Music Video'
+      : 'Add to Karaoke, Custom, or Music Videos') + '">Add…</button>';
+}
+
+function ytResultActionsHtml(r, vid, inLib, isProcessing, job) {
+  if (isProcessing) {
+    var stage = job.status === 'downloading' ? 'Downloading…' : 'Processing…';
+    return '<span class="lib-badge processing-badge">' + stage + '</span>';
+  }
+  if (inLib) {
+    return '<div class="lib-actions yt-card-actions">' +
+      '<span class="lib-badge in-lib" title="Already in library">In library</span>' +
+      '<button type="button" class="lib-btn queue" data-action="yt-queue" data-vid="' + escapeAttr(vid) + '" data-title="' + escapeAttr(r.title || '') + '" title="Add to Singer queue">+ Queue</button>' +
+      '<button type="button" class="lib-btn playnow" data-action="yt-play" data-vid="' + escapeAttr(vid) + '" data-title="' + escapeAttr(r.title || '') + '" title="Play now">Play</button>' +
+      ytAddButtonHtml(vid, r.title || '', r.channel || '', true) +
+    '</div>';
+  }
+  return '<div class="lib-actions yt-card-actions">' +
+    ytAddButtonHtml(vid, r.title || '', r.channel || '', false) +
+  '</div>';
+}
+
+function ytThumbUrl(r) {
+  if (r && r.thumbnail) return r.thumbnail;
+  if (r && r.id) return 'https://i.ytimg.com/vi/' + r.id + '/hqdefault.jpg';
+  return '';
+}
+
+function renderYtSearchResults() {
+  var list = document.getElementById('library-list');
+  var cols = document.getElementById('lib-cols');
+  var search = document.getElementById('search-box');
+  if (search) search.placeholder = 'Search YouTube… up to ' + YT_SEARCH_LIMIT + ' results';
+  updateYtViewToggleVisibility();
+  list.classList.toggle('yt-grid-mode', ytSearchView === 'grid' && ytSearchStatus === 'ready' && ytSearchResults.length > 0);
+
+  var html = '';
+  if (ytSearchStatus === 'loading') {
+    html = '<div class="yt-search-hint"><div class="spinner" style="display:inline-block;margin-bottom:10px"></div><br>Searching YouTube for <strong>' + escapeHtml(ytSearchQuery) + '</strong>…</div>';
+  } else if (ytSearchStatus === 'error') {
+    html = '<div class="yt-search-hint">Search failed: ' + escapeHtml(ytSearchError || 'unknown error') + '<br><span style="opacity:.7">Check cookies / network, then try again.</span></div>';
+  } else if (ytSearchStatus === 'empty') {
+    html = '<div class="yt-search-hint">No YouTube results for <strong>' + escapeHtml(ytSearchQuery) + '</strong></div>';
+  } else if (ytSearchStatus === 'idle' || !ytSearchResults.length) {
+    html = '<div class="yt-search-hint">Search YouTube and add tracks to your library.<br><span style="opacity:.7">Type a song or artist, then press Enter — up to ' + YT_SEARCH_LIMIT + ' results with cover art.</span></div>';
+  } else if (ytSearchView === 'grid') {
+    html = '<div class="yt-grid">';
+    for (var i = 0; i < ytSearchResults.length; i++) {
+      var r = ytSearchResults[i];
+      var vid = r.id || r.videoId;
+      var inLib = isVideoInLibrary(vid);
+      var job = processingJobs[vid];
+      var isProcessing = job && job.status !== 'done' && job.status !== 'error';
+      var dur = formatYtDuration(r.duration);
+      var thumb = ytThumbUrl(r);
+      var cardCls = 'yt-card' + (isProcessing ? ' processing' : '');
+      html += '<div class="' + cardCls + '">' +
+        '<div class="yt-thumb-wrap">' +
+          (thumb
+            ? '<img src="' + escapeHtml(thumb) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+              '<div class="yt-thumb-ph" style="display:none">YT</div>'
+            : '<div class="yt-thumb-ph">YT</div>') +
+          (dur ? '<span class="yt-card-dur">' + escapeHtml(dur) + '</span>' : '') +
+        '</div>' +
+        '<div class="yt-card-body">' +
+          '<div class="yt-card-title" title="' + escapeHtml(r.title || '') + '">' + escapeHtml(r.title || vid) + '</div>' +
+          '<div class="yt-card-channel">' + escapeHtml(r.channel || '') + '</div>' +
+          ytResultActionsHtml(r, vid, inLib, isProcessing, job) +
+        '</div>' +
+      '</div>';
+    }
+    html += '</div>';
+  } else {
+    for (var j = 0; j < ytSearchResults.length; j++) {
+      var row = ytSearchResults[j];
+      var id = row.id || row.videoId;
+      var has = isVideoInLibrary(id);
+      var job2 = processingJobs[id];
+      var busy = job2 && job2.status !== 'done' && job2.status !== 'error';
+      var itemClass = 'lib-item yt-list-row' + (busy ? ' processing' : '');
+      var thumb2 = ytThumbUrl(row);
+      var dur2 = formatYtDuration(row.duration);
+      html += '<div class="' + itemClass + '">' +
+        (thumb2
+          ? '<img class="yt-list-thumb" src="' + escapeHtml(thumb2) + '" alt="" loading="lazy" referrerpolicy="no-referrer">'
+          : '<span class="yt-list-thumb" style="display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:var(--textDim)">YT</span>') +
+        '<span class="lib-tag yt-tag" title="YouTube search result">YT</span>' +
+        '<span class="lib-title" title="' + escapeHtml(row.title || '') + '">' + escapeHtml(row.title || id) + '</span>' +
+        '<span class="lib-artist">' + escapeHtml(row.channel || '') + '</span>' +
+        '<span class="yt-dur">' + escapeHtml(dur2) + '</span>' +
+        ytResultActionsHtml(row, id, has, busy, job2) +
+      '</div>';
+    }
+  }
+
+  var keep = (ytSearchView === 'list' && cols) ? cols.outerHTML : '';
+  if (ytSearchView === 'grid' || ytSearchStatus !== 'ready' || !ytSearchResults.length) {
+    keep = '';
+  } else if (cols) {
+    keep = cols.outerHTML;
+  }
+  list.innerHTML = keep + html;
+  if (ytSearchView === 'list') updateSortHeaderUI();
+  updateFilterTabCounts();
+}
+
+var ytAddState = { videoId: '', title: '', channel: '', dest: 'music' };
+
+function ytAddDestHints(dest) {
+  if (dest === 'karaoke') {
+    return 'Downloads into the Karaoke catalog (as-is). Use for existing karaoke uploads.';
+  }
+  if (dest === 'custom') {
+    return 'Runs the full karaoke-maker pipeline → Custom catalog (stems + lyrics). Takes longer.';
+  }
+  return 'Downloads into Music Videos for Gap B-roll and the music jukebox.';
+}
+
+function resetYtAddConfirmButton(dest) {
+  var go = document.getElementById('yt-add-confirm');
+  if (!go) return;
+  go.disabled = false;
+  go.textContent = (dest || ytAddState.dest) === 'custom' ? 'Karaokify & Add' : 'Add';
+}
+
+function setYtAddDest(dest) {
+  if (dest !== 'music' && dest !== 'karaoke' && dest !== 'custom') return;
+  ytAddState.dest = dest;
+  var btns = document.querySelectorAll('#yt-add-modal .yt-dest');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].classList.toggle('active', btns[i].getAttribute('data-dest') === dest);
+  }
+  var hint = document.getElementById('yt-add-hint');
+  if (hint) hint.textContent = ytAddDestHints(dest);
+  resetYtAddConfirmButton(dest);
+  // Singer name matters most for karaoke queue slots
+  var q = document.getElementById('yt-add-queue');
+  if (q && (dest === 'karaoke' || dest === 'custom')) q.checked = true;
+}
+
+function openYtAddModal(videoId, title, channel) {
+  bindYtAddModalControls();
+  videoId = String(videoId || '').trim();
+  if (!videoId) {
+    console.error('YouTube Add: missing video id');
+    setRequestStatus('Cannot add — missing YouTube video id', '#ff4444');
+    return;
+  }
+  ytAddState = { videoId: videoId, title: title || '', channel: channel || '', dest: 'music' };
+  var titleEl = document.getElementById('yt-add-song-title');
+  var chEl = document.getElementById('yt-add-song-channel');
+  var singerEl = document.getElementById('yt-add-singer');
+  if (titleEl) titleEl.textContent = title || videoId;
+  if (chEl) chEl.textContent = channel || '';
+  var typed = '';
+  var a = document.getElementById('singer-input');
+  var b = document.getElementById('request-singer');
+  typed = (a && a.value.trim()) || (b && b.value.trim()) || '';
+  if (singerEl) {
+    singerEl.value = typed;
+    setTimeout(function() { singerEl.focus(); singerEl.select(); }, 30);
+  }
+  setYtAddDest('music');
+  resetYtAddConfirmButton('music');
+  var overlay = document.getElementById('yt-add-modal-overlay');
+  if (!overlay) {
+    console.error('YouTube Add: modal overlay missing from DOM');
+    setRequestStatus('Add dialog missing — restart Karol', '#ff4444');
+    return;
+  }
+  overlay.classList.add('show');
+}
+
+window.openYtAddModal = openYtAddModal;
+
+function closeYtAddModal() {
+  var overlay = document.getElementById('yt-add-modal-overlay');
+  if (overlay) overlay.classList.remove('show');
+  ytAddState = { videoId: '', title: '', channel: '', dest: 'music' };
+  resetYtAddConfirmButton('music');
+}
+
+async function confirmYtAdd() {
+  var videoId = String((ytAddState && ytAddState.videoId) || '').trim();
+  if (!videoId) {
+    setRequestStatus('Cannot add — missing YouTube video id', '#ff4444');
+    return;
+  }
+  if (!api || !api.requests || !api.requests.add) {
+    setRequestStatus('Add API unavailable — restart Karol', '#ff4444');
+    return;
+  }
+  var title = ytAddState.title || videoId;
+  var dest = ytAddState.dest || 'music';
+  var singerEl = document.getElementById('yt-add-singer');
+  var typed = (singerEl && singerEl.value.trim()) || '';
+  // Sync into the shared singer bars so Queue elsewhere uses the same name
+  var a = document.getElementById('singer-input');
+  var b = document.getElementById('request-singer');
+  if (typed) {
+    if (a) a.value = typed;
+    if (b) b.value = typed;
+  }
+  var singer = displaySingerName(typed);
+  var addQueue = !!(document.getElementById('yt-add-queue') && document.getElementById('yt-add-queue').checked);
+  var url = 'https://www.youtube.com/watch?v=' + videoId;
+  var inLib = isVideoInLibrary(videoId);
+  var confirmBtn = document.getElementById('yt-add-confirm');
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Working…'; }
+
+  function throwIfFailed(res, fallback) {
+    if (res && res.ok === false) throw new Error(res.error || fallback || 'Add failed');
+    return res;
+  }
+
+  try {
+    if (dest === 'music') {
+      if (!inLib) {
+        throwIfFailed(await api.requests.add(videoId, singer, title, url, false, 'jukebox'), 'Download failed');
+        processingJobs[videoId] = { status: 'downloading', progress: 0, label: title, karaokify: false };
+      } else {
+        throwIfFailed(await api.library.reclassify(videoId, 'music', 'manual'), 'Reclassify failed');
+      }
+    } else if (dest === 'karaoke') {
+      if (!inLib) {
+        throwIfFailed(await api.requests.add(videoId, singer, title, url, false, 'yt_karaoke'), 'Download failed');
+        processingJobs[videoId] = { status: 'downloading', progress: 0, label: title, karaokify: false };
+      } else {
+        throwIfFailed(await api.library.reclassify(videoId, 'karaoke', 'manual'), 'Reclassify failed');
+      }
+    } else {
+      // Custom karaoke-maker pipeline (always run — even if MV already exists)
+      throwIfFailed(await api.requests.add(videoId, singer, title, url, true), 'Karaoke pipeline failed');
+      processingJobs[videoId] = { status: 'downloading', progress: 0, label: title, karaokify: true };
+    }
+
+    if (addQueue) {
+      try {
+        await api.queue.add(videoId, title, singer, '');
+        refreshQueue();
+      } catch (qe) { console.error('Queue add from YouTube:', qe); }
+    }
+
+    renderProcessingPanel();
+    if (libraryFilter === 'ytsearch') renderYtSearchResults();
+    await refreshCustomVideoIds();
+
+    var destLabel = dest === 'custom' ? 'Custom Karaoke' : (dest === 'karaoke' ? 'Karaoke' : 'Music Video');
+    setRequestStatus(
+      destLabel + ': ' + title + (addQueue ? ' · queued for ' + singer : ''),
+      dest === 'custom' ? '#f9a8d4' : (dest === 'music' ? 'var(--gold)' : 'var(--accent)')
+    );
+    closeYtAddModal();
+    if (addQueue) setAppTab('show');
+  } catch (e) {
+    console.error('YouTube add error:', e);
+    setRequestStatus('Add failed: ' + (e && e.message ? e.message : e), '#ff4444');
+    resetYtAddConfirmButton(dest);
+  }
+}
+
+window.confirmYtAdd = confirmYtAdd;
+window.closeYtAddModal = closeYtAddModal;
+window.setYtAddDest = setYtAddDest;
+
+function bindYtAddModalControls() {
+  if (bindYtAddModalControls.done) return;
+  var overlay = document.getElementById('yt-add-modal-overlay');
+  var confirmBtn = document.getElementById('yt-add-confirm');
+  if (!overlay || !confirmBtn) return;
+  bindYtAddModalControls.done = true;
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) closeYtAddModal();
+  });
+  var cancelBtn = document.getElementById('yt-add-cancel');
+  if (cancelBtn) cancelBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    closeYtAddModal();
+  });
+  confirmBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    confirmYtAdd();
+  });
+  var destBtns = document.querySelectorAll('#yt-add-modal .yt-dest');
+  for (var i = 0; i < destBtns.length; i++) {
+    destBtns[i].addEventListener('click', function(e) {
+      e.preventDefault();
+      var dest = this.getAttribute('data-dest');
+      if (dest) setYtAddDest(dest);
+    });
+  }
+  var singerEl = document.getElementById('yt-add-singer');
+  if (singerEl) {
+    singerEl.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      confirmYtAdd();
+    });
+  }
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bindYtAddModalControls);
+} else {
+  bindYtAddModalControls();
+}
+
+// Keep legacy name as a thin wrapper (in case anything still calls it)
+async function addFromYouTubeSearch(videoId, title, karaokify) {
+  openYtAddModal(videoId, title, '');
+  setYtAddDest(karaokify ? 'custom' : 'music');
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  var overlay = document.getElementById('yt-add-modal-overlay');
+  if (overlay && overlay.classList.contains('show')) closeYtAddModal();
+});
 
 // Remote-only music videos have no local info.json, so titles may be unknown.
 // Resolve visible ones through the main process (tags → catalog → oEmbed);
@@ -1364,7 +2170,38 @@ function setLibraryFilter(filter) {
   for (var i = 0; i < tabs.length; i++) {
     tabs[i].classList.toggle('active', tabs[i].getAttribute('data-filter') === filter);
   }
+  var search = document.getElementById('search-box');
+  if (filter === 'ytsearch') {
+    updateYtViewToggleVisibility();
+    if (search) {
+      search.placeholder = 'Search YouTube… up to ' + YT_SEARCH_LIMIT + ' results';
+      if (ytSearchQuery) search.value = ytSearchQuery;
+    }
+    applyFilterAndRender();
+    // Re-run if box already has a query and we have no results yet
+    if (search && search.value.trim() && ytSearchStatus === 'idle') {
+      runYouTubeSearch(search.value.trim());
+    }
+    return;
+  }
+  updateYtViewToggleVisibility();
+  var list = document.getElementById('library-list');
+  if (list) list.classList.remove('yt-grid-mode');
   applyFilterAndRender();
+}
+
+async function toggleBirthdayPlaylist() {
+  // Birthday / Xtina deck retired — stop it if somehow still armed, then use Music Jukebox.
+  try {
+    if (jukeboxState && jukeboxState.active && jukeboxState.kind === 'birthday') {
+      if (api.queue && api.queue.stopBirthdayPlaylist) await api.queue.stopBirthdayPlaylist();
+      else if (api.queue && api.queue.stopJukebox) await api.queue.stopJukebox();
+      jukeboxState = null;
+      await refreshQueue();
+    }
+  } catch (e) { console.warn('stopBirthdayPlaylist:', e); }
+  updateBirthdayBtnUI();
+  alert('Birthday playlist is retired. Use Start Music Jukebox for background MVs — DJ credit is Naynay/Karolpdx.');
 }
 
 async function toggleMusicJukebox() {
@@ -1376,6 +2213,7 @@ async function toggleMusicJukebox() {
       await refreshQueue();
       updateShuffleBtnUI();
       updateJukeboxBtnUI();
+      updateBirthdayBtnUI();
       var st = document.getElementById('request-status');
       if (st) st.textContent = 'Music jukebox stopped';
     } catch (e) {
@@ -1397,7 +2235,8 @@ async function toggleMusicJukebox() {
   var btn = document.getElementById('btn-music-jukebox');
   if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
   try {
-    try { await api.queue.clear(); } catch (_) {}
+    // Do NOT clear the singer queue — startJukebox keeps karaoke rows and
+    // only adds a DJ mirror. Clearing wiped last night's singer lineup.
     var singer = currentSingerOrDj();
     var items = rows.map(function(v) {
       return { videoId: v.videoId, title: v.title || '' };
@@ -1411,6 +2250,7 @@ async function toggleMusicJukebox() {
     jukeboxState = (r && r.jukebox) || null;
     updateShuffleBtnUI();
     updateJukeboxBtnUI();
+    updateBirthdayBtnUI();
     await refreshQueue();
     var added = (r && r.added) || 0;
     var skipped = (r && r.skipped) || 0;
@@ -1450,14 +2290,31 @@ function updateShowModePill() {
   pill.title = mode === 'kj'
     ? 'KJ mode — karaoke singer on deck'
     : (mode === 'dj'
-      ? 'DJ mode — Music jukebox / Gap filler. Singers join at next Gap.'
+      ? 'DJ mode — Music jukebox / Gap filler (Naynay/Karolpdx). Singers join at next Gap.'
       : 'Idle — arm Music Jukebox or add a singer');
+}
+
+function updateBirthdayBtnUI() {
+  // Birthday playlist UI removed — keep hint + pill updates for jukebox / singers.
+  var hint = document.getElementById('queue-mode-hint');
+  if (hint) {
+    var parts = [];
+    if (jukeboxState && jukeboxState.active) {
+      parts.push((jukeboxState.name || 'Music jukebox') + ' (' + (jukeboxState.count || 0) + ')');
+    }
+    if (pendingKaraokeCount > 0) {
+      parts.push(pendingKaraokeCount + ' singer' + (pendingKaraokeCount === 1 ? '' : 's') + ' waiting');
+    }
+    hint.textContent = parts.length ? ' · ' + parts.join(' · ') : '';
+    hint.style.color = pendingKaraokeCount > 0 ? 'var(--gold)' : 'var(--textDim)';
+  }
+  updateJukeboxBtnUI();
+  updateShowModePill();
 }
 
 function updateJukeboxBtnUI() {
   var btn = document.getElementById('btn-music-jukebox');
-  var hint = document.getElementById('queue-mode-hint');
-  var active = !!(jukeboxState && jukeboxState.active);
+  var active = !!(jukeboxState && jukeboxState.active && jukeboxState.kind !== 'birthday');
   if (btn) {
     btn.disabled = false;
     btn.textContent = active ? 'Stop Music Jukebox' : 'Start Music Jukebox';
@@ -1465,15 +2322,6 @@ function updateJukeboxBtnUI() {
       ? 'Disarm DJ deck — karaoke queue only until you start jukebox again'
       : 'Arm DJ deck from Music Videos — default when no singers are pending. Singers take over at the next Gap.';
     btn.classList.toggle('active', active);
-  }
-  if (hint) {
-    var parts = [];
-    if (active) parts.push('Music jukebox (' + (jukeboxState.count || 0) + ')');
-    if (pendingKaraokeCount > 0) {
-      parts.push(pendingKaraokeCount + ' singer' + (pendingKaraokeCount === 1 ? '' : 's') + ' waiting');
-    }
-    hint.textContent = parts.length ? ' · ' + parts.join(' · ') : '';
-    hint.style.color = (active || pendingKaraokeCount > 0) ? 'var(--gold)' : 'var(--textDim)';
   }
   updateShowModePill();
 }
@@ -1496,7 +2344,7 @@ function updateShuffleBtnUI() {
       badge.textContent = '· shuffle';
     }
   }
-  updateJukeboxBtnUI();
+  updateBirthdayBtnUI();
 }
 
 async function toggleQueueShuffle() {
@@ -1581,6 +2429,56 @@ async function reclassifyTrack(bucket) {
     setTimeout(function() { setRequestStatus(''); }, 3500);
   } catch (e) {
     setRequestStatus('Reclassify error: ' + e.message, '#ef4444');
+  }
+}
+
+async function deleteLibraryTrack() {
+  var videoId = reclassMenuVideoId;
+  closeReclassMenu();
+  if (!videoId) return;
+  if (!api.library || !api.library.delete) {
+    setRequestStatus('Delete unavailable — restart Karol', '#ef4444');
+    return;
+  }
+  var base = String(videoId).replace(/(-karaoke)+$/g, '');
+  var title = '';
+  for (var i = 0; i < allVideos.length; i++) {
+    if (allVideos[i].videoId === videoId || allVideos[i].videoId === base || allVideos[i].videoId === base + '-karaoke') {
+      title = allVideos[i].title || title;
+      if (allVideos[i].videoId === videoId) break;
+    }
+  }
+  var label = title || videoId;
+  var msg = 'Delete from library?\n\n'
+    + label + '\n'
+    + '(' + videoId + ')\n\n'
+    + 'This permanently removes the video file(s), karaoke twin if present, lyrics/stems, and tags.\n'
+    + 'It will also drop it from the show queue.\n\n'
+    + 'This cannot be undone.';
+  if (!confirm(msg)) return;
+  try {
+    var r = await api.library.delete(videoId, { siblings: true });
+    if (!r || r.ok === false) {
+      setRequestStatus('Delete failed: ' + ((r && r.error) || 'unknown'), '#ef4444');
+      return;
+    }
+    var drop = {};
+    drop[videoId] = true;
+    drop[base] = true;
+    drop[base + '-karaoke'] = true;
+    allVideos = allVideos.filter(function(v) {
+      if (!v || !v.videoId) return true;
+      var vb = String(v.videoId).replace(/(-karaoke)+$/g, '');
+      return !(drop[v.videoId] || drop[vb] || vb === base);
+    });
+    await refreshCustomVideoIds();
+    applyFilterAndRender();
+    try { await refreshQueue(); } catch (_) {}
+    var nFiles = (r.deletedFiles && r.deletedFiles.length) || 0;
+    setRequestStatus('Deleted ' + label + ' (' + nFiles + ' files)', '#f87171');
+    setTimeout(function() { setRequestStatus(''); }, 4000);
+  } catch (e) {
+    setRequestStatus('Delete error: ' + (e && e.message ? e.message : e), '#ef4444');
   }
 }
 
@@ -1690,8 +2588,45 @@ async function rescanLibrary() {
   btn.classList.remove('scanning');
 }
 
+document.getElementById('library-list').addEventListener('click', function(e) {
+  var btn = e.target && e.target.closest ? e.target.closest('button') : null;
+  if (!btn || !document.getElementById('library-list').contains(btn)) return;
+  var vid = btn.getAttribute('data-vid');
+  var title = btn.getAttribute('data-title') || '';
+  var channel = btn.getAttribute('data-channel') || '';
+  if (btn.classList.contains('yt-add')) {
+    e.preventDefault();
+    e.stopPropagation();
+    openYtAddModal(vid, title, channel);
+    return;
+  }
+  var action = btn.getAttribute('data-action');
+  if (action === 'yt-queue') {
+    e.preventDefault();
+    e.stopPropagation();
+    queueVideo(vid, title);
+    return;
+  }
+  if (action === 'yt-play') {
+    e.preventDefault();
+    e.stopPropagation();
+    playNow(vid, title);
+  }
+});
+
 document.getElementById('search-box').addEventListener('input', function() {
+  if (libraryFilter === 'ytsearch') {
+    scheduleYouTubeSearch(this.value);
+    return;
+  }
   applyFilterAndRender();
+});
+document.getElementById('search-box').addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter') return;
+  if (libraryFilter !== 'ytsearch') return;
+  e.preventDefault();
+  if (ytSearchTimer) { clearTimeout(ytSearchTimer); ytSearchTimer = null; }
+  runYouTubeSearch(this.value);
 });
 
 // ── Queue ──
@@ -2264,66 +3199,99 @@ async function refreshQueue() {
       ? q.pendingKaraoke
       : queue.filter(function(item) { return item && !item.fromJukebox; }).length;
     updateShuffleBtnUI();
+    updateBirthdayBtnUI();
     renderQueue();
   } catch(e) { console.error('Queue fetch error:', e); }
 }
 
 function renderQueue() {
   var list = document.getElementById('queue-list');
-  var singerCount = queue.filter(function(item) { return item && !item.fromJukebox; }).length;
+  // Singer lineup only — never paint DJ/jukebox mirrors here (those are filler).
+  var singerEntries = [];
+  for (var qi = 0; qi < queue.length; qi++) {
+    if (queue[qi] && !queue[qi].fromJukebox) singerEntries.push({ item: queue[qi], idx: qi });
+  }
+  var singerCount = singerEntries.length;
   document.getElementById('queue-count').textContent = String(singerCount);
   var tabBadge = document.getElementById('tab-queue-count');
   if (tabBadge) tabBadge.textContent = String(singerCount);
 
-  if (singerCount === 0 && !(jukeboxState && jukeboxState.active)) {
-    list.innerHTML = '<div style="color:var(--textDim);text-align:center;padding:40px">Singer queue is empty.<br>Add karaoke requests, or start the Music jukebox for background MVs.</div>';
-    return;
+  var html = '';
+  if (jukeboxState && jukeboxState.active) {
+    var djNow = null;
+    for (var di = 0; di < queue.length; di++) {
+      if (queue[di] && queue[di].fromJukebox && di === currentIndex) {
+        djNow = queue[di];
+        break;
+      }
+    }
+    html += '<div class="queue-dj-strip" style="padding:8px 12px;margin:0 0 8px;border-radius:8px;border:1px solid rgba(240,192,64,0.35);background:rgba(240,192,64,0.1);font-size:11px;line-height:1.35">'
+      + '<div style="font-weight:700;color:var(--gold)">DJ deck · Music Videos</div>'
+      + '<div style="color:var(--textDim)">'
+      + (djNow
+        ? ('Now filling: <span style="color:var(--text)">' + escapeHtml(safeDisplayTitle(djNow.title, djNow.videoId)) + '</span>')
+        : (escapeHtml(jukeboxState.name || 'Music jukebox') + ' armed · ' + (jukeboxState.count || 0) + ' tracks'))
+      + ' — singers below take over at the next Gap'
+      + '</div></div>';
   }
-  if (queue.length === 0) {
-    list.innerHTML = '<div style="color:var(--textDim);text-align:center;padding:40px">Singer queue is empty.<br>DJ deck is armed — Music Videos will fill until a singer joins.</div>';
+
+  if (singerCount === 0) {
+    html += '<div style="color:var(--textDim);text-align:center;padding:40px">'
+      + (jukeboxState && jukeboxState.active
+        ? 'Singer queue is empty.<br>Music Videos are filling until a karaoke singer joins.'
+        : 'Singer queue is empty.<br>Add karaoke requests, or start the Music jukebox for background MVs.')
+      + '</div>';
+    list.innerHTML = html;
     return;
   }
 
-  // Window the DOM — never paint 600+ heavy rows at once
+  // Window the DOM against singer entries (not the DJ mirror)
   var WINDOW_BEFORE = 8;
   var WINDOW_AFTER = 40;
+  var activeSingerPos = -1;
+  for (var ap = 0; ap < singerEntries.length; ap++) {
+    if (singerEntries[ap].idx === currentIndex) { activeSingerPos = ap; break; }
+  }
   var start = 0;
-  var end = queue.length;
-  if (queue.length > 60 && currentIndex >= 0) {
-    start = Math.max(0, currentIndex - WINDOW_BEFORE);
-    end = Math.min(queue.length, currentIndex + WINDOW_AFTER);
+  var end = singerEntries.length;
+  if (singerEntries.length > 60 && activeSingerPos >= 0) {
+    start = Math.max(0, activeSingerPos - WINDOW_BEFORE);
+    end = Math.min(singerEntries.length, activeSingerPos + WINDOW_AFTER);
   }
 
-  var html = '';
-  if (queue.length > 60) {
+  if (singerEntries.length > 60) {
     html += '<div style="padding:6px 12px;margin:2px 0 6px;font-size:11px;color:var(--textDim)">'
-      + 'Showing ' + (start + 1) + '–' + end + ' of ' + queue.length
+      + 'Showing ' + (start + 1) + '–' + end + ' of ' + singerEntries.length
       + (queueShuffleEnabled ? ' · shuffle on' : '')
       + '</div>';
   }
   if (start > 0) {
-    html += '<div style="color:var(--textDim);padding:6px 10px;font-size:11px">… ' + start + ' earlier tracks</div>';
+    html += '<div style="color:var(--textDim);padding:6px 10px;font-size:11px">… ' + start + ' earlier singers</div>';
   }
-  for (var i = start; i < end; i++) {
-    var item = queue[i];
+  for (var si = start; si < end; si++) {
+    var entry = singerEntries[si];
+    var i = entry.idx;
+    var item = entry.item;
     var isActive = i === currentIndex;
     var isCustom = item.isCustom === true;
+    var singerLabel = displaySingerName(item.requester || item.singer || '');
 
     html += '<div class="queue-item' + (isActive ? ' active' : '') + '" draggable="true" data-idx="' + i + '" onclick="skipToQueueItem(' + i + ')" ondragstart="onDragStart(event)" ondragend="onDragEnd(event)" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">' +
       '<span class="q-drag-handle" title="Drag to reorder">⠿</span>' +
-      '<span class="q-num">' + (isActive ? '▶' : (i+1)) + '</span>' +
+      '<span class="q-num">' + (isActive ? '▶' : (si + 1)) + '</span>' +
       '<div class="q-info">' +
         '<div class="q-title">' + escapeHtml(safeDisplayTitle(item.title, item.videoId)) + '</div>' +
-        '<div class="q-singer">' + escapeHtml(item.requester || item.singer || '\u2014') + '</div>' +
+        '<div class="q-singer">' + escapeHtml(singerLabel || '\u2014') + '</div>' +
         '<div class="q-meta">' +
           '<span class="q-lyric-badge ' + escapeHtml(item.hasLyrics ? (item.lyricSource || 'unknown') : 'none') + '" title="' + escapeHtml(item.lyricLabel || (item.hasLyrics ? 'Lyrics' : 'No lyrics file')) + '">' +
             escapeHtml(item.hasLyrics ? (item.lyricLabel || 'Lyrics') : 'No lyrics') +
           '</span>' +
           (isCustom && item.rating ? ('<span class="q-rating" title="Custom karaoke rating ' + item.rating + '/5">' +
-            (function(){ var o=''; for (var si=1;si<=5;si++) o+='<span class="qs'+(si<=item.rating?' on':'')+'">★</span>'; return o; })() +
+            (function(){ var o=''; for (var star=1;star<=5;star++) o+='<span class="qs'+(star<=item.rating?' on':'')+'">★</span>'; return o; })() +
           '</span>') : '') +
         '</div>' +
       '</div>';
+    html += '<div class="q-actions">';
     if (item.hasLyrics) {
       html += '<button class="q-action-btn" title="Edit lyric text (keeps line timing)" onclick="event.stopPropagation();openLyricEditor(\'' + item.videoId + '\')">Edit</button>';
     }
@@ -2334,11 +3302,12 @@ function renderQueue() {
         '<button class="q-action-btn" title="Search YouTube for matching karaoke version" onclick="event.stopPropagation();findKaraoke(\'' + item.videoId + '\')">Karaoke</button>' +
         '<button class="q-action-btn rep-btn" title="Re-lyric with custom lyrics + model picker" onclick="event.stopPropagation();openRelyricModal(\'' + item.videoId + '\')">Re-Lyric</button>';
     }
+    html += '</div>';
     html += '<button class="q-remove" onclick="event.stopPropagation();removeQueueItem(' + i + ')" title="Remove">\u00d7</button>' +
     '</div>';
   }
-  if (end < queue.length) {
-    html += '<div style="color:var(--textDim);padding:6px 10px;font-size:11px">… ' + (queue.length - end) + ' later tracks</div>';
+  if (end < singerEntries.length) {
+    html += '<div style="color:var(--textDim);padding:6px 10px;font-size:11px">… ' + (singerEntries.length - end) + ' later singers</div>';
   }
   list.innerHTML = html;
 }
@@ -2353,7 +3322,20 @@ function togglePlay() {
   }
 }
 
-var gapHoldState = { interstitialActive: false, interstitialHeld: false, interstitialRemainingMs: 0 };
+var gapHoldState = {
+  interstitialActive: false,
+  interstitialHeld: false,
+  interstitialRemainingMs: 0,
+  gapControls: false,
+  pauseInterstitial: false,
+  homeInterstitial: false,
+  hasUpNext: false,
+  brollVideoId: null,
+  brollTitle: '',
+  upNextIndex: -1,
+  upNextSinger: '',
+  upNextTitle: '',
+};
 
 function applyGapHoldState(state) {
   if (!state || typeof state !== 'object') return;
@@ -2361,29 +3343,241 @@ function applyGapHoldState(state) {
     interstitialActive: !!state.interstitialActive,
     interstitialHeld: !!state.interstitialHeld,
     interstitialRemainingMs: Math.max(0, state.interstitialRemainingMs || 0),
+    gapControls: !!(state.gapControls || state.interstitialActive || state.pauseInterstitial || state.homeInterstitial),
+    pauseInterstitial: !!state.pauseInterstitial,
+    homeInterstitial: !!state.homeInterstitial,
+    hasUpNext: !!state.hasUpNext,
+    brollVideoId: state.brollVideoId || null,
+    brollTitle: state.brollTitle || '',
+    upNextIndex: (typeof state.upNextIndex === 'number') ? state.upNextIndex : -1,
+    upNextSinger: state.upNextSinger || '',
+    upNextTitle: state.upNextTitle || '',
   };
   updateGapHoldBtn();
   updateGapStatusBadge();
+  updateGapDjRow();
+}
+
+function setGapDjStatus(msg, ok) {
+  var el = document.getElementById('gap-dj-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = (ok === false) ? '#f87171' : (ok === true ? '#86efac' : 'var(--gold)');
+}
+
+function updateGapDjRow() {
+  var row = document.getElementById('gap-dj-row');
+  if (!row) return;
+  var show = !!(gapHoldState.gapControls || gapHoldState.interstitialActive || gapHoldState.pauseInterstitial || gapHoldState.homeInterstitial);
+  row.classList.toggle('visible', show);
+  if (!show) {
+    setGapDjStatus('');
+    return;
+  }
+  var spin = document.getElementById('gap-dj-spin');
+  if (spin) {
+    var title = gapHoldState.brollTitle || gapHoldState.brollVideoId || '—';
+    var homeTag = gapHoldState.homeInterstitial ? ' · idle' : '';
+    spin.innerHTML = 'Now Spinning: <strong>' + escapeHtml(title) + '</strong>' + escapeHtml(homeTag);
+  }
+  var rm = document.getElementById('gap-btn-remove-upnext');
+  if (rm) {
+    var hasUp = !!gapHoldState.hasUpNext;
+    rm.style.display = hasUp ? '' : 'none';
+    rm.disabled = !hasUp;
+  }
+  var label = row.querySelector('.gap-dj-label');
+  if (label) label.textContent = gapHoldState.homeInterstitial ? 'Gap · Home' : 'Gap';
+}
+
+function gapCtrlPrev() {
+  if (gapHoldState.homeInterstitial || (!gapHoldState.hasUpNext && gapHoldState.gapControls)) {
+    gapCtrlPrevSpin();
+    return;
+  }
+  try { if (api.transport && api.transport.prev) api.transport.prev(); } catch (_) {}
+}
+
+function gapCtrlPrevSpin() {
+  if (!api.gap || !api.gap.prevBroll) {
+    setGapDjStatus('Prev spin unavailable', false);
+    return;
+  }
+  setGapDjStatus('Previous spin…');
+  api.gap.prevBroll().then(function(r) {
+    if (!r || r.ok === false) setGapDjStatus((r && r.error) || 'No previous spin', false);
+    else {
+      setGapDjStatus('Previous spin', true);
+      if (r.brollVideoId) {
+        gapHoldState.brollVideoId = r.brollVideoId;
+        gapHoldState.brollTitle = r.brollTitle || '';
+        updateGapDjRow();
+      }
+    }
+  }).catch(function(e) {
+    setGapDjStatus((e && e.message) || 'Prev error', false);
+  });
+}
+
+function gapCtrlSkip() {
+  if (gapHoldState.homeInterstitial || (!gapHoldState.hasUpNext && gapHoldState.gapControls)) {
+    gapCtrlCycleSpin();
+    return;
+  }
+  try { if (api.transport && api.transport.skip) api.transport.skip(); } catch (_) {}
+}
+
+function gapCtrlCycleSpin() {
+  if (!api.gap || !api.gap.cycleBroll) {
+    setGapDjStatus('Next spin unavailable', false);
+    return;
+  }
+  setGapDjStatus('Next spin…');
+  api.gap.cycleBroll().then(function(r) {
+    if (!r || r.ok === false) setGapDjStatus((r && r.error) || 'No Music Videos', false);
+    else {
+      setGapDjStatus('Next spin', true);
+      if (r.brollVideoId) {
+        gapHoldState.brollVideoId = r.brollVideoId;
+        gapHoldState.brollTitle = r.brollTitle || '';
+        updateGapDjRow();
+      }
+    }
+  }).catch(function(e) {
+    setGapDjStatus((e && e.message) || 'Spin error', false);
+  });
+}
+
+function gapCtrlRestart() {
+  if (!api.gap || !api.gap.restartBroll) {
+    setGapDjStatus('Restart unavailable', false);
+    return;
+  }
+  setGapDjStatus('Restarting…');
+  api.gap.restartBroll().then(function(r) {
+    if (!r || r.ok === false) setGapDjStatus((r && r.error) || 'Restart failed', false);
+    else setGapDjStatus('Restarted spin', true);
+  }).catch(function(e) {
+    setGapDjStatus((e && e.message) || 'Restart error', false);
+  });
+}
+
+function gapCtrlDeleteSpin() {
+  if (!api.gap || !api.gap.deleteSpin) {
+    setGapDjStatus('Delete unavailable', false);
+    return;
+  }
+  var label = gapHoldState.brollTitle || gapHoldState.brollVideoId || 'Now Spinning';
+  var id = gapHoldState.brollVideoId || '';
+  if (!id) {
+    setGapDjStatus('No video loaded', false);
+    return;
+  }
+  if (!confirm('Delete Now Spinning from library?\n\n' + label + '\n(' + id + ')\n\nGap stays up and the next B-roll starts.\nThis cannot be undone.')) return;
+  var btn = document.getElementById('gap-btn-delete-spin');
+  if (btn) btn.disabled = true;
+  setGapDjStatus('Deleting…');
+  api.gap.deleteSpin().then(function(r) {
+    if (!r || r.ok === false) setGapDjStatus((r && r.error) || 'Delete failed', false);
+    else {
+      setGapDjStatus('Deleted — next spin', true);
+      if (r.nextBrollTitle || r.nextBrollId) {
+        gapHoldState.brollVideoId = r.nextBrollId || null;
+        gapHoldState.brollTitle = r.nextBrollTitle || '';
+        updateGapDjRow();
+      }
+    }
+  }).catch(function(e) {
+    setGapDjStatus((e && e.message) || 'Delete error', false);
+  }).finally(function() {
+    if (btn) btn.disabled = false;
+  });
+}
+
+function gapCtrlRemoveUpNext() {
+  if (!gapHoldState.hasUpNext) {
+    setGapDjStatus('No up next', false);
+    return;
+  }
+  if (!api.gap || !api.gap.removeUpNext) {
+    setGapDjStatus('Remove unavailable', false);
+    return;
+  }
+  var who = gapHoldState.upNextSinger || 'singer';
+  var song = gapHoldState.upNextTitle || '';
+  if (!confirm('Remove Up Next from queue?\n\n' + who + '\n' + song + '\n\nGap B-roll keeps playing.')) return;
+  var btn = document.getElementById('gap-btn-remove-upnext');
+  if (btn) btn.disabled = true;
+  setGapDjStatus('Removing…');
+  api.gap.removeUpNext().then(function(r) {
+    if (!r || r.ok === false) setGapDjStatus((r && r.error) || 'Remove failed', false);
+    else setGapDjStatus('Up next removed', true);
+  }).catch(function(e) {
+    setGapDjStatus((e && e.message) || 'Remove error', false);
+  }).finally(function() {
+    if (btn) btn.disabled = false;
+  });
+}
+
+function gapCtrlFileAs(bucket) {
+  if (!api.gap || !api.gap.reclassifySpin) {
+    setGapDjStatus('File as unavailable', false);
+    return;
+  }
+  if (!gapHoldState.brollVideoId) {
+    setGapDjStatus('No video loaded', false);
+    return;
+  }
+  var fileRoot = document.getElementById('gap-dj-file');
+  var btns = fileRoot ? fileRoot.querySelectorAll('.gap-dj-file-btn') : [];
+  for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+  setGapDjStatus('Saving…');
+  api.gap.reclassifySpin(bucket).then(function(r) {
+    if (!r || r.ok === false) {
+      setGapDjStatus((r && r.error) || 'Failed', false);
+      return;
+    }
+    for (var j = 0; j < btns.length; j++) {
+      btns[j].classList.toggle('active', btns[j].getAttribute('data-bucket') === bucket);
+    }
+    var note = r.moved ? ('→ ' + (r.label || bucket) + ' (moved)') : ('→ ' + (r.label || bucket));
+    setGapDjStatus(note, true);
+    if (r.nextBrollId) {
+      gapHoldState.brollVideoId = r.nextBrollId;
+      gapHoldState.brollTitle = '';
+      updateGapDjRow();
+    }
+  }).catch(function(e) {
+    setGapDjStatus((e && e.message) || 'Error', false);
+  }).finally(function() {
+    for (var k = 0; k < btns.length; k++) btns[k].disabled = false;
+  });
 }
 
 function updateGapHoldBtn() {
   var btn = document.getElementById('btn-hold-gap');
   if (!btn) return;
-  var active = gapHoldState.interstitialActive;
+  var home = !!gapHoldState.homeInterstitial;
+  var active = gapHoldState.interstitialActive && !home;
   var held = gapHoldState.interstitialHeld;
   btn.disabled = !active;
-  btn.classList.toggle('holding', held);
-  btn.textContent = held ? 'RESUME' : 'HOLD';
-  btn.title = held
-    ? 'Resume the between-songs Gap countdown'
-    : (active ? 'Hold the Gap — B-roll keeps playing. Pause does not do this.' : 'Available during the auto Gap between songs (not Pause)');
+  btn.classList.toggle('holding', held && !home);
+  btn.textContent = home ? 'HOME' : (held ? 'RESUME' : 'HOLD');
+  btn.title = home
+    ? 'Idle Gap (home) — no countdown. Queue a singer to start a timed Gap.'
+    : (held
+      ? 'Resume the between-songs Gap countdown'
+      : (active ? 'Hold the Gap — B-roll keeps playing. Pause does not do this.' : 'Available during the auto Gap between songs (not Pause)'));
 }
 
 function updateGapStatusBadge() {
-  if (!gapHoldState.interstitialActive) return;
+  if (!gapHoldState.interstitialActive && !gapHoldState.homeInterstitial) return;
   var statusEl = document.getElementById('np-status');
   if (!statusEl) return;
-  if (gapHoldState.interstitialHeld) {
+  if (gapHoldState.homeInterstitial) {
+    statusEl.textContent = 'Gap · Home';
+    statusEl.className = 'np-status gap';
+  } else if (gapHoldState.interstitialHeld) {
     statusEl.textContent = 'Gap HOLD';
     statusEl.className = 'np-status holding';
   } else {
@@ -2518,6 +3712,16 @@ function initInterstitialSettings() {
     var vol = (r && typeof r.volumeLevel === 'number') ? r.volumeLevel : 0.55;
     var pct = Math.round(vol * 100);
     if (volSlider) { volSlider.value = String(pct); applyVolLabel(pct); }
+    var vMix = (r && typeof r.vocalMixLevel === 'number') ? r.vocalMixLevel : 0;
+    var vPct = Math.round(vMix * 100);
+    var vocalSliderInit = document.getElementById('vocal-mix-slider');
+    var vocalLabelInit = document.getElementById('vocal-mix-label');
+    if (vocalSliderInit) vocalSliderInit.value = String(vPct);
+    if (vocalLabelInit) vocalLabelInit.textContent = vPct + '%';
+    if (typeof window.__karolApplyEqUi === 'function') {
+      window.__karolApplyEqUi('music', (r && r.musicEq) || { low: 0, mid: 0, high: 0 }, true);
+      window.__karolApplyEqUi('vocal', (r && r.vocalEq) || { low: 0, mid: 0, high: 0 }, true);
+    }
     if (r && (r.interstitialActive != null || r.interstitialHeld != null)) {
       applyGapHoldState(r);
     } else if (api.transport && api.transport.gapState) {
@@ -2569,11 +3773,25 @@ function initInterstitialSettings() {
   if (gapBrollSlider) gapBrollSlider.addEventListener('input', saveGapMixLevels);
   if (gapPhoneSlider) gapPhoneSlider.addEventListener('input', saveGapMixLevels);
   var volTimer = null;
+  /** Apply Out volume 0–100. MIDI Mix may go to 0%. */
+  window.__karolApplyOutVolumePct = function(pct, opts) {
+    opts = opts || {};
+    var level = Math.max(0, Math.min(1, (Number(pct) || 0) / 100));
+    var shown = Math.round(level * 100);
+    applyVolLabel(shown);
+    if (volSlider) volSlider.value = String(Math.max(0, Math.min(100, shown)));
+    clearTimeout(volTimer);
+    volTimer = setTimeout(function() {
+      api.settings.set({ volumeLevel: level }).catch(function() {});
+      if (api.transport && api.transport.volume) api.transport.volume(level);
+    }, opts.persistMs != null ? opts.persistMs : 40);
+  };
   if (volSlider) {
     volSlider.addEventListener('input', function() {
-      var pct = parseInt(volSlider.value, 10) || 55;
+      var pct = parseInt(volSlider.value, 10);
+      if (!isFinite(pct)) pct = 55;
       applyVolLabel(pct);
-      var level = Math.max(0.1, Math.min(1, pct / 100));
+      var level = Math.max(0, Math.min(1, pct / 100));
       clearTimeout(volTimer);
       volTimer = setTimeout(function() {
         api.settings.set({ volumeLevel: level }).catch(function() {});
@@ -2584,6 +3802,20 @@ function initInterstitialSettings() {
   var vocalSlider = document.getElementById('vocal-mix-slider');
   var vocalLabel = document.getElementById('vocal-mix-label');
   var vocalTimer = null;
+  /** Apply Vocals mix 0–100 (MIDI Mix ch7 fader). */
+  window.__karolApplyVocalMixPct = function(pct, opts) {
+    opts = opts || {};
+    var level = Math.max(0, Math.min(1, (Number(pct) || 0) / 100));
+    var shown = Math.round(level * 100);
+    if (vocalLabel) vocalLabel.textContent = shown + '%';
+    if (vocalSlider && !vocalSlider.disabled) vocalSlider.value = String(shown);
+    else if (vocalSlider && vocalSlider.disabled && shown === 0) vocalSlider.value = '0';
+    clearTimeout(vocalTimer);
+    vocalTimer = setTimeout(function() {
+      api.settings.set({ vocalMixLevel: level }).catch(function() {});
+      if (api.transport && api.transport.vocalMix) api.transport.vocalMix(level);
+    }, opts.persistMs != null ? opts.persistMs : 40);
+  };
   if (vocalSlider) {
     vocalSlider.addEventListener('input', function() {
       var pct = parseInt(vocalSlider.value, 10) || 0;
@@ -2591,12 +3823,242 @@ function initInterstitialSettings() {
       var level = Math.max(0, Math.min(1, pct / 100));
       clearTimeout(vocalTimer);
       vocalTimer = setTimeout(function() {
+        api.settings.set({ vocalMixLevel: level }).catch(function() {});
         if (api.transport && api.transport.vocalMix) api.transport.vocalMix(level);
       }, 60);
     });
   }
+
+  // ── EQ3 UI (Music / Vocals) ──
+  var musicEqState = { low: 0, mid: 0, high: 0 };
+  var vocalEqState = { low: 0, mid: 0, high: 0 };
+  var eqTimer = null;
+  function eqBandLabel(v) {
+    var n = Math.round(Number(v) * 10) / 10;
+    return (n > 0 ? '+' : '') + n;
+  }
+  function readEqFromDom(chan) {
+    var lo = document.getElementById('km-' + chan + '-eq-lo');
+    var mid = document.getElementById('km-' + chan + '-eq-mid');
+    var hi = document.getElementById('km-' + chan + '-eq-hi');
+    return {
+      low: lo ? parseFloat(lo.value) || 0 : 0,
+      mid: mid ? parseFloat(mid.value) || 0 : 0,
+      high: hi ? parseFloat(hi.value) || 0 : 0,
+    };
+  }
+  function paintEqLabels(chan, eq) {
+    var loL = document.getElementById('km-' + chan + '-lo');
+    var midL = document.getElementById('km-' + chan + '-mid');
+    var hiL = document.getElementById('km-' + chan + '-hi');
+    if (loL) loL.textContent = eqBandLabel(eq.low);
+    if (midL) midL.textContent = eqBandLabel(eq.mid);
+    if (hiL) hiL.textContent = eqBandLabel(eq.high);
+  }
+  function eqBandNum(n) {
+    var v = Number(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  window.__karolApplyEqUi = function(chan, eq, silent) {
+    eq = eq || {};
+    var next = {
+      low: Math.max(-12, Math.min(12, eqBandNum(eq.low))),
+      mid: Math.max(-12, Math.min(12, eqBandNum(eq.mid))),
+      high: Math.max(-12, Math.min(12, eqBandNum(eq.high))),
+    };
+    if (chan === 'music') musicEqState = next;
+    else vocalEqState = next;
+    var lo = document.getElementById('km-' + chan + '-eq-lo');
+    var mid = document.getElementById('km-' + chan + '-eq-mid');
+    var hi = document.getElementById('km-' + chan + '-eq-hi');
+    if (lo) lo.value = String(next.low);
+    if (mid) mid.value = String(next.mid);
+    if (hi) hi.value = String(next.high);
+    paintEqLabels(chan, next);
+    if (silent) return;
+    // Hit the player graph immediately — don't wait on settings debounce.
+    if (chan === 'music') {
+      if (api.transport && api.transport.musicEq) api.transport.musicEq(next);
+    } else {
+      if (api.transport && api.transport.vocalEq) api.transport.vocalEq(next);
+    }
+    clearTimeout(eqTimer);
+    eqTimer = setTimeout(function() {
+      if (chan === 'music') api.settings.set({ musicEq: next }).catch(function() {});
+      else api.settings.set({ vocalEq: next }).catch(function() {});
+    }, 120);
+  };
+  window.__karolGetEq = function(chan) {
+    return chan === 'music' ? musicEqState : vocalEqState;
+  };
+  ['music', 'vocal'].forEach(function(chan) {
+    ['lo', 'mid', 'hi'].forEach(function(band) {
+      var el = document.getElementById('km-' + chan + '-eq-' + band);
+      if (!el) return;
+      el.addEventListener('input', function() {
+        window.__karolApplyEqUi(chan, readEqFromDom(chan), false);
+      });
+    });
+  });
+
+  // ── Level meters (from player via main) ──
+  var meterHold = { music: 0, vocal: 0 };
+  function levelToPct(lin) {
+    var v = Math.max(0, Math.min(1, Number(lin) || 0));
+    // Live-like meter: show from -60 dBFS so moderate Out levels still move the bar
+    if (v <= 0.00001) return 0;
+    var db = 20 * Math.log10(v);
+    return Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+  }
+  function paintMeter(chan, peak, rms, peakHold, clip) {
+    var fill = document.getElementById('km-' + chan + '-fill');
+    var hold = document.getElementById('km-' + chan + '-hold');
+    var clipEl = document.getElementById('km-' + chan + '-clip');
+    // RMS for body (steady), peak for ballistics
+    var body = Math.max(Number(peak) || 0, (Number(rms) || 0) * 1.7);
+    var pct = levelToPct(body);
+    var holdPct = levelToPct(peakHold);
+    if (holdPct > meterHold[chan]) meterHold[chan] = holdPct;
+    else meterHold[chan] *= 0.9;
+    if (fill) fill.style.height = Math.max(pct, 0).toFixed(1) + '%';
+    if (hold) hold.style.bottom = Math.max(pct, meterHold[chan], 0).toFixed(1) + '%';
+    if (clipEl) clipEl.classList.toggle('on', !!clip || pct >= 97);
+  }
+  if (api.on) {
+    api.on('meter-levels', function(levels) {
+      if (!levels) return;
+      paintMeter('music', levels.musicPeak, levels.musicRms, levels.musicPeakHold, levels.clip && levels.musicPeak >= 0.98);
+      paintMeter('vocal', levels.vocalPeak, levels.vocalRms, levels.vocalPeakHold, levels.clip && levels.vocalPeak >= 0.98);
+    });
+  }
 }
 initInterstitialSettings();
+
+// ── Akai MIDI Mix ch7/ch8 → Karol mono mixer ───────────────────────────────
+// Factory: ch8 fader CC61 + knobs 58/59/60 (Hi/Mid/Lo); ch7 fader CC57 + 54/55/56.
+(function initMidiMixMixer() {
+  var CC = {
+    VOCAL_LO: 54, VOCAL_MID: 55, VOCAL_HI: 56, VOCAL_FADER: 57,
+    MUSIC_LO: 58, MUSIC_MID: 59, MUSIC_HI: 60, MUSIC_FADER: 61,
+  };
+  var hooked = new WeakSet();
+  var faderArmed = { music: false, vocal: false };
+  var faderLast = { music: -1, vocal: -1 };
+  var eqArmed = {};
+
+  function softTakeoverFader(chan, value, current01, applyFn) {
+    var target = Math.max(0, Math.min(1, value / 127));
+    if (!faderArmed[chan]) {
+      var cur = current01;
+      if (faderLast[chan] < 0) {
+        faderLast[chan] = value;
+        if (Math.abs(target - cur) <= 0.04) faderArmed[chan] = true;
+        else return;
+      } else {
+        var prev = faderLast[chan] / 127;
+        faderLast[chan] = value;
+        var crossed = (prev - cur) * (target - cur) <= 0;
+        var near = Math.abs(target - cur) <= 0.04;
+        if (!crossed && !near) return;
+        faderArmed[chan] = true;
+      }
+    }
+    faderLast[chan] = value;
+    applyFn(target);
+  }
+
+  function currentMusicLevel() {
+    var el = document.getElementById('vol-slider');
+    var pct = el ? parseInt(el.value, 10) : 55;
+    if (!isFinite(pct)) pct = 55;
+    return Math.max(0, Math.min(1, pct / 100));
+  }
+
+  function currentVocalLevel() {
+    var el = document.getElementById('vocal-mix-slider');
+    var pct = el ? parseInt(el.value, 10) : 0;
+    if (!isFinite(pct)) pct = 0;
+    return Math.max(0, Math.min(1, pct / 100));
+  }
+
+  function midiToDb(value) {
+    return Math.max(-12, Math.min(12, (value / 127) * 24 - 12));
+  }
+
+  function applyEqBand(chan, band, value) {
+    var key = chan + ':' + band;
+    var db = midiToDb(value);
+    var cur = (typeof window.__karolGetEq === 'function' ? window.__karolGetEq(chan) : null) || { low: 0, mid: 0, high: 0 };
+    var curDb = band === 'high' ? cur.high : (band === 'mid' ? cur.mid : cur.low);
+    if (!eqArmed[key]) {
+      if (Math.abs(db - curDb) > 1.2) return;
+      eqArmed[key] = true;
+    }
+    var next = { low: cur.low, mid: cur.mid, high: cur.high };
+    if (band === 'high') next.high = db;
+    else if (band === 'mid') next.mid = db;
+    else next.low = db;
+    if (typeof window.__karolApplyEqUi === 'function') window.__karolApplyEqUi(chan, next, false);
+  }
+
+  function onCc(cc, value) {
+    value = value & 0x7f;
+    if (cc === CC.MUSIC_FADER) {
+      softTakeoverFader('music', value, currentMusicLevel(), function(target) {
+        if (typeof window.__karolApplyOutVolumePct === 'function') {
+          window.__karolApplyOutVolumePct(target * 100, { persistMs: 50 });
+        }
+      });
+      return;
+    }
+    if (cc === CC.VOCAL_FADER) {
+      softTakeoverFader('vocal', value, currentVocalLevel(), function(target) {
+        if (typeof window.__karolApplyVocalMixPct === 'function') {
+          window.__karolApplyVocalMixPct(target * 100, { persistMs: 50 });
+        }
+      });
+      return;
+    }
+    if (cc === CC.MUSIC_HI) return applyEqBand('music', 'high', value);
+    if (cc === CC.MUSIC_MID) return applyEqBand('music', 'mid', value);
+    if (cc === CC.MUSIC_LO) return applyEqBand('music', 'low', value);
+    if (cc === CC.VOCAL_HI) return applyEqBand('vocal', 'high', value);
+    if (cc === CC.VOCAL_MID) return applyEqBand('vocal', 'mid', value);
+    if (cc === CC.VOCAL_LO) return applyEqBand('vocal', 'low', value);
+  }
+
+  function hookInput(input) {
+    if (!input || hooked.has(input)) return;
+    hooked.add(input);
+    input.addEventListener('midimessage', function(ev) {
+      var d = ev.data;
+      if (!d || d.length < 3) return;
+      if ((d[0] & 0xf0) !== 0xb0) return;
+      onCc(d[1], d[2]);
+    });
+    var name = (input.name || '').toLowerCase();
+    if (/midi\s*mix|midimix|akai/.test(name)) {
+      console.log('[karol] MIDI Mix mixer ← ch7/ch8 on', input.name);
+    }
+  }
+
+  function scan(access) {
+    if (!access || !access.inputs) return;
+    access.inputs.forEach(hookInput);
+  }
+
+  if (!navigator.requestMIDIAccess) {
+    console.warn('[karol] Web MIDI unavailable — MIDI Mix mapping disabled');
+    return;
+  }
+  navigator.requestMIDIAccess({ sysex: false }).then(function(access) {
+    scan(access);
+    access.onstatechange = function() { scan(access); };
+    console.log('[karol] MIDI ready — MIDI Mix ch8=music Out+EQ3, ch7=vocals+EQ3');
+  }).catch(function(err) {
+    console.warn('[karol] MIDI access denied:', err && err.message ? err.message : err);
+  });
+})();
 
 let _lastVocalMixVideoId = null;
 async function refreshVocalMixUi(videoId) {
@@ -2622,11 +4084,18 @@ async function refreshVocalMixUi(videoId) {
   } catch (_) {}
   slider.disabled = !available;
   if (wrap) wrap.title = available
-    ? 'Guide vocals from Demucs stem. 0% = instrumental karaoke only.'
+    ? 'Guide vocals stem (MIDI Mix ch7 fader). 0% = instrumental only.'
     : 'Rebuild stems (Re-Lyric → Rebuild stems only) to enable vocal mix';
   if (!available) {
     slider.value = '0';
     if (label) label.textContent = '0%';
+  } else if (api.settings && api.settings.get) {
+    api.settings.get().then(function(r) {
+      var lvl = (r && typeof r.vocalMixLevel === 'number') ? r.vocalMixLevel : 0;
+      var pct = Math.round(Math.max(0, Math.min(1, lvl)) * 100);
+      slider.value = String(pct);
+      if (label) label.textContent = pct + '%';
+    }).catch(function() {});
   }
 }
 
@@ -2838,7 +4307,7 @@ async function queueFromProcessing(videoId) {
     // Try to get title from library if already scanned
     var status = await api.library.status(videoId);
     if (status.metadata && status.metadata.title) title = status.metadata.title;
-    await api.queue.add(videoId, title, '', '');
+    await api.queue.add(videoId, title, currentSingerOrDj(), '');
     refreshQueue();
   } catch(e) { console.error('Queue from processing error:', e); }
 }
@@ -2932,6 +4401,15 @@ function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function escapeAttr(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // Never render a raw YouTube id (or '<id>-karaoke') as a song title.
 function safeDisplayTitle(title, videoId) {
   var t = String(title || '').trim();
@@ -2984,7 +4462,7 @@ init();
 </script>
 
 <!-- Per-track reclassify menu -->
-<div id="reclass-menu" role="menu" aria-label="Recategorize video">
+<div id="reclass-menu" role="menu" aria-label="Recategorize or delete video">
   <button onclick="reclassifyTrack('karaoke')" title="Move to Karaoke tab (standard karaoke)">
     Move to Karaoke
     <span class="rc-hint">Standard karaoke · not custom pipeline</span>
@@ -2997,6 +4475,49 @@ init();
     Move to Music Video
     <span class="rc-hint">Interstitial B-roll + music jukebox</span>
   </button>
+  <button class="rc-danger" onclick="deleteLibraryTrack()" title="Permanently delete this video (and karaoke/music twin) from disk">
+    Delete from Library…
+    <span class="rc-hint">Removes files + tags · cannot undo</span>
+  </button>
+</div>
+
+<!-- YouTube add → catalog / queue -->
+<div id="yt-add-modal-overlay">
+  <div id="yt-add-modal" role="dialog" aria-labelledby="yt-add-modal-heading">
+    <h2 id="yt-add-modal-heading">Add from YouTube</h2>
+    <div class="yt-add-title" id="yt-add-song-title">—</div>
+    <div class="yt-add-channel" id="yt-add-song-channel"></div>
+
+    <label for="yt-add-singer">Singer / performer</label>
+    <input id="yt-add-singer" type="text" placeholder="Name for the queue (default: Naynay/Karolpdx)" autocomplete="off">
+
+    <label>Add to</label>
+    <div class="yt-dest-grid" role="radiogroup" aria-label="Destination catalog">
+      <button type="button" class="yt-dest music active" data-dest="music">
+        <span class="yt-dest-name">Music Video</span>
+        <span class="yt-dest-hint">Music Videos tab · Gap B-roll + music jukebox</span>
+      </button>
+      <button type="button" class="yt-dest" data-dest="karaoke">
+        <span class="yt-dest-name">Karaoke</span>
+        <span class="yt-dest-hint">Karaoke tab · download as-is (standard karaoke track)</span>
+      </button>
+      <button type="button" class="yt-dest custom" data-dest="custom">
+        <span class="yt-dest-name">Custom Karaoke</span>
+        <span class="yt-dest-hint">Custom tab · full karaoke-maker pipeline (stems + lyrics)</span>
+      </button>
+    </div>
+
+    <label class="yt-add-check">
+      <input type="checkbox" id="yt-add-queue" checked>
+      Also add to show queue
+    </label>
+    <div class="modal-hint" id="yt-add-hint">Downloads into Music Videos. Check the queue box to put it in the show queue under the singer name.</div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="yt-add-cancel">Cancel</button>
+      <button type="button" class="btn-go" id="yt-add-confirm">Add</button>
+    </div>
+  </div>
 </div>
 
 <!-- Re-lyric config modal -->

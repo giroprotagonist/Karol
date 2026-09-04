@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Apply Autotuna presets to Ableton Live via AbletonOSC.
 
-Presets: charli (Von Dutch), believe (Cher), one-more-time (Daft Punk)
+Presets: karaoke (general), charli (Von Dutch), believe (Cher), one-more-time (Daft Punk)
 
 Usage:
+  python3 scripts/karol-autotuna-preset.py karaoke
   python3 scripts/karol-autotuna-preset.py believe
   python3 scripts/karol-autotuna-preset.py one-more-time --track 0
   python3 scripts/karol-autotuna-preset.py --list
@@ -64,7 +65,7 @@ def main() -> int:
         "preset",
         nargs="?",
         choices=list(PRESETS.keys()),
-        help="Preset id: charli, believe, one-more-time",
+        help="Preset id: karaoke, charli, believe, one-more-time",
     )
     parser.add_argument("--list", action="store_true", help="List presets and exit")
     parser.add_argument("--track", type=int, default=None, help="Track index (default: auto-find Autotuna)")

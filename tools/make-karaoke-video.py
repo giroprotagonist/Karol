@@ -5599,7 +5599,7 @@ def step_register(
                         "artist": existing_base.get("artist") or artist,
                         "title": existing_base.get("title") or title,
                         "year": existing_base.get("year", ""),
-                        "source": "" if existing_base.get("source") == "karaoke-maker" else existing_base.get("source", ""),
+                        "source": "music-video" if existing_base.get("source") in ("karaoke-maker", "", None) else existing_base.get("source", "music-video"),
                     }
         except OSError as e:
             log("library", f"Music Video preserve warning: {e}")
