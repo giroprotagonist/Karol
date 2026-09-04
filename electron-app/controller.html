@@ -3935,11 +3935,12 @@ function initInterstitialSettings() {
 initInterstitialSettings();
 
 // ── Akai MIDI Mix ch7/ch8 → Karol mono mixer ───────────────────────────────
-// Factory: ch8 fader CC61 + knobs 58/59/60 (Hi/Mid/Lo); ch7 fader CC57 + 54/55/56.
+// Factory: ch8 fader CC61 + knobs top→bottom 58/59/60 (Hi/Mid/Lo);
+//          ch7 fader CC57 + knobs top→bottom 54/55/56 (Hi/Mid/Lo).
 (function initMidiMixMixer() {
   var CC = {
-    VOCAL_LO: 54, VOCAL_MID: 55, VOCAL_HI: 56, VOCAL_FADER: 57,
-    MUSIC_LO: 58, MUSIC_MID: 59, MUSIC_HI: 60, MUSIC_FADER: 61,
+    VOCAL_HI: 54, VOCAL_MID: 55, VOCAL_LO: 56, VOCAL_FADER: 57,
+    MUSIC_HI: 58, MUSIC_MID: 59, MUSIC_LO: 60, MUSIC_FADER: 61,
   };
   var hooked = new WeakSet();
   var faderArmed = { music: false, vocal: false };
